@@ -122,13 +122,16 @@ t_stat _sim_activate (UNIT *uptr, int32 interval);
 t_stat sim_activate_abs (UNIT *uptr, int32 interval);
 t_stat sim_activate_notbefore (UNIT *uptr, int32 rtime);
 t_stat sim_activate_after (UNIT *uptr, uint32 usecs_walltime);
-t_stat _sim_activate_after (UNIT *uptr, uint32 usecs_walltime);
+t_stat sim_activate_after_d (UNIT *uptr, double usecs_walltime);
+t_stat _sim_activate_after (UNIT *uptr, double usecs_walltime);
 t_stat sim_activate_after_abs (UNIT *uptr, uint32 usecs_walltime);
-t_stat _sim_activate_after_abs (UNIT *uptr, uint32 usecs_walltime);
+t_stat sim_activate_after_abs_d (UNIT *uptr, double usecs_walltime);
+t_stat _sim_activate_after_abs (UNIT *uptr, double usecs_walltime);
 t_stat sim_cancel (UNIT *uptr);
 t_bool sim_is_active (UNIT *uptr);
 int32 sim_activate_time (UNIT *uptr);
-t_stat sim_run_boot_prep (void);
+double sim_activate_time_usecs (UNIT *uptr);
+t_stat sim_run_boot_prep (int32 flag);
 double sim_gtime (void);
 uint32 sim_grtime (void);
 int32 sim_qcount (void);
@@ -148,7 +151,7 @@ int sim_isprint (char c);
 int sim_isdigit (char c);
 int sim_isgraph (char c);
 int sim_isalnum (char c);
-int sim_strncasecmp (const char* string1, const char* string2, size_t len);
+int sim_strncasecmp (const char *string1, const char *string2, size_t len);
 CONST char *get_sim_opt (int32 opt, CONST char *cptr, t_stat *st);
 const char *put_switches (char *buf, size_t bufsize, uint32 sw);
 CONST char *get_glyph (const char *iptr, char *optr, char mchar);
@@ -162,12 +165,15 @@ t_stat sim_decode_quoted_string (const char *iptr, uint8 *optr, uint32 *osize);
 char *sim_encode_quoted_string (const uint8 *iptr, uint32 size);
 void fprint_buffer_string (FILE *st, const uint8 *buf, uint32 size);
 t_value strtotv (CONST char *cptr, CONST char **endptr, uint32 radix);
-int Fprintf (FILE *f, const char* fmt, ...) GCC_FMT_ATTR(2, 3);
+int Fprintf (FILE *f, const char *fmt, ...) GCC_FMT_ATTR(2, 3);
 t_stat sim_set_memory_load_file (const unsigned char *data, size_t size);
 int Fgetc (FILE *f);
 t_stat fprint_val (FILE *stream, t_value val, uint32 rdx, uint32 wid, uint32 fmt);
 t_stat sprint_val (char *buf, t_value val, uint32 rdx, uint32 wid, uint32 fmt);
 t_stat sim_print_val (t_value val, uint32 radix, uint32 width, uint32 format);
+const char *sim_fmt_secs (double seconds);
+const char *sim_fmt_numeric (double number);
+const char *sprint_capac (DEVICE *dptr, UNIT *uptr);
 char *read_line (char *cptr, int32 size, FILE *stream);
 void fprint_reg_help (FILE *st, DEVICE *dptr);
 void fprint_set_help (FILE *st, DEVICE *dptr);
@@ -208,9 +214,9 @@ t_stat show_dev_debug (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, CONST cha
 const char *sim_error_text (t_stat stat);
 t_stat sim_string_to_stat (const char *cptr, t_stat *cond);
 t_stat sim_cancel_step (void);
-void sim_printf (const char* fmt, ...) GCC_FMT_ATTR(1, 2);
-void sim_perror (const char* msg);
-t_stat sim_messagef (t_stat stat, const char* fmt, ...) GCC_FMT_ATTR(2, 3);
+void sim_printf (const char *fmt, ...) GCC_FMT_ATTR(1, 2);
+void sim_perror (const char *msg);
+t_stat sim_messagef (t_stat stat, const char *fmt, ...) GCC_FMT_ATTR(2, 3);
 void sim_data_trace(DEVICE *dptr, UNIT *uptr, const uint8 *data, const char *position, size_t len, const char *txt, uint32 reason);
 void sim_debug_bits_hdr (uint32 dbits, DEVICE* dptr, const char *header, 
     BITFIELD* bitdefs, uint32 before, uint32 after, int terminate);
@@ -222,17 +228,17 @@ void sim_debug_bits (uint32 dbits, DEVICE* dptr, BITFIELD* bitdefs,
 #if defined(__cplusplus)
 #ifdef CANT_USE_MACRO_VA_ARGS
 #define _sim_debug sim_debug
-void sim_debug (uint32 dbits, void* dptr, const char* fmt, ...) GCC_FMT_ATTR(3, 4);
+void sim_debug (uint32 dbits, void* dptr, const char *fmt, ...) GCC_FMT_ATTR(3, 4);
 #else
-void _sim_debug (uint32 dbits, void* dptr, const char* fmt, ...) GCC_FMT_ATTR(3, 4);
+void _sim_debug (uint32 dbits, void* dptr, const char *fmt, ...) GCC_FMT_ATTR(3, 4);
 #define sim_debug(dbits, dptr, ...) do { if (sim_deb && dptr && ((dptr)->dctrl & dbits)) _sim_debug (dbits, dptr, __VA_ARGS__);} while (0)
 #endif
 #else
 #ifdef CANT_USE_MACRO_VA_ARGS
 #define _sim_debug sim_debug
-void sim_debug (uint32 dbits, DEVICE* dptr, const char* fmt, ...) GCC_FMT_ATTR(3, 4);
+void sim_debug (uint32 dbits, DEVICE* dptr, const char *fmt, ...) GCC_FMT_ATTR(3, 4);
 #else
-void _sim_debug (uint32 dbits, DEVICE* dptr, const char* fmt, ...) GCC_FMT_ATTR(3, 4);
+void _sim_debug (uint32 dbits, DEVICE* dptr, const char *fmt, ...) GCC_FMT_ATTR(3, 4);
 #define sim_debug(dbits, dptr, ...) do { if (sim_deb && dptr && ((dptr)->dctrl & dbits)) _sim_debug (dbits, dptr, __VA_ARGS__);} while (0)
 #endif
 #endif
@@ -280,6 +286,10 @@ extern t_addr sim_brk_match_addr;
 extern BRKTYPTAB *sim_brk_type_desc;                      /* type descriptions */
 extern FILE *stdnul;
 extern t_bool sim_asynch_enabled;
+#if defined(SIM_ASYNCH_IO)
+int sim_aio_update_queue (void);
+void sim_aio_activate (ACTIVATE_API caller, UNIT *uptr, int32 event_time);
+#endif
 
 /* VM interface */
 
@@ -299,7 +309,7 @@ extern t_stat parse_sym (CONST char *cptr, t_addr addr, UNIT *uptr, t_value *val
    The other per-simulator pointers can be overrriden by the init routine */
 
 WEAK extern void (*sim_vm_init) (void);
-extern char* (*sim_vm_read) (char *ptr, int32 size, FILE *stream);
+extern char *(*sim_vm_read) (char *ptr, int32 size, FILE *stream);
 extern void (*sim_vm_post) (t_bool from_scp);
 extern CTAB *sim_vm_cmd;
 extern void (*sim_vm_sprint_addr) (char *buf, DEVICE *dptr, t_addr addr);

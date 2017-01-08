@@ -336,7 +336,7 @@ MTAB dz_mod[] = {
         NULL, &tmxr_show_cstat, (void *) &dz_desc, "Display current connections" },
     { MTAB_XTD|MTAB_VDV|MTAB_NMO, 0, "STATISTICS", NULL,
         NULL, &tmxr_show_cstat, (void *) &dz_desc, "Display multiplexer statistics" },
-    { MTAB_XTD|MTAB_VDV|MTAB_VALR, 020, "ADDRESS", "ADDRESS",
+    { MTAB_XTD|MTAB_VDV|MTAB_VALR, 010, "ADDRESS", "ADDRESS",
         &set_addr, &show_addr, NULL, "Bus address" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, DZ_LINES, "VECTOR", "VECTOR",
         &set_vec, &show_vec_mux, (void *) &dz_desc, "Interrupt vector" },
@@ -398,7 +398,7 @@ switch ((PA >> 1) & 03) {                               /* case on PA<2:1> */
             tmxr_poll_rx (&dz_desc);                    /* poll input */
             dz_update_rcvi ();                          /* update rx intr */
             if (dz_rbuf[dz]) {
-                /* Rechedule the next poll preceisely so that 
+                /* Reschedule the next poll preceisely so that the 
                    the programmed input speed is observed. */
                 sim_clock_coschedule_abs (dz_unit, tmxr_poll);
                 }
