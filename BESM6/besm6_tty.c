@@ -228,6 +228,14 @@ t_stat vt_clk (UNIT * this)
             tmxr_linemsg (t, "Encoding is UTF-8\r\n");
             break;
         }
+        if (sim_int_char < 040 || sim_int_char == 0177) {
+            sprintf (buf, "WRU – Break to sim> prompt character - is ^%c\r\n",
+                     sim_int_char ^ 0100);
+        } else {
+            sprintf (buf, "WRU – Break to sim> prompt character - is %c\r\n",
+                     sim_int_char);
+        }
+        tmxr_linemsg (t, buf);
         tty_idle_count[num] = 0;
         tty_last_time[num] = time (0);
         sprintf (buf, "%.24s from %s\r\n",
@@ -410,9 +418,9 @@ t_stat tty_setrate (UNIT *up, int32 v, CONST char *cp, void *dp) {
 t_stat tty_setturbo (UNIT *up, int32 v, CONST char *cp, void *dp) {
     if (!cp)
         return SCPE_MISVAL;
-    if (!sim_strcasecmp(cp, "ON"))
+    if (!MATCH_CMD("ON", cp))
         tty_turbo = 1;
-    else if (!sim_strcasecmp(cp, "OFF"))
+    else if (!MATCH_CMD("OFF", cp))
         tty_turbo = 0;
     else
         return SCPE_ARG;
