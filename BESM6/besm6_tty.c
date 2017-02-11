@@ -168,6 +168,12 @@ TMXR tty_desc = { LINES_MAX+1, 0, 0, tty_line };        /* mux descriptor */
 #define TTY_BSPACE_MASK         (1<<(UNIT_V_UF+4))
 #define TTY_CMDLINE_MASK        (1<<(UNIT_V_UF+5))
 
+static void reset_line(int num)
+{
+    /* Reset to a sensible default */
+    tty_unit[num].flags &= ~(TTY_CHARSET_MASK|TTY_BSPACE_MASK|TTY_CMDLINE_MASK);
+}
+
 t_stat tty_reset (DEVICE *dptr)
 {
     memset(tty_active, 0, sizeof(tty_active));
@@ -209,6 +215,7 @@ t_stat vt_clk (UNIT * this)
         TMLN *t = &tty_line [num];
         besm6_debug ("*** tty%d: a new connection from %s",
                      num, t->ipad);
+        reset_line (num);
         t->rcve = 1;
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_VT340_STATE;
