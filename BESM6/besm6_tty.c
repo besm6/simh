@@ -18,7 +18,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
  * SERGE VAKULENKO OR LEONID BROUKHIS BE LIABLE FOR ANY CLAIM, DAMAGES
  * OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE 
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
  * OR OTHER DEALINGS IN THE SOFTWARE.
 
  * Except as contained in this notice, the name of Leonid Broukhis or
@@ -265,8 +265,8 @@ t_stat vt_clk (UNIT * this)
     /* If the TTY system is not idle, schedule the next interrupt
      * by instruction count using the target interrupt rate of 300 Hz;
      * otherwise we can wait for a roughly equivalent wallclock time period,
-     * e.g. until the next 250 Hz wallclock interrupt, but making sure 
-     * that the model time interval between GRP_SERIAL interrupts 
+     * e.g. until the next 250 Hz wallclock interrupt, but making sure
+     * that the model time interval between GRP_SERIAL interrupts
      * is never less than expected.
      */
     if (vt_is_idle()) {
@@ -1048,7 +1048,7 @@ int vt_getc (int num)
         /* Пользователь отключился. */
         if (t->ipad) {
             besm6_debug ("*** tty%d: disconnecting %s",
-                         num, 
+                         num,
                          t->ipad);
             t->ipad = NULL;
         }
@@ -1060,6 +1060,7 @@ int vt_getc (int num)
         /* A telnet line. */
         c = tmxr_getc_ln (t);
         if (! (c & TMXR_VALID)) {
+#ifdef REMOTE_TIMEOUT
             now = sim_get_time (0);
             if (now > tty_last_time[num] + 5*60) {
                 ++tty_idle_count[num];
@@ -1071,6 +1072,7 @@ int vt_getc (int num)
                 tmxr_linemsg (t, "\r\nSIMH: WAKE UP!\r\n");
                 tty_last_time[num] = now;
             }
+#endif
             return -1;
         }
         tty_idle_count[num] = 0;
@@ -1242,7 +1244,7 @@ void vt_receive()
                 /* auto-enabling the interrupt just in case
                  * (seems to be unneeded as the interrupt is never disabled)
                  */
-                MGRP |= GRP_SERIAL;       
+                MGRP |= GRP_SERIAL;
                 vt_receiving |= mask;
             }
             break;
@@ -1271,7 +1273,7 @@ void vt_receive()
 }
 
 /*
- * Checking if all terminals are idle. 
+ * Checking if all terminals are idle.
  * SIMH should not enter idle mode until they are.
  */
 int vt_is_idle ()
