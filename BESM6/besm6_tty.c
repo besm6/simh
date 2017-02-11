@@ -1061,6 +1061,7 @@ int vt_getc (int num)
         /* A telnet line. */
         c = tmxr_getc_ln (t);
         if (! (c & TMXR_VALID)) {
+#ifdef REMOTE_TIMEOUT
             now = time (0);
             if (now > tty_last_time[num] + 5*60) {
                 ++tty_idle_count[num];
@@ -1072,6 +1073,7 @@ int vt_getc (int num)
                 tmxr_linemsg (t, "\r\nSIMH: WAKE UP!\r\n");
                 tty_last_time[num] = now;
             }
+#endif
             return -1;
         }
         tty_idle_count[num] = 0;
