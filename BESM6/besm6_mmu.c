@@ -206,10 +206,13 @@ REG mmu_reg[] = {
 };
 
 #define CACHE_ENB 1
+#define CHECK_ENB 2
 
 MTAB mmu_mod[] = {
     { 1, 0, "NOCACHE", "NOCACHE" },
     { 1, 1, "CACHE",   "CACHE" },
+    { 2, 0, "NOCHECK", "NOCHECK" },
+    { 2, 2, "CHECK",   "CHECK" },
     { 0 }
 };
 
@@ -482,7 +485,7 @@ t_value mmu_memaccess (int addr)
     }
 
     /* На тумблерных регистрах контроля числа не бывает */
-    if (addr >= 010 && ! IS_NUMBER (val)) {
+    if (addr >= 010 && ! IS_NUMBER (val) && (mmu_unit.flags & CHECK_ENB)) {
         iintr_data = addr & 7;
         besm6_debug ("--- (%05o) контроль числа", addr);
         longjmp (cpu_halt, STOP_RAM_CHECK);
