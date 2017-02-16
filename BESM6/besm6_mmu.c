@@ -147,7 +147,7 @@ t_value pult[11][8] = {
       SET_PARITY(00040000013700003LL, PARITY_INSN), /* 3: ati, vlm 3(2) */
       SET_PARITY(00013000607700002LL, PARITY_INSN), /* 4: arx 6, vlm 2(1) */
       SET_PARITY(00330000103000005LL, PARITY_INSN), /* 5: stop 1, uj 5 */
-      SET_PARITY(00000000000010001LL, PARITY_NUMBER) /* 6: =10001 */
+      SET_PARITY(00000000000010004LL, PARITY_NUMBER) /* 6: =10004 */
     },
 /* Hardwired program 10, magtape read */
     { 0176,
