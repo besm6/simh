@@ -228,11 +228,8 @@ int32 sim_emax = 1;     /* max number of addressable units per instruction */
 DEVICE *sim_devices[] = {
     &cpu_dev,
     &reg_dev,
-    &drum_dev,
-    &disk_dev,
     &mmu_dev,
     &clock_dev,
-    &printer_dev,
     &tty_dev,       /* терминалы - телетайпы, видеотоны, "Консулы" */
     0
 };
@@ -512,12 +509,12 @@ static void cmd_033 ()
         break;
     case 1: case 2:
         /* Управление обменом с магнитными барабанами */
-        drum (Aex - 1, (uint32) ACC);
+        //drum (Aex - 1, (uint32) ACC);
         break;
     case 3: case 4:
         /* Передача управляющего слова для обмена
          * с магнитными дисками */
-        disk_io (Aex - 3, (uint32) ACC);
+        //disk_io (Aex - 3, (uint32) ACC);
         break;
     case 5: case 6: case 7:
         /* TODO: управление обменом с магнитными лентами */
@@ -533,11 +530,11 @@ static void cmd_033 ()
         break;
     case 014: case 015:
         /* Управление АЦПУ */
-        printer_control (Aex - 014, (uint32) (ACC & 017));
+        //printer_control (Aex - 014, (uint32) (ACC & 017));
         break;
     case 023: case 024:
         /* Управление обменом с магнитными дисками */
-        disk_ctl (Aex - 023, (uint32) ACC);
+        //disk_ctl (Aex - 023, (uint32) ACC);
         break;
     case 030:
         /* Гашение ПРП */
@@ -569,7 +566,7 @@ static void cmd_033 ()
     case 050: case 051: case 052: case 053:
     case 054: case 055: case 056: case 057:
         /* Управление молоточками АЦПУ */
-        printer_hammer (Aex >= 050, Aex & 7, (uint32) (ACC & BITS(16)));
+        //printer_hammer (Aex >= 050, Aex & 7, (uint32) (ACC & BITS(16)));
         break;
     case 0140:
         /* Запись в регистр телеграфных каналов */
@@ -626,7 +623,7 @@ static void cmd_033 ()
         break;
     case 04003: case 04004:
         /* Запрос статуса контроллера магнитных дисков */
-        ACC = disk_state (Aex - 04003);
+        //ACC = disk_state (Aex - 04003);
         break;
     case 04006:
         /* TODO: считывание строки с устройства ввода
@@ -667,7 +664,7 @@ static void cmd_033 ()
         break;
     case 04035:
         /* Опрос триггера ОШМi - наличие ошибок при внешнем обмене. */
-        ACC = drum_errors() | disk_errors();
+        //ACC = drum_errors() | disk_errors();
         break;
     case 04100:
         /* Опрос телеграфных каналов связи */

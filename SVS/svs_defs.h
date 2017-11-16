@@ -45,17 +45,6 @@
 #define MEMSIZE         (512 * 1024)            /* memory size, words */
 
 /*
- * Drums and disks.
- *
- * One zone contains 1024 words of user memory and 8 system data words.
- * Every word (t_value) is stored as 8-byte record, low byte first.
- * System data is stored first, then user data.
- */
-#define ZONE_SIZE       (8 + 1024)              /* 1kword zone size, words */
-#define DRUM_SIZE       (256 * ZONE_SIZE)       /* drum size per controller, words */
-#define DISK_SIZE       (1024 * ZONE_SIZE)      /* disk size per unit, words */
-
-/*
  * Simulator stop codes
  */
 enum {
@@ -141,9 +130,8 @@ extern t_value ACC, RMR;
 extern uint32 BAZ[8], TABST, RZ;
 extern uint32 READY; /* read by ext 4031 */
 extern uint32 READY2; /* read by ext 4102 */
-extern DEVICE cpu_dev, drum_dev, mmu_dev, disk_dev;
+extern DEVICE cpu_dev, mmu_dev;
 extern DEVICE clock_dev;
-extern DEVICE printer_dev;
 extern DEVICE tty_dev;
 extern jmp_buf cpu_halt;
 
@@ -311,26 +299,6 @@ extern void mmu_setprotection (int idx, t_value word);
  */
 extern void gost_putc(unsigned char, FILE *);
 extern int odd_parity(unsigned char);
-
-/*
- * Выполнение обращения к барабану.
- */
-void drum (int ctlr, uint32 cmd);
-int drum_errors (void);
-
-/*
- * Обращение к дискам.
- */
-void disk_io (int ctlr, uint32 cmd);
-void disk_ctl (int ctlr, uint32 cmd);
-int disk_state (int ctlr);
-int disk_errors (void);
-
-/*
- * Печать на АЦПУ.
- */
-void printer_control (int num, uint32 cmd);
-void printer_hammer (int num, int pos, uint32 mask);
 
 /*
  * Терминалы (телетайпы, видеотоны, "Консулы").

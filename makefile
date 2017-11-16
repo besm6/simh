@@ -1488,8 +1488,7 @@ endif
 
 SVSD = SVS
 SVS = ${SVSD}/svs_cpu.c ${SVSD}/svs_sys.c ${SVSD}/svs_mmu.c \
-        ${SVSD}/svs_arith.c ${SVSD}/svs_disk.c ${SVSD}/svs_drum.c \
-        ${SVSD}/svs_tty.c ${SVSD}/svs_printer.c
+        ${SVSD}/svs_arith.c ${SVSD}/svs_tty.c
 SVS_OPT = -I ${SVSD} -DUSE_INT64
 
 ###
