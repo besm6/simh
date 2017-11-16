@@ -110,16 +110,16 @@ enum {
  */
 #define MEAN_TIME(x,y)  (x>y ? x+y/2 : x/2+y)
 
-#define USEC    1               /* 1 microsecond */
-#define MSEC    (1000*USEC)     /* 1 millisecond */
-#define CLK_TPS   250           /* Fast Clock Ticks Per Second (every 4ms) */
-#define CLK_DELAY 4000          /* Uncalibrated instructions per clock tick */
+#define USEC        1           /* 1 microsecond */
+#define MSEC        (1000*USEC) /* 1 millisecond */
+#define CLK_TPS     250         /* Fast Clock Ticks Per Second (every 4ms) */
+#define CLK_DELAY   4000        /* Uncalibrated instructions per clock tick */
 
 extern UNIT cpu_unit;
 extern UNIT tty_unit[];
 extern UNIT clocks[];
-extern t_value memory [MEMSIZE];
-extern t_value pult [11][8];
+extern t_value memory[MEMSIZE];
+extern t_value pult[11][8];
 extern unsigned pult_packet_switch; /* selector of hardwired programs */
 
 extern uint32 PC, RAU, RUU;
@@ -128,8 +128,6 @@ extern t_value BRZ[8], RP[8], GRP, MGRP;
 extern uint32 PRP, MPRP;
 extern t_value ACC, RMR;
 extern uint32 BAZ[8], TABST, RZ;
-extern uint32 READY; /* read by ext 4031 */
-extern uint32 READY2; /* read by ext 4102 */
 extern DEVICE cpu_dev, mmu_dev;
 extern DEVICE clock_dev;
 extern DEVICE tty_dev;
@@ -286,13 +284,13 @@ extern jmp_buf cpu_halt;
 /*
  * Процедуры работы с памятью
  */
-extern void mmu_store (int addr, t_value word);
-extern t_value mmu_load (int addr);
-extern t_value mmu_fetch (int addr);
-extern t_value mmu_prefetch (int addr, int actual);
-extern void mmu_setrp (int idx, t_value word);
-extern void mmu_setup (void);
-extern void mmu_setprotection (int idx, t_value word);
+extern void mmu_store(int addr, t_value word);
+extern t_value mmu_load(int addr);
+extern t_value mmu_fetch(int addr);
+extern t_value mmu_prefetch(int addr, int actual);
+extern void mmu_setrp(int idx, t_value word);
+extern void mmu_setup(void);
+extern void mmu_setprotection(int idx, t_value word);
 
 /*
  * Utility functions
@@ -303,39 +301,39 @@ extern int odd_parity(unsigned char);
 /*
  * Терминалы (телетайпы, видеотоны, "Консулы").
  */
-void tty_send (uint32 mask);
-int tty_query (void);
-void vt_print (void);
-void tt_print (void);
-void vt_receive (void);
-void consul_print (int num, uint32 cmd);
-uint32 consul_read (int num);
-int vt_is_idle (void);
+void tty_send(uint32 mask);
+int tty_query(void);
+void vt_print(void);
+void tt_print(void);
+void vt_receive(void);
+void consul_print(int num, uint32 cmd);
+uint32 consul_read(int num);
+int vt_is_idle(void);
 
 /*
  * Отладочная выдача.
  */
-void svs_fprint_cmd (FILE *of, uint32 cmd);
-void svs_log (const char *fmt, ...);
-void svs_log_cont (const char *fmt, ...);
-void svs_debug (const char *fmt, ...);
-t_stat fprint_sym (FILE *of, t_addr addr, t_value *val,
-                   UNIT *uptr, int32 sw);
+void svs_fprint_cmd(FILE *of, uint32 cmd);
+void svs_log(const char *fmt, ...);
+void svs_log_cont(const char *fmt, ...);
+void svs_debug(const char *fmt, ...);
+t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
+                  UNIT *uptr, int32 sw);
 
 /*
  * Арифметика.
  */
-double svs_to_ieee (t_value word);
-void svs_add (t_value val, int negate_acc, int negate_val);
-void svs_divide (t_value val);
-void svs_multiply (t_value val);
-void svs_change_sign (int sign);
-void svs_add_exponent (int val);
-int svs_highest_bit (t_value val);
-void svs_shift (int toright);
-int svs_count_ones (t_value word);
-t_value svs_pack (t_value val, t_value mask);
-t_value svs_unpack (t_value val, t_value mask);
+double svs_to_ieee(t_value word);
+void svs_add(t_value val, int negate_acc, int negate_val);
+void svs_divide(t_value val);
+void svs_multiply(t_value val);
+void svs_change_sign(int sign);
+void svs_add_exponent(int val);
+int svs_highest_bit(t_value val);
+void svs_shift(int toright);
+int svs_count_ones(t_value word);
+t_value svs_pack(t_value val, t_value mask);
+t_value svs_unpack(t_value val, t_value mask);
 
 /*
  * Bits of the main interrupt register ГРП (GRP)

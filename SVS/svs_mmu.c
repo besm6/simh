@@ -37,7 +37,7 @@
  * mmu_reg      MMU register list
  */
 UNIT mmu_unit = {
-    UDATA (NULL, UNIT_FIX, 8)
+    UDATA(NULL, UNIT_FIX, 8)
 };
 
 /*
@@ -180,9 +180,9 @@ MTAB mmu_mod[] = {
     { 0 }
 };
 
-t_stat mmu_reset (DEVICE *dptr);
+t_stat mmu_reset(DEVICE *dptr);
 
-t_stat mmu_examine (t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
+t_stat mmu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
 {
     //mmu_print_brz();
     return SCPE_NOFNC;
@@ -199,7 +199,7 @@ DEVICE mmu_dev = {
 /*
  * Reset routine
  */
-t_stat mmu_reset (DEVICE *dptr)
+t_stat mmu_reset(DEVICE *dptr)
 {
     int i;
     for (i = 0; i < 8; ++i) {
@@ -209,29 +209,29 @@ t_stat mmu_reset (DEVICE *dptr)
     /*
      * Front panel switches survive the reset
      */
-    sim_cancel (&mmu_unit);
+    sim_cancel(&mmu_unit);
     return SCPE_OK;
 }
 
-void mmu_protection_check (int addr)
+void mmu_protection_check(int addr)
 {
     /* Защита блокируется в режиме супервизора для физических (!) адресов 1-7 (ТО-8) - WTF? */
     int tmp_prot_disabled = (M[PSW] & PSW_PROT_DISABLE) ||
-        (IS_SUPERVISOR (RUU) && (M[PSW] & PSW_MMAP_DISABLE) && addr < 010);
+        (IS_SUPERVISOR(RUU) && (M[PSW] & PSW_MMAP_DISABLE) && addr < 010);
 
     /* Защита не заблокирована, а лист закрыт */
     if (! tmp_prot_disabled && (RZ & (1 << (addr >> 10)))) {
         iintr_data = addr >> 10;
         if (mmu_dev.dctrl)
-            svs_debug ("--- (%05o) защита числа", addr);
-        longjmp (cpu_halt, STOP_OPERAND_PROT);
+            svs_debug("--- (%05o) защита числа", addr);
+        longjmp(cpu_halt, STOP_OPERAND_PROT);
     }
 }
 
 /*
  * Запись слова в память
  */
-void mmu_store (int addr, t_value val)
+void mmu_store(int addr, t_value val)
 {
     int matching;
 
@@ -239,12 +239,12 @@ void mmu_store (int addr, t_value val)
     if (addr == 0)
         return;
     if (sim_log && mmu_dev.dctrl) {
-        fprintf (sim_log, "--- (%05o) запись ", addr);
-        fprint_sym (sim_log, 0, &val, 0, 0);
-        fprintf (sim_log, "\n");
+        fprintf(sim_log, "--- (%05o) запись ", addr);
+        fprint_sym(sim_log, 0, &val, 0, 0);
+        fprintf(sim_log, "\n");
     }
 
-    mmu_protection_check (addr);
+    mmu_protection_check(addr);
 
     /* Различаем адреса с припиской и без */
     if (M[PSW] & PSW_MMAP_DISABLE)
@@ -255,11 +255,11 @@ void mmu_store (int addr, t_value val)
         longjmp(cpu_halt, STOP_STORE_ADDR_MATCH);
 
     if (sim_brk_summ & SWMASK('W') &&
-        sim_brk_test (addr, SWMASK('W')))
+        sim_brk_test(addr, SWMASK('W')))
         longjmp(cpu_halt, STOP_WWATCH);
 }
 
-t_value mmu_memaccess (int addr)
+t_value mmu_memaccess(int addr)
 {
     t_value val;
 
@@ -282,16 +282,16 @@ t_value mmu_memaccess (int addr)
         }
     }
     if (sim_log && (mmu_dev.dctrl || (cpu_dev.dctrl && sim_deb))) {
-        fprintf (sim_log, "--- (%05o) чтение ", addr & BITS(15));
-        fprint_sym (sim_log, 0, &val, 0, 0);
-        fprintf (sim_log, "\n");
+        fprintf(sim_log, "--- (%05o) чтение ", addr & BITS(15));
+        fprint_sym(sim_log, 0, &val, 0, 0);
+        fprintf(sim_log, "\n");
     }
 
     /* На тумблерных регистрах контроля числа не бывает */
-    if (addr >= 010 && ! IS_NUMBER (val) && (mmu_unit.flags & CHECK_ENB)) {
+    if (addr >= 010 && ! IS_NUMBER(val) && (mmu_unit.flags & CHECK_ENB)) {
         iintr_data = addr & 7;
-        svs_debug ("--- (%05o) контроль числа", addr);
-        longjmp (cpu_halt, STOP_RAM_CHECK);
+        svs_debug("--- (%05o) контроль числа", addr);
+        longjmp(cpu_halt, STOP_RAM_CHECK);
     }
     return val;
 }
@@ -299,7 +299,7 @@ t_value mmu_memaccess (int addr)
 /*
  * Чтение операнда
  */
-t_value mmu_load (int addr)
+t_value mmu_load(int addr)
 {
     int matching = -1;
     t_value val;
@@ -308,7 +308,7 @@ t_value mmu_load (int addr)
     if (addr == 0)
         return 0;
 
-    mmu_protection_check (addr);
+    mmu_protection_check(addr);
 
     /* Различаем адреса с припиской и без */
     if (M[PSW] & PSW_MMAP_DISABLE)
@@ -319,13 +319,13 @@ t_value mmu_load (int addr)
         longjmp(cpu_halt, STOP_LOAD_ADDR_MATCH);
 
     if (sim_brk_summ & SWMASK('R') &&
-        sim_brk_test (addr, SWMASK('R')))
+        sim_brk_test(addr, SWMASK('R')))
         longjmp(cpu_halt, STOP_RWATCH);
 
-    return mmu_memaccess (addr) & BITS48;
+    return mmu_memaccess(addr) & BITS48;
 }
 
-void mmu_fetch_check (int addr)
+void mmu_fetch_check(int addr)
 {
     /* В режиме супервизора защиты нет */
     if (! IS_SUPERVISOR(RUU)) {
@@ -337,8 +337,8 @@ void mmu_fetch_check (int addr)
         if (page == 0) {
             iintr_data = addr >> 10;
             if (mmu_dev.dctrl)
-                svs_debug ("--- (%05o) защита команды", addr);
-            longjmp (cpu_halt, STOP_INSN_PROT);
+                svs_debug("--- (%05o) защита команды", addr);
+            longjmp(cpu_halt, STOP_INSN_PROT);
         }
     }
 }
@@ -346,7 +346,7 @@ void mmu_fetch_check (int addr)
 /*
  * Предвыборка команды на БРС
  */
-t_value mmu_prefetch (int addr, int actual)
+t_value mmu_prefetch(int addr, int actual)
 {
     t_value val;
     int i;
@@ -384,20 +384,20 @@ t_value mmu_prefetch (int addr, int actual)
 /*
  * Выборка команды
  */
-t_value mmu_fetch (int addr)
+t_value mmu_fetch(int addr)
 {
     t_value val;
 
     if (addr == 0) {
         if (mmu_dev.dctrl)
-            svs_debug ("--- передача управления на 0");
-        longjmp (cpu_halt, STOP_INSN_CHECK);
+            svs_debug("--- передача управления на 0");
+        longjmp(cpu_halt, STOP_INSN_CHECK);
     }
 
     mmu_fetch_check(addr);
 
     /* Различаем адреса с припиской и без */
-    if (IS_SUPERVISOR (RUU))
+    if (IS_SUPERVISOR(RUU))
         addr |= 0100000;
 
     /* КРА */
@@ -407,20 +407,20 @@ t_value mmu_fetch (int addr)
     val = mmu_prefetch(addr, 1);
 
     if (sim_log && mmu_dev.dctrl) {
-        fprintf (sim_log, "--- (%05o) выборка ", addr);
-        fprint_sym (sim_log, 0, &val, 0, SWMASK ('I'));
-        fprintf (sim_log, "\n");
+        fprintf(sim_log, "--- (%05o) выборка ", addr);
+        fprint_sym(sim_log, 0, &val, 0, SWMASK('I'));
+        fprintf(sim_log, "\n");
     }
 
     /* Тумблерные регистры пока только с командной сверткой */
-    if (addr >= 010 && ! IS_INSN (val)) {
-        svs_debug ("--- (%05o) контроль команды", addr);
-        longjmp (cpu_halt, STOP_INSN_CHECK);
+    if (addr >= 010 && ! IS_INSN(val)) {
+        svs_debug("--- (%05o) контроль команды", addr);
+        longjmp(cpu_halt, STOP_INSN_CHECK);
     }
     return val & BITS48;
 }
 
-void mmu_setrp (int idx, t_value val)
+void mmu_setrp(int idx, t_value val)
 {
     uint32 p0, p1, p2, p3;
     const uint32 mask = (MEMSIZE >> 10) - 1;
@@ -449,7 +449,7 @@ void mmu_setrp (int idx, t_value val)
     TLB[idx*4+3] = p3;
 }
 
-void mmu_setup ()
+void mmu_setup()
 {
     const uint32 mask = (MEMSIZE >> 10) - 1;
     int i;
@@ -463,7 +463,7 @@ void mmu_setup ()
     }
 }
 
-void mmu_setprotection (int idx, t_value val)
+void mmu_setprotection(int idx, t_value val)
 {
     /* Разряды сумматора, записываемые в регистр защиты - 21-28 */
     int mask = 0xff << (idx * 8);

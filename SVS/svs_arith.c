@@ -34,7 +34,7 @@ typedef struct {
     unsigned exponent;                  /* offset by 64 */
 } alureg_t;                             /* ALU register type */
 
-static alureg_t toalu (t_value val)
+static alureg_t toalu(t_value val)
 {
     alureg_t ret;
 
@@ -45,21 +45,21 @@ static alureg_t toalu (t_value val)
     return ret;
 }
 
-static int SIM_INLINE is_negative (alureg_t *word)
+static int SIM_INLINE is_negative(alureg_t *word)
 {
     return (word->mantissa & BIT41) != 0;
 }
 
-static void negate (alureg_t *val)
+static void negate(alureg_t *val)
 {
-    if (is_negative (val))
+    if (is_negative(val))
         val->mantissa |= BIT42;
     val->mantissa = (~val->mantissa + 1) & BITS42;
     if (((val->mantissa >> 1) ^ val->mantissa) & BIT41) {
         val->mantissa >>= 1;
         ++val->exponent;
     }
-    if (is_negative (val))
+    if (is_negative(val))
         val->mantissa |= BIT42;
 }
 
@@ -68,7 +68,7 @@ static void negate (alureg_t *val)
  * Единица 1-го разряда и нулевое слово -> 48,
  * как в первоначальном варианте системы команд.
  */
-int svs_highest_bit (t_value val)
+int svs_highest_bit(t_value val)
 {
     int n = 32, cnt = 0;
     do {
@@ -86,7 +86,7 @@ int svs_highest_bit (t_value val)
  * Результат помещается в регистры ACC и 40-1 разряды RMR.
  * 48-41 разряды RMR сохраняются.
  */
-static void normalize_and_round (alureg_t acc, t_uint64 mr, int rnd_rq)
+static void normalize_and_round(alureg_t acc, t_uint64 mr, int rnd_rq)
 {
     t_uint64 rr = 0;
     int i;
@@ -98,7 +98,7 @@ static void normalize_and_round (alureg_t acc, t_uint64 mr, int rnd_rq)
     if (i == 0) {
         r = acc.mantissa & BITS40;
         if (r) {
-            int cnt = svs_highest_bit (r) - 9;
+            int cnt = svs_highest_bit(r) - 9;
             r <<= cnt;
             rr = mr >> (40 - cnt);
             acc.mantissa = r | rr;
@@ -108,7 +108,7 @@ static void normalize_and_round (alureg_t acc, t_uint64 mr, int rnd_rq)
         }
         r = mr & BITS40;
         if (r) {
-            int cnt = svs_highest_bit (r) - 9;
+            int cnt = svs_highest_bit(r) - 9;
             rr = mr;
             r <<= cnt;
             acc.mantissa = r;
@@ -120,7 +120,7 @@ static void normalize_and_round (alureg_t acc, t_uint64 mr, int rnd_rq)
     } else if (i == 3) {
         r = ~acc.mantissa & BITS40;
         if (r) {
-            int cnt = svs_highest_bit (r) - 9;
+            int cnt = svs_highest_bit(r) - 9;
             r = (r << cnt) | ((1LL << cnt) - 1);
             rr = mr >> (40 - cnt);
             acc.mantissa = BIT41 | (~r & BITS40) | rr;
@@ -130,7 +130,7 @@ static void normalize_and_round (alureg_t acc, t_uint64 mr, int rnd_rq)
         }
         r = ~mr & BITS40;
         if (r) {
-            int cnt = svs_highest_bit (r) - 9;
+            int cnt = svs_highest_bit(r) - 9;
             rr = mr;
             r = (r << cnt) | ((1LL << cnt) - 1);
             acc.mantissa = BIT41 | (~r & BITS40);
@@ -145,10 +145,10 @@ static void normalize_and_round (alureg_t acc, t_uint64 mr, int rnd_rq)
             goto chk_zero;
         }
     }
-  chk_zero:
+chk_zero:
     if (rr)
         rnd_rq = 0;
-  chk_rnd:
+chk_rnd:
     if (acc.exponent & 0x8000)
         goto zero;
     if (! (RAU & RAU_ROUND_DISABLE) && rnd_rq)
@@ -166,7 +166,7 @@ static void normalize_and_round (alureg_t acc, t_uint64 mr, int rnd_rq)
     /* При переполнении мантисса и младшие разряды порядка верны */
     if (acc.exponent & 0x80) {
         if (! (RAU & RAU_OVF_DISABLE))
-            longjmp (cpu_halt, STOP_OVFL);
+            longjmp(cpu_halt, STOP_OVFL);
     }
 }
 
@@ -175,31 +175,31 @@ static void normalize_and_round (alureg_t acc, t_uint64 mr, int rnd_rq)
  * Исходные значения: регистр ACC и аргумент 'val'.
  * Результат помещается в регистр ACC и 40-1 разряды RMR.
  */
-void svs_add (t_value val, int negate_acc, int negate_val)
+void svs_add(t_value val, int negate_acc, int negate_val)
 {
     t_uint64 mr;
     alureg_t acc, word, a1, a2;
     int diff, neg, rnd_rq = 0;
 
-    acc = toalu (ACC);
-    word = toalu (val);
+    acc = toalu(ACC);
+    word = toalu(val);
     if (! negate_acc) {
         if (! negate_val) {
             /* Сложение */
         } else {
             /* Вычитание */
-            negate (&word);
+            negate(&word);
         }
     } else {
         if (! negate_val) {
             /* Обратное вычитание */
-            negate (&acc);
+            negate(&acc);
         } else {
             /* Вычитание модулей */
-            if (is_negative (&acc))
-                negate (&acc);
-            if (! is_negative (&word))
-                negate (&word);
+            if (is_negative(&acc))
+                negate(&acc);
+            if (! is_negative(&word))
+                negate(&word);
         }
     }
 
@@ -213,7 +213,7 @@ void svs_add (t_value val, int negate_acc, int negate_val)
         a2 = acc;
     }
     mr = 0;
-    neg = is_negative (&a1);
+    neg = is_negative(&a1);
     if (diff == 0) {
         /* Nothing to do. */
     } else if (diff <= 40) {
@@ -250,16 +250,17 @@ void svs_add (t_value val, int negate_acc, int negate_val)
         acc.mantissa >>= 1;
         ++acc.exponent;
     }
-    normalize_and_round (acc, mr, rnd_rq);
+    normalize_and_round(acc, mr, rnd_rq);
 }
 
 /*
  * non-restoring division
  */
+static alureg_t nrdiv(alureg_t n, alureg_t d)
+{
 #define ABS(x) ((x) < 0 ? -x : x)
 #define INT64(x) ((x) & BIT41 ? (0xFFFFFFFFFFFFFFFFLL << 40) | (x) : x)
-static alureg_t nrdiv (alureg_t n, alureg_t d)
-{
+
     t_int64 nn, dd, q, res;
     alureg_t quot;
 
@@ -298,21 +299,21 @@ static alureg_t nrdiv (alureg_t n, alureg_t d)
  * Исходные значения: регистр ACC и аргумент 'val'.
  * Результат помещается в регистр ACC, содержимое RMR не определено.
  */
-void svs_divide (t_value val)
+void svs_divide(t_value val)
 {
     alureg_t acc;
     alureg_t dividend, divisor;
 
     if (((val ^ (val << 1)) & BIT41) == 0) {
         /* Ненормализованный делитель: деление на ноль. */
-        longjmp (cpu_halt, STOP_DIVZERO);
+        longjmp(cpu_halt, STOP_DIVZERO);
     }
     dividend = toalu(ACC);
     divisor = toalu(val);
 
     acc = nrdiv(dividend, divisor);
 
-    normalize_and_round (acc, 0, 0);
+    normalize_and_round(acc, 0, 0);
 }
 
 /*
@@ -320,7 +321,7 @@ void svs_divide (t_value val)
  * Исходные значения: регистр ACC и аргумент 'val'.
  * Результат помещается в регистр ACC и 40-1 разряды RMR.
  */
-void svs_multiply (t_value val)
+void svs_multiply(t_value val)
 {
     uint8           neg = 0;
     alureg_t        acc, word, a, b;
@@ -334,20 +335,20 @@ void svs_multiply (t_value val)
         RMR &= ~BITS40;
         return;
     }
-    acc = toalu (ACC);
-    word = toalu (val);
+    acc = toalu(ACC);
+    word = toalu(val);
 
     a = acc;
     b = word;
     mr = 0;
 
-    if (is_negative (&a)) {
+    if (is_negative(&a)) {
         neg = 1;
-        negate (&a);
+        negate(&a);
     }
-    if (is_negative (&b)) {
+    if (is_negative(&b)) {
         neg ^= 1;
-        negate (&b);
+        negate(&b);
     }
     acc.exponent = a.exponent + b.exponent - 64;
 
@@ -371,42 +372,42 @@ void svs_multiply (t_value val)
         mr &= BITS40;
     }
 
-    normalize_and_round (acc, mr, mr != 0);
+    normalize_and_round(acc, mr, mr != 0);
 }
 
 /*
  * Изменение знака числа на сумматоре ACC.
  * Результат помещается в регистр ACC, RMR гасится.
  */
-void svs_change_sign (int negate_acc)
+void svs_change_sign(int negate_acc)
 {
     alureg_t acc;
 
-    acc = toalu (ACC);
+    acc = toalu(ACC);
     if (negate_acc)
-        negate (&acc);
+        negate(&acc);
     RMR = 0;
-    normalize_and_round (acc, 0, 0);
+    normalize_and_round(acc, 0, 0);
 }
 
 /*
  * Изменение порядка числа на сумматоре ACC.
  * Результат помещается в регистр ACC, RMR гасится.
  */
-void svs_add_exponent (int val)
+void svs_add_exponent(int val)
 {
     alureg_t acc;
 
-    acc = toalu (ACC);
+    acc = toalu(ACC);
     acc.exponent += val;
     RMR = 0;
-    normalize_and_round (acc, 0, 0);
+    normalize_and_round(acc, 0, 0);
 }
 
 /*
  * Сборка значения по маске.
  */
-t_value svs_pack (t_value val, t_value mask)
+t_value svs_pack(t_value val, t_value mask)
 {
     t_value result;
 
@@ -423,7 +424,7 @@ t_value svs_pack (t_value val, t_value mask)
 /*
  * Разборка значения по маске.
  */
-t_value svs_unpack (t_value val, t_value mask)
+t_value svs_unpack(t_value val, t_value mask)
 {
     t_value result;
     int i;
@@ -444,7 +445,7 @@ t_value svs_unpack (t_value val, t_value mask)
 /*
  * Подсчёт количества единиц в слове.
  */
-int svs_count_ones (t_value word)
+int svs_count_ones(t_value word)
 {
     int c;
 
@@ -457,7 +458,7 @@ int svs_count_ones (t_value word)
  * Сдвиг сумматора ACC с выдвижением в регистр младших разрядов RMR.
  * Величина сдвига находится в диапазоне -64..63.
  */
-void svs_shift (int i)
+void svs_shift(int i)
 {
     RMR = 0;
     if (i > 0) {
