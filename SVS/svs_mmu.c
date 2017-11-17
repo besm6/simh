@@ -124,10 +124,8 @@ t_value pult_tab[11][8] = {
     },
 };
 
-void mmu_protection_check(int addr)
+static void mmu_protection_check(CORE *cpu, int addr)
 {
-    CORE *cpu = &cpu0_core;
-
     /* Защита блокируется в режиме супервизора для физических (!) адресов 1-7 (ТО-8) - WTF? */
     int tmp_prot_disabled = (cpu->M[PSW] & PSW_PROT_DISABLE) ||
         (IS_SUPERVISOR(cpu->RUU) && (cpu->M[PSW] & PSW_MMAP_DISABLE) && addr < 010);
@@ -144,11 +142,8 @@ void mmu_protection_check(int addr)
 /*
  * Запись слова в память
  */
-void mmu_store(int addr, t_value val)
+void mmu_store(CORE *cpu, int addr, t_value val)
 {
-    CORE *cpu = &cpu0_core;
-    int matching;
-
     addr &= BITS(15);
     if (addr == 0)
         return;
@@ -158,7 +153,7 @@ void mmu_store(int addr, t_value val)
         fprintf(sim_log, "\n");
     }
 
-    mmu_protection_check(addr);
+    mmu_protection_check(cpu, addr);
 
     /* Различаем адреса с припиской и без */
     if (cpu->M[PSW] & PSW_MMAP_DISABLE)
@@ -173,9 +168,8 @@ void mmu_store(int addr, t_value val)
         longjmp(cpu->exception, STOP_WWATCH);
 }
 
-t_value mmu_memaccess(int addr)
+static t_value mmu_memaccess(CORE *cpu, int addr)
 {
-    CORE *cpu = &cpu0_core;
     t_value val;
 
     /* Вычисляем физический адрес слова */
@@ -215,17 +209,13 @@ t_value mmu_memaccess(int addr)
 /*
  * Чтение операнда
  */
-t_value mmu_load(int addr)
+t_value mmu_load(CORE *cpu, int addr)
 {
-    CORE *cpu = &cpu0_core;
-    int matching = -1;
-    t_value val;
-
     addr &= BITS(15);
     if (addr == 0)
         return 0;
 
-    mmu_protection_check(addr);
+    mmu_protection_check(cpu, addr);
 
     /* Различаем адреса с припиской и без */
     if (cpu->M[PSW] & PSW_MMAP_DISABLE)
@@ -239,13 +229,11 @@ t_value mmu_load(int addr)
         sim_brk_test(addr, SWMASK('R')))
         longjmp(cpu->exception, STOP_RWATCH);
 
-    return mmu_memaccess(addr) & BITS48;
+    return mmu_memaccess(cpu, addr) & BITS48;
 }
 
-void mmu_fetch_check(int addr)
+static void mmu_fetch_check(CORE *cpu, int addr)
 {
-    CORE *cpu = &cpu0_core;
-
     /* В режиме супервизора защиты нет */
     if (! IS_SUPERVISOR(cpu->RUU)) {
         int page = cpu->TLB[addr >> 10];
@@ -265,18 +253,9 @@ void mmu_fetch_check(int addr)
 /*
  * Предвыборка команды на БРС
  */
-t_value mmu_prefetch(int addr, int actual)
+static t_value mmu_prefetch(CORE *cpu, int addr)
 {
-    CORE *cpu = &cpu0_core;
     t_value val;
-    int i;
-
-    if (!actual) {
-        return 0;
-    } else {
-        /* Чтобы лампочки мигали */
-        i = addr & 3;
-    }
 
     if (addr < 0100000) {
         int page = cpu->TLB[addr >> 10];
@@ -295,8 +274,9 @@ t_value mmu_prefetch(int addr, int actual)
             /* from switch regs */
             val = cpu->pult[addr];
         }
-    } else
+    } else {
         val = memory[addr];
+    }
 
     return val;
 }
@@ -304,9 +284,8 @@ t_value mmu_prefetch(int addr, int actual)
 /*
  * Выборка команды
  */
-t_value mmu_fetch(int addr)
+t_value mmu_fetch(CORE *cpu, int addr)
 {
-    CORE *cpu = &cpu0_core;
     t_value val;
 
     if (addr == 0) {
@@ -315,7 +294,7 @@ t_value mmu_fetch(int addr)
         longjmp(cpu->exception, STOP_INSN_CHECK);
     }
 
-    mmu_fetch_check(addr);
+    mmu_fetch_check(cpu, addr);
 
     /* Различаем адреса с припиской и без */
     if (IS_SUPERVISOR(cpu->RUU))
@@ -325,7 +304,7 @@ t_value mmu_fetch(int addr)
     if (cpu->M[IBP] == addr)
         longjmp(cpu->exception, STOP_INSN_ADDR_MATCH);
 
-    val = mmu_prefetch(addr, 1);
+    val = mmu_prefetch(cpu, addr);
 
     if (sim_log && cpu_dev.dctrl) {
         fprintf(sim_log, "--- (%05o) выборка ", addr);
@@ -341,9 +320,8 @@ t_value mmu_fetch(int addr)
     return val & BITS48;
 }
 
-void mmu_setrp(int idx, t_value val)
+void mmu_set_rp(CORE *cpu, int idx, t_value val)
 {
-    CORE *cpu = &cpu0_core;
     uint32 p0, p1, p2, p3;
     const uint32 mask = (MEMSIZE >> 10) - 1;
 
@@ -371,9 +349,8 @@ void mmu_setrp(int idx, t_value val)
     cpu->TLB[idx*4+3] = p3;
 }
 
-void mmu_setup()
+void mmu_setup(CORE *cpu)
 {
-    CORE *cpu = &cpu0_core;
     const uint32 mask = (MEMSIZE >> 10) - 1;
     int i;
 
@@ -386,10 +363,8 @@ void mmu_setup()
     }
 }
 
-void mmu_setprotection(int idx, t_value val)
+void mmu_set_protection(CORE *cpu, int idx, t_value val)
 {
-    CORE *cpu = &cpu0_core;
-
     /* Разряды сумматора, записываемые в регистр защиты - 21-28 */
     int mask = 0xff << (idx * 8);
 

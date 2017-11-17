@@ -86,9 +86,8 @@ int svs_highest_bit(t_value val)
  * Результат помещается в регистры ACC и 40-1 разряды RMR.
  * 48-41 разряды RMR сохраняются.
  */
-static void normalize_and_round(alureg_t acc, t_uint64 mr, int rnd_rq)
+static void normalize_and_round(CORE *cpu, alureg_t acc, t_uint64 mr, int rnd_rq)
 {
-    CORE *cpu = &cpu0_core;
     t_uint64 rr = 0;
     int i;
     t_uint64 r;
@@ -176,9 +175,8 @@ zero:   cpu->ACC = 0;
  * Исходные значения: регистр ACC и аргумент 'val'.
  * Результат помещается в регистр ACC и 40-1 разряды RMR.
  */
-void svs_add(t_value val, int negate_acc, int negate_val)
+void svs_add(CORE *cpu, t_value val, int negate_acc, int negate_val)
 {
-    CORE *cpu = &cpu0_core;
     t_uint64 mr;
     alureg_t acc, word, a1, a2;
     int diff, neg, rnd_rq = 0;
@@ -252,7 +250,7 @@ void svs_add(t_value val, int negate_acc, int negate_val)
         acc.mantissa >>= 1;
         ++acc.exponent;
     }
-    normalize_and_round(acc, mr, rnd_rq);
+    normalize_and_round(cpu, acc, mr, rnd_rq);
 }
 
 /*
@@ -301,9 +299,8 @@ static alureg_t nrdiv(alureg_t n, alureg_t d)
  * Исходные значения: регистр ACC и аргумент 'val'.
  * Результат помещается в регистр ACC, содержимое RMR не определено.
  */
-void svs_divide(t_value val)
+void svs_divide(CORE *cpu, t_value val)
 {
-    CORE *cpu = &cpu0_core;
     alureg_t acc;
     alureg_t dividend, divisor;
 
@@ -316,7 +313,7 @@ void svs_divide(t_value val)
 
     acc = nrdiv(dividend, divisor);
 
-    normalize_and_round(acc, 0, 0);
+    normalize_and_round(cpu, acc, 0, 0);
 }
 
 /*
@@ -324,10 +321,9 @@ void svs_divide(t_value val)
  * Исходные значения: регистр ACC и аргумент 'val'.
  * Результат помещается в регистр ACC и 40-1 разряды RMR.
  */
-void svs_multiply(t_value val)
+void svs_multiply(CORE *cpu, t_value val)
 {
-    CORE     *cpu = &cpu0_core;
-    uint8    neg = 0;
+    uint8 neg = 0;
     alureg_t acc, word, a, b;
     t_uint64 mr, alo, blo, ahi, bhi;
 
@@ -376,38 +372,36 @@ void svs_multiply(t_value val)
         mr &= BITS40;
     }
 
-    normalize_and_round(acc, mr, mr != 0);
+    normalize_and_round(cpu, acc, mr, mr != 0);
 }
 
 /*
  * Изменение знака числа на сумматоре ACC.
  * Результат помещается в регистр ACC, RMR гасится.
  */
-void svs_change_sign(int negate_acc)
+void svs_change_sign(CORE *cpu, int negate_acc)
 {
-    CORE *cpu = &cpu0_core;
     alureg_t acc;
 
     acc = toalu(cpu->ACC);
     if (negate_acc)
         negate(&acc);
     cpu->RMR = 0;
-    normalize_and_round(acc, 0, 0);
+    normalize_and_round(cpu, acc, 0, 0);
 }
 
 /*
  * Изменение порядка числа на сумматоре ACC.
  * Результат помещается в регистр ACC, RMR гасится.
  */
-void svs_add_exponent(int val)
+void svs_add_exponent(CORE *cpu, int val)
 {
-    CORE *cpu = &cpu0_core;
     alureg_t acc;
 
     acc = toalu(cpu->ACC);
     acc.exponent += val;
     cpu->RMR = 0;
-    normalize_and_round(acc, 0, 0);
+    normalize_and_round(cpu, acc, 0, 0);
 }
 
 /*
@@ -464,10 +458,8 @@ int svs_count_ones(t_value word)
  * Сдвиг сумматора ACC с выдвижением в регистр младших разрядов RMR.
  * Величина сдвига находится в диапазоне -64..63.
  */
-void svs_shift(int i)
+void svs_shift(CORE *cpu, int i)
 {
-    CORE *cpu = &cpu0_core;
-
     cpu->RMR = 0;
     if (i > 0) {
         /* Сдвиг вправо. */

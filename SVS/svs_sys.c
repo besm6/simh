@@ -461,6 +461,19 @@ void svs_fprint_insn(FILE *of, uint32 insn)
 }
 
 /*
+ * Find a processor at specified PC address.
+ */
+static CORE *cpu_at_address(t_addr addr)
+{
+    CORE *cpu;
+
+    for (cpu = &cpu_core[0]; cpu < &cpu_core[NUM_CORES]; cpu++) {
+        if (cpu->PC == addr)
+            return cpu;
+    }
+}
+
+/*
  * Symbolic decode
  *
  * Inputs:
@@ -475,7 +488,6 @@ void svs_fprint_insn(FILE *of, uint32 insn)
 t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
                    UNIT *uptr, int32 sw)
 {
-    CORE *cpu = &cpu0_core; //TODO
     t_value cmd;
 
     if (uptr && (uptr != &cpu_unit))                /* must be CPU */
@@ -484,22 +496,30 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
     cmd = val[0];
 
     if (sw & SWMASK('M')) {                         /* symbolic decode? */
-        if ((sw & SIM_SW_STOP) && (addr == cpu->PC) && !(cpu->RUU & RUU_RIGHT_INSTR))
-            fprintf(of, "-> ");
+        CORE *cpu = (sw & SIM_SW_STOP) ? cpu_at_address(addr) : 0;
+
+        if ((sw & SIM_SW_STOP) && (cpu != 0) && !(cpu->RUU & RUU_RIGHT_INSTR))
+            fprintf(of, "(%d)-> ", cpu->index);
+
         svs_fprint_cmd(of, (uint32)(cmd >> 24));
+
         if (sw & SIM_SW_STOP)                       /* stop point */
             fprintf(of, ", ");
         else
             fprintf(of, ",\n\t");
-        if (sw & SIM_SW_STOP && addr == cpu->PC && (cpu->RUU & RUU_RIGHT_INSTR))
-            fprintf(of, "-> ");
+
+        if ((sw & SIM_SW_STOP) && (cpu != 0) && (cpu->RUU & RUU_RIGHT_INSTR))
+            fprintf(of, "(%d)-> ", cpu->index);
+
         svs_fprint_cmd(of, cmd & BITS(24));
 
     } else if (sw & SWMASK('I')) {
         svs_fprint_insn(of, (cmd >> 24) & BITS(24));
         svs_fprint_insn(of, cmd & BITS(24));
+
     } else if (sw & SWMASK('F')) {
         fprintf(of, "%#.2g", svs_to_ieee(cmd));
+
     } else if (sw & SWMASK('B')) {
         fprintf(of, "%03o %03o %03o %03o %03o %03o",
                  (int) (cmd >> 40) & 0377,
@@ -508,14 +528,17 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
                  (int) (cmd >> 16) & 0377,
                  (int) (cmd >> 8) & 0377,
                  (int) cmd & 0377);
+
     } else if (sw & SWMASK('X')) {
         fprintf(of, "%013llx", cmd);
+
     } else
         fprintf(of, "%04o %04o %04o %04o",
                  (int) (cmd >> 36) & 07777,
                  (int) (cmd >> 24) & 07777,
                  (int) (cmd >> 12) & 07777,
                  (int) cmd & 07777);
+
     return SCPE_OK;
 }
 
@@ -638,9 +661,8 @@ bad:
 /*
  * Load memory from file.
  */
-t_stat svs_load(FILE *input)
+static t_stat svs_load(CORE *cpu, FILE *input)
 {
-    CORE *cpu = &cpu0_core; //TODO
     int addr, type;
     t_value word;
     t_stat err;
@@ -684,9 +706,8 @@ t_stat svs_load(FILE *input)
 /*
  * Dump memory to file.
  */
-t_stat svs_dump(FILE *of, const char *fnam)
+static t_stat svs_dump(CORE *cpu, FILE *of, const char *fnam)
 {
-    CORE *cpu = &cpu0_core; //TODO
     int addr, last_addr = -1;
     t_value word;
 
@@ -732,8 +753,17 @@ t_stat svs_dump(FILE *of, const char *fnam)
  */
 t_stat sim_load(FILE *fi, CONST char *cptr, CONST char *fnam, int dump_flag)
 {
-    if (dump_flag)
-        return svs_dump(fi, fnam);
+    CORE *cpu = &cpu_core[0];
+    int index = strtoul(cptr, 0, 0);
 
-    return svs_load(fi);
+    if (index > 0 && index < NUM_CORES) {
+        /* Optional argument to "load" or "dump" command
+         * specifies a target core index. */
+        cpu += index;
+    }
+
+    if (dump_flag)
+        return svs_dump(cpu, fi, fnam);
+
+    return svs_load(cpu, fi);
 }

@@ -99,7 +99,7 @@ char vt_cbuf[CBUFSIZE][LINES_MAX+1];
 char *vt_cptr[LINES_MAX+1];
 
 void tt_print();
-void consul_receive();
+void consul_receive(CORE *cpu);
 t_stat vt_clk(UNIT *);
 extern const char *get_sim_sw(const char *cptr);
 
@@ -176,7 +176,7 @@ static void reset_line(int num)
 
 t_stat tty_reset(DEVICE *dptr)
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
 
     memset(tty_active, 0, sizeof(tty_active));
     memset(tty_sym, 0, sizeof(tty_sym));
@@ -199,7 +199,7 @@ t_stat tty_reset(DEVICE *dptr)
 /* Bit 19 of GRP, should be <tty_rate> Hz */
 t_stat vt_clk(UNIT * this)
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
     int num;
 
     cpu->GRP |= cpu->MGRP & GRP_SERIAL;
@@ -208,8 +208,8 @@ t_stat vt_clk(UNIT * this)
     tmxr_poll_rx(&tty_desc);
 
     vt_print();
-    vt_receive();
-    consul_receive();
+    vt_receive(cpu);
+    consul_receive(cpu);
 
     /* Are there any new network connections? */
     num = tmxr_poll_conn(&tty_desc);
@@ -1056,7 +1056,6 @@ int vt_getc(int num)
     TMLN *t = &tty_line[num];
     extern int32 sim_int_char;
     int c;
-    time_t now;
 
     if (! t->conn) {
         /* Пользователь отключился. */
@@ -1074,7 +1073,7 @@ int vt_getc(int num)
         c = tmxr_getc_ln(t);
         if (! (c & TMXR_VALID)) {
 #ifdef REMOTE_TIMEOUT
-            now = time(0);
+            time_t now = time(0);
             if (now > tty_last_time[num] + 5*60) {
                 ++tty_idle_count[num];
                 if (tty_idle_count[num] > 3) {
@@ -1218,9 +1217,8 @@ int odd_parity(unsigned char c)
 /*
  * Handling input from all connected terminals.
  */
-void vt_receive()
+void vt_receive(CORE *cpu)
 {
-    CORE *cpu = &cpu0_core;
     uint32 workset = vt_mask;
     int num;
 
@@ -1304,9 +1302,8 @@ int tty_query()
     return TTY_IN;
 }
 
-void consul_print(int dev_num, uint32 cmd)
+void consul_print(CORE *cpu, int dev_num, uint32 cmd)
 {
-    CORE *cpu = &cpu0_core;
     int line_num = dev_num + TTY_MAX + 1;
 
     if (tty_dev.dctrl)
@@ -1324,9 +1321,8 @@ void consul_print(int dev_num, uint32 cmd)
     vt_idle = 0;
 }
 
-void consul_receive()
+void consul_receive(CORE *cpu)
 {
-    CORE *cpu = &cpu0_core;
     int c, line_num, dev_num;
 
     for (dev_num = 0; dev_num < 2; ++dev_num){

@@ -123,6 +123,8 @@ extern DEVICE tty_dev;
  * Состояние одного процессора.
  */
 typedef struct {
+    int index;              /* номер процессора 0...7 */
+
     uint32 PC, RK, Aex, M[NREGS], RAU, RUU;
     t_value ACC, RMR, GRP, MGRP;
     uint32 PRP, MPRP;
@@ -147,7 +149,8 @@ typedef struct {
     uint32 bad_addr;        /* адрес, вызвавший прерывание */
 } CORE;
 
-extern CORE cpu0_core;      /* state of processor 0 */
+#define NUM_CORES 8                 /* max 8 processors */
+extern CORE cpu_core[NUM_CORES];    /* state of processor 0 */
 
 /*
  * Таблица пультовых программ.
@@ -305,13 +308,12 @@ extern t_value pult_tab[11][8];
 /*
  * Процедуры работы с памятью
  */
-extern void mmu_store(int addr, t_value word);
-extern t_value mmu_load(int addr);
-extern t_value mmu_fetch(int addr);
-extern t_value mmu_prefetch(int addr, int actual);
-extern void mmu_setrp(int idx, t_value word);
-extern void mmu_setup(void);
-extern void mmu_setprotection(int idx, t_value word);
+extern void mmu_store(CORE *cpu, int addr, t_value word);
+extern t_value mmu_load(CORE *cpu, int addr);
+extern t_value mmu_fetch(CORE *cpu, int addr);
+extern void mmu_set_rp(CORE *cpu, int idx, t_value word);
+extern void mmu_setup(CORE *cpu);
+extern void mmu_set_protection(CORE *cpu, int idx, t_value word);
 
 /*
  * Utility functions
@@ -326,8 +328,8 @@ void tty_send(uint32 mask);
 int tty_query(void);
 void vt_print(void);
 void tt_print(void);
-void vt_receive(void);
-void consul_print(int num, uint32 cmd);
+void vt_receive(CORE *cpu);
+void consul_print(CORE *cpu, int num, uint32 cmd);
 uint32 consul_read(int num);
 int vt_is_idle(void);
 
@@ -345,13 +347,13 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
  * Арифметика.
  */
 double svs_to_ieee(t_value word);
-void svs_add(t_value val, int negate_acc, int negate_val);
-void svs_divide(t_value val);
-void svs_multiply(t_value val);
-void svs_change_sign(int sign);
-void svs_add_exponent(int val);
+void svs_add(CORE *cpu, t_value val, int negate_acc, int negate_val);
+void svs_divide(CORE *cpu, t_value val);
+void svs_multiply(CORE *cpu, t_value val);
+void svs_change_sign(CORE *cpu, int sign);
+void svs_add_exponent(CORE *cpu, int val);
 int svs_highest_bit(t_value val);
-void svs_shift(int toright);
+void svs_shift(CORE *cpu, int toright);
 int svs_count_ones(t_value word);
 t_value svs_pack(t_value val, t_value mask);
 t_value svs_unpack(t_value val, t_value mask);

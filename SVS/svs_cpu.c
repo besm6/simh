@@ -34,7 +34,7 @@
 
 t_value memory[MEMSIZE];                /* physical memory */
 
-CORE cpu0_core;                         /* state of processor 0 */
+CORE cpu_core[NUM_CORES];               /* state of all processors */
 
 int32 tmr_poll = CLK_DELAY;             /* pgm timer poll */
 
@@ -76,55 +76,55 @@ UNIT cpu_unit = { UDATA(NULL, UNIT_FIX, MEMSIZE) };
 #define ORDATAVM(nm,loc,wd) REGDATA(nm,(loc),8,wd,0,1,NULL,NULL,REG_VMIO,0,0)
 
 REG cpu_reg[] = {
-    { ORDATA   ( "PC",    cpu0_core.PC,         15) },  /* program counter */
-    { ORDATA   ( "RK",    cpu0_core.RK,         24) },  /* instruction register */
-    { ORDATA   ( "Aex",   cpu0_core.Aex,        15) },  /* effective address */
-    { ORDATAVM ( "ACC",   cpu0_core.ACC,        48) },  /* accumulator */
-    { ORDATAVM ( "RMR",   cpu0_core.RMR,        48) },  /* LSB register */
-    { BINRDATA ( "RAU",   cpu0_core.RAU,         6) },  /* ALU modes */
-    { ORDATA   ( "M1",    cpu0_core.M[1],       15) },  /* index (modifier) registers */
-    { ORDATA   ( "M2",    cpu0_core.M[2],       15) },
-    { ORDATA   ( "M3",    cpu0_core.M[3],       15) },
-    { ORDATA   ( "M4",    cpu0_core.M[4],       15) },
-    { ORDATA   ( "M5",    cpu0_core.M[5],       15) },
-    { ORDATA   ( "M6",    cpu0_core.M[6],       15) },
-    { ORDATA   ( "M7",    cpu0_core.M[7],       15) },
-    { ORDATA   ( "M10",   cpu0_core.M[010],     15) },
-    { ORDATA   ( "M11",   cpu0_core.M[011],     15) },
-    { ORDATA   ( "M12",   cpu0_core.M[012],     15) },
-    { ORDATA   ( "M13",   cpu0_core.M[013],     15) },
-    { ORDATA   ( "M14",   cpu0_core.M[014],     15) },
-    { ORDATA   ( "M15",   cpu0_core.M[015],     15) },
-    { ORDATA   ( "M16",   cpu0_core.M[016],     15) },
-    { ORDATA   ( "M17",   cpu0_core.M[017],     15) },  /* also the stack pointer */
-    { ORDATA   ( "M20",   cpu0_core.M[020],     15) },  /* MOD - address modifier register */
-    { ORDATA   ( "M21",   cpu0_core.M[021],     15) },  /* PSW - CU modes */
-    { ORDATA   ( "M27",   cpu0_core.M[027],     15) },  /* SPSW - saved CU modes */
-    { ORDATA   ( "M32",   cpu0_core.M[032],     15) },  /* ERET - extracode return address */
-    { ORDATA   ( "M33",   cpu0_core.M[033],     15) },  /* IRET - interrupt return address */
-    { ORDATA   ( "M34",   cpu0_core.M[034],     16) },  /* IBP - instruction bkpt address */
-    { ORDATA   ( "M35",   cpu0_core.M[035],     16) },  /* DWP - watchpoint address */
-    { BINRDATA ( "RUU",   cpu0_core.RUU,         9) },  /* execution modes  */
-    { ORDATAVM ( "GRP",   cpu0_core.GRP,        48) },  /* main interrupt reg */
-    { ORDATAVM ( "MGRP",  cpu0_core.MGRP,       48) },  /* mask of the above  */
-    { ORDATA   ( "PRP",   cpu0_core.PRP,        24) },  /* peripheral interrupt reg */
-    { ORDATA   ( "MPRP",  cpu0_core.MPRP,       24) },  /* mask of the above*/
-    { ORDATAVM ( "RP0",   cpu0_core.RP[0],      48) },
-    { ORDATAVM ( "RP1",   cpu0_core.RP[1],      48) },
-    { ORDATAVM ( "RP2",   cpu0_core.RP[2],      48) },
-    { ORDATAVM ( "RP3",   cpu0_core.RP[3],      48) },
-    { ORDATAVM ( "RP4",   cpu0_core.RP[4],      48) },
-    { ORDATAVM ( "RP5",   cpu0_core.RP[5],      48) },
-    { ORDATAVM ( "RP6",   cpu0_core.RP[6],      48) },
-    { ORDATAVM ( "RP7",   cpu0_core.RP[7],      48) },
-    { ORDATA   ( "RZ",    cpu0_core.RZ,         32) },
-    { ORDATAVM ( "FP1",   cpu0_core.pult[1],    50) },
-    { ORDATAVM ( "FP2",   cpu0_core.pult[2],    50) },
-    { ORDATAVM ( "FP3",   cpu0_core.pult[3],    50) },
-    { ORDATAVM ( "FP4",   cpu0_core.pult[4],    50) },
-    { ORDATAVM ( "FP5",   cpu0_core.pult[5],    50) },
-    { ORDATAVM ( "FP6",   cpu0_core.pult[6],    50) },
-    { ORDATAVM ( "FP7",   cpu0_core.pult[7],    50) },
+    { ORDATA   ( "PC",    cpu_core[0].PC,       15) },  /* program counter */
+    { ORDATA   ( "RK",    cpu_core[0].RK,       24) },  /* instruction register */
+    { ORDATA   ( "Aex",   cpu_core[0].Aex,      15) },  /* effective address */
+    { ORDATAVM ( "ACC",   cpu_core[0].ACC,      48) },  /* accumulator */
+    { ORDATAVM ( "RMR",   cpu_core[0].RMR,      48) },  /* LSB register */
+    { BINRDATA ( "RAU",   cpu_core[0].RAU,       6) },  /* ALU modes */
+    { ORDATA   ( "M1",    cpu_core[0].M[1],     15) },  /* index (modifier) registers */
+    { ORDATA   ( "M2",    cpu_core[0].M[2],     15) },
+    { ORDATA   ( "M3",    cpu_core[0].M[3],     15) },
+    { ORDATA   ( "M4",    cpu_core[0].M[4],     15) },
+    { ORDATA   ( "M5",    cpu_core[0].M[5],     15) },
+    { ORDATA   ( "M6",    cpu_core[0].M[6],     15) },
+    { ORDATA   ( "M7",    cpu_core[0].M[7],     15) },
+    { ORDATA   ( "M10",   cpu_core[0].M[010],   15) },
+    { ORDATA   ( "M11",   cpu_core[0].M[011],   15) },
+    { ORDATA   ( "M12",   cpu_core[0].M[012],   15) },
+    { ORDATA   ( "M13",   cpu_core[0].M[013],   15) },
+    { ORDATA   ( "M14",   cpu_core[0].M[014],   15) },
+    { ORDATA   ( "M15",   cpu_core[0].M[015],   15) },
+    { ORDATA   ( "M16",   cpu_core[0].M[016],   15) },
+    { ORDATA   ( "M17",   cpu_core[0].M[017],   15) },  /* also the stack pointer */
+    { ORDATA   ( "M20",   cpu_core[0].M[020],   15) },  /* MOD - address modifier register */
+    { ORDATA   ( "M21",   cpu_core[0].M[021],   15) },  /* PSW - CU modes */
+    { ORDATA   ( "M27",   cpu_core[0].M[027],   15) },  /* SPSW - saved CU modes */
+    { ORDATA   ( "M32",   cpu_core[0].M[032],   15) },  /* ERET - extracode return address */
+    { ORDATA   ( "M33",   cpu_core[0].M[033],   15) },  /* IRET - interrupt return address */
+    { ORDATA   ( "M34",   cpu_core[0].M[034],   16) },  /* IBP - instruction bkpt address */
+    { ORDATA   ( "M35",   cpu_core[0].M[035],   16) },  /* DWP - watchpoint address */
+    { BINRDATA ( "RUU",   cpu_core[0].RUU,       9) },  /* execution modes  */
+    { ORDATAVM ( "GRP",   cpu_core[0].GRP,      48) },  /* main interrupt reg */
+    { ORDATAVM ( "MGRP",  cpu_core[0].MGRP,     48) },  /* mask of the above  */
+    { ORDATA   ( "PRP",   cpu_core[0].PRP,      24) },  /* peripheral interrupt reg */
+    { ORDATA   ( "MPRP",  cpu_core[0].MPRP,     24) },  /* mask of the above*/
+    { ORDATAVM ( "RP0",   cpu_core[0].RP[0],    48) },
+    { ORDATAVM ( "RP1",   cpu_core[0].RP[1],    48) },
+    { ORDATAVM ( "RP2",   cpu_core[0].RP[2],    48) },
+    { ORDATAVM ( "RP3",   cpu_core[0].RP[3],    48) },
+    { ORDATAVM ( "RP4",   cpu_core[0].RP[4],    48) },
+    { ORDATAVM ( "RP5",   cpu_core[0].RP[5],    48) },
+    { ORDATAVM ( "RP6",   cpu_core[0].RP[6],    48) },
+    { ORDATAVM ( "RP7",   cpu_core[0].RP[7],    48) },
+    { ORDATA   ( "RZ",    cpu_core[0].RZ,       32) },
+    { ORDATAVM ( "FP1",   cpu_core[0].pult[1],  50) },
+    { ORDATAVM ( "FP2",   cpu_core[0].pult[2],  50) },
+    { ORDATAVM ( "FP3",   cpu_core[0].pult[3],  50) },
+    { ORDATAVM ( "FP4",   cpu_core[0].pult[4],  50) },
+    { ORDATAVM ( "FP5",   cpu_core[0].pult[5],  50) },
+    { ORDATAVM ( "FP6",   cpu_core[0].pult[6],  50) },
+    { ORDATAVM ( "FP7",   cpu_core[0].pult[7],  50) },
     { 0 }
 };
 
@@ -208,7 +208,7 @@ const char *sim_stop_messages[] = {
  */
 t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
 
     if (addr >= MEMSIZE)
         return SCPE_NXM;
@@ -232,7 +232,7 @@ t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
  */
 t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
 
     if (addr >= MEMSIZE)
         return SCPE_NXM;
@@ -251,7 +251,8 @@ t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
  */
 t_stat cpu_reset(DEVICE *dptr)
 {
-    CORE *cpu = &cpu0_core;
+    //TODO: initialize cpu_core[1..7]
+    CORE *cpu = &cpu_core[0];
     int i;
 
     cpu->ACC = 0;
@@ -290,7 +291,7 @@ t_stat cpu_reset(DEVICE *dptr)
  */
 t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
 
     cpu->GRP |= GRP_PANEL_REQ;
     return SCPE_OK;
@@ -301,7 +302,7 @@ t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
  */
 t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
     int sw;
 
     if (cptr)
@@ -323,7 +324,7 @@ t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc)
 
 t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp)
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
 
     fprintf(st, "Pult packet switch position is %d", cpu->pult_switch);
     return SCPE_OK;
@@ -359,7 +360,7 @@ utf8_putc(unsigned ch, FILE *fout)
  */
 void svs_okno(const char *message)
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
 
     svs_log_cont("_%%%%%% %s: ", message);
     if (sim_log)
@@ -395,7 +396,7 @@ void svs_okno(const char *message)
  */
 static void cmd_002()
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
 
     svs_debug("*** рег %03o", cpu->Aex & 0377);
 
@@ -419,16 +420,16 @@ static void cmd_002()
 #if 0
     case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7:
         /* Запись в БРЗ */
-        //mmu_setcache(cpu->Aex & 7, cpu->ACC);
+        //mmu_setcache(cpu, cpu->Aex & 7, cpu->ACC);
         break;
     case 020: case 021: case 022: case 023:
     case 024: case 025: case 026: case 027:
         /* Запись в регистры приписки */
-        mmu_setrp(cpu->Aex & 7, cpu->ACC);
+        mmu_set_rp(cpu, cpu->Aex & 7, cpu->ACC);
         break;
     case 030: case 031: case 032: case 033:
         /* Запись в регистры защиты */
-        mmu_setprotection(cpu->Aex & 3, cpu->ACC);
+        mmu_set_protection(cpu, cpu->Aex & 3, cpu->ACC);
         break;
     case 036:
         /* Запись в маску главного регистра прерываний */
@@ -463,7 +464,7 @@ static void cmd_002()
     case 0200: case 0201: case 0202: case 0203:
     case 0204: case 0205: case 0206: case 0207:
         /* Чтение БРЗ */
-        //cpu->ACC = mmu_getcache(cpu->Aex & 7);
+        //cpu->ACC = mmu_getcache(cpu, cpu->Aex & 7);
         break;
     case 0237:
         /* Чтение главного регистра прерываний */
@@ -491,7 +492,7 @@ static void cmd_002()
  */
 void cpu_one_inst()
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
     int reg, opcode, addr, nextpc, next_mod;
     t_value word;
 
@@ -504,7 +505,7 @@ void cpu_one_inst()
     uint32 delay;
 
     cpu->corr_stack = 0;
-    word = mmu_fetch(cpu->PC);
+    word = mmu_fetch(cpu, cpu->PC);
     if (cpu->RUU & RUU_RIGHT_INSTR)
         cpu->RK = (uint32)word;         /* get right instruction */
     else
@@ -539,7 +540,6 @@ void cpu_one_inst()
         cpu->PC += 1;                               /* increment PC */
         cpu->RUU &= ~RUU_RIGHT_INSTR;
     } else {
-        mmu_prefetch(nextpc | (IS_SUPERVISOR(cpu->RUU) ? BBIT(16) : 0), 0);
         cpu->RUU |= RUU_RIGHT_INSTR;
     }
 
@@ -552,17 +552,17 @@ void cpu_one_inst()
     switch (opcode) {
     case 000:                                       /* зп, atx */
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        mmu_store(cpu->Aex, cpu->ACC);
+        mmu_store(cpu, cpu->Aex, cpu->ACC);
         if (! addr && reg == 017)
             cpu->M[017] = ADDR(cpu->M[017] + 1);
         delay = MEAN_TIME(3, 3);
         break;
     case 001:                                       /* зпм, stx */
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        mmu_store(cpu->Aex, cpu->ACC);
+        mmu_store(cpu, cpu->Aex, cpu->ACC);
         cpu->M[017] = ADDR(cpu->M[017] - 1);
         cpu->corr_stack = 1;
-        cpu->ACC = mmu_load(cpu->M[017]);
+        cpu->ACC = mmu_load(cpu, cpu->M[017]);
         cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(6, 6);
         break;
@@ -577,11 +577,11 @@ void cpu_one_inst()
         delay = MEAN_TIME(3, 3);
         break;
     case 003:                                       /* счм, xts */
-        mmu_store(cpu->M[017], cpu->ACC);
+        mmu_store(cpu, cpu->M[017], cpu->ACC);
         cpu->M[017] = ADDR(cpu->M[017] + 1);
         cpu->corr_stack = -1;
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        cpu->ACC = mmu_load(cpu->Aex);
+        cpu->ACC = mmu_load(cpu, cpu->Aex);
         cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(6, 6);
         break;
@@ -591,7 +591,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        svs_add(mmu_load(cpu->Aex), 0, 0);
+        svs_add(cpu, mmu_load(cpu, cpu->Aex), 0, 0);
         cpu->RAU = SET_ADDITIVE(cpu->RAU);
         delay = MEAN_TIME(3, 11);
         break;
@@ -601,7 +601,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        svs_add(mmu_load(cpu->Aex), 0, 1);
+        svs_add(cpu, mmu_load(cpu, cpu->Aex), 0, 1);
         cpu->RAU = SET_ADDITIVE(cpu->RAU);
         delay = MEAN_TIME(3, 11);
         break;
@@ -611,7 +611,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        svs_add(mmu_load(cpu->Aex), 1, 0);
+        svs_add(cpu, mmu_load(cpu, cpu->Aex), 1, 0);
         cpu->RAU = SET_ADDITIVE(cpu->RAU);
         delay = MEAN_TIME(3, 11);
         break;
@@ -621,7 +621,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        svs_add(mmu_load(cpu->Aex), 1, 1);
+        svs_add(cpu, mmu_load(cpu, cpu->Aex), 1, 1);
         cpu->RAU = SET_ADDITIVE(cpu->RAU);
         delay = MEAN_TIME(3, 11);
         break;
@@ -631,7 +631,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        cpu->ACC = mmu_load(cpu->Aex);
+        cpu->ACC = mmu_load(cpu, cpu->Aex);
         cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 3);
         break;
@@ -641,7 +641,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        cpu->ACC &= mmu_load(cpu->Aex);
+        cpu->ACC &= mmu_load(cpu, cpu->Aex);
         cpu->RMR = 0;
         cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 4);
@@ -653,7 +653,7 @@ void cpu_one_inst()
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         cpu->RMR = cpu->ACC;
-        cpu->ACC ^= mmu_load(cpu->Aex);
+        cpu->ACC ^= mmu_load(cpu, cpu->Aex);
         cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 3);
         break;
@@ -663,7 +663,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        cpu->ACC += mmu_load(cpu->Aex);
+        cpu->ACC += mmu_load(cpu, cpu->Aex);
         if (cpu->ACC & BIT49)
             cpu->ACC = (cpu->ACC + 1) & BITS48;
         cpu->RMR = 0;
@@ -676,7 +676,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        svs_change_sign(mmu_load(cpu->Aex) >> 40 & 1);
+        svs_change_sign(cpu, mmu_load(cpu, cpu->Aex) >> 40 & 1);
         cpu->RAU = SET_ADDITIVE(cpu->RAU);
         delay = MEAN_TIME(3, 5);
         break;
@@ -686,7 +686,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        cpu->ACC |= mmu_load(cpu->Aex);
+        cpu->ACC |= mmu_load(cpu, cpu->Aex);
         cpu->RMR = 0;
         cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 4);
@@ -697,7 +697,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        svs_divide(mmu_load(cpu->Aex));
+        svs_divide(cpu, mmu_load(cpu, cpu->Aex));
         cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 50);
         break;
@@ -707,7 +707,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        svs_multiply(mmu_load(cpu->Aex));
+        svs_multiply(cpu, mmu_load(cpu, cpu->Aex));
         cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 18);
         break;
@@ -717,7 +717,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        cpu->ACC = svs_pack(cpu->ACC, mmu_load(cpu->Aex));
+        cpu->ACC = svs_pack(cpu->ACC, mmu_load(cpu, cpu->Aex));
         cpu->RMR = 0;
         cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 53);
@@ -728,7 +728,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        cpu->ACC = svs_unpack(cpu->ACC, mmu_load(cpu->Aex));
+        cpu->ACC = svs_unpack(cpu->ACC, mmu_load(cpu, cpu->Aex));
         cpu->RMR = 0;
         cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 53);
@@ -739,7 +739,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        cpu->ACC = svs_count_ones(cpu->ACC) + mmu_load(cpu->Aex);
+        cpu->ACC = svs_count_ones(cpu->ACC) + mmu_load(cpu, cpu->Aex);
         if (cpu->ACC & BIT49)
             cpu->ACC = (cpu->ACC + 1) & BITS48;
         cpu->RAU = SET_LOGICAL(cpu->RAU);
@@ -757,15 +757,15 @@ void cpu_one_inst()
             /* "Остаток" сумматора, исключая бит,
              * номер которого определен, помещается в РМР,
              * начиная со старшего бита РМР. */
-            svs_shift(48 - n);
+            svs_shift(cpu, 48 - n);
 
             /* Циклическое сложение номера со словом по Аисп. */
-            cpu->ACC = n + mmu_load(cpu->Aex);
+            cpu->ACC = n + mmu_load(cpu, cpu->Aex);
             if (cpu->ACC & BIT49)
                 cpu->ACC = (cpu->ACC + 1) & BITS48;
         } else {
             cpu->RMR = 0;
-            cpu->ACC = mmu_load(cpu->Aex);
+            cpu->ACC = mmu_load(cpu, cpu->Aex);
         }
         cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 32);
@@ -776,7 +776,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        svs_add_exponent((mmu_load(cpu->Aex) >> 41) - 64);
+        svs_add_exponent(cpu, (mmu_load(cpu, cpu->Aex) >> 41) - 64);
         cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 5);
         break;
@@ -786,7 +786,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        svs_add_exponent(64 - (mmu_load(cpu->Aex) >> 41));
+        svs_add_exponent(cpu, 64 - (mmu_load(cpu, cpu->Aex) >> 41));
         cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 5);
         break;
@@ -797,8 +797,8 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        n = (mmu_load(cpu->Aex) >> 41) - 64;
-        svs_shift(n);
+        n = (mmu_load(cpu, cpu->Aex) >> 41) - 64;
+        svs_shift(cpu, n);
         cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 4 + abs(n));
         break;
@@ -809,7 +809,7 @@ void cpu_one_inst()
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        cpu->RAU = (mmu_load(cpu->Aex) >> 41) & 077;
+        cpu->RAU = (mmu_load(cpu, cpu->Aex) >> 41) & 077;
         delay = MEAN_TIME(3, 3);
         break;
     case 030:                                       /* счрж, rte */
@@ -825,7 +825,7 @@ void cpu_one_inst()
         } else {
             t_value x = cpu->RMR;
             cpu->ACC = (cpu->ACC & ~BITS41) | (cpu->RMR & BITS40);
-            svs_add_exponent((cpu->Aex & 0177) - 64);
+            svs_add_exponent(cpu, (cpu->Aex & 0177) - 64);
             cpu->RMR = x;
         }
         delay = MEAN_TIME(3, 5);
@@ -848,13 +848,13 @@ void cpu_one_inst()
         break;
     case 034:                                       /* слпа, e+n */
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        svs_add_exponent((cpu->Aex & 0177) - 64);
+        svs_add_exponent(cpu, (cpu->Aex & 0177) - 64);
         cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 5);
         break;
     case 035:                                       /* вчпа, e-n */
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        svs_add_exponent(64 - (cpu->Aex & 0177));
+        svs_add_exponent(cpu, 64 - (cpu->Aex & 0177));
         cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 5);
         break;
@@ -862,7 +862,7 @@ void cpu_one_inst()
         int n;
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         n = (cpu->Aex & 0177) - 64;
-        svs_shift(n);
+        svs_shift(cpu, n);
         cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 4 + abs(n));
         break;
@@ -900,7 +900,7 @@ void cpu_one_inst()
             cpu->M[017] = ADDR(cpu->M[017] - 1);
             cpu->corr_stack = 1;
         }
-        cpu->ACC = mmu_load(rg != 017 ? cpu->M[017] : ad);
+        cpu->ACC = mmu_load(cpu, rg != 017 ? cpu->M[017] : ad);
         cpu->M[rg] = ad;
         if ((cpu->M[PSW] & PSW_MMAP_DISABLE) && (rg == IBP || rg == DWP))
             cpu->M[rg] |= BBIT(16);
@@ -917,7 +917,7 @@ load_modifier:
         cpu->RAU = SET_LOGICAL(cpu->RAU);
         break;
     case 043:                                       /* счим, its */
-        mmu_store(cpu->M[017], cpu->ACC);
+        mmu_store(cpu, cpu->M[017], cpu->ACC);
         cpu->M[017] = ADDR(cpu->M[017] + 1);
         delay = MEAN_TIME(9, 6);
         goto load_modifier;
@@ -973,7 +973,7 @@ stop_as_extracode:
                 /* Если включен console log и cpu debug,
                  * но нет console debug, то печатаем только экстракоды.
                  * Пропускаем э75, их обычно слишком много. */
-                t_value word = mmu_load(cpu->Aex);
+                t_value word = mmu_load(cpu, cpu->Aex);
                 fprintf(sim_log, "*** %05o%s: ", cpu->PC,
                          (cpu->RUU & RUU_RIGHT_INSTR) ? "п" : "л");
                 svs_fprint_cmd(sim_log, cpu->RK);
@@ -1015,7 +1015,7 @@ stop_as_extracode:
             cpu->corr_stack = 1;
         }
         cpu->Aex = ADDR(addr + cpu->M[reg]);
-        next_mod = ADDR(mmu_load(cpu->Aex));
+        next_mod = ADDR(mmu_load(cpu, cpu->Aex));
         delay = MEAN_TIME(13, 3);
         break;
     case 0240:                                      /* уиа, vtm */
@@ -1126,7 +1126,6 @@ stop_as_extracode:
                 goto stop_as_extracode;
             }
         }
-        //mmu_print_brz();
         longjmp(cpu->exception, STOP_STOP);
         break;
     case 0340:                                      /* пио, vzm */
@@ -1188,7 +1187,7 @@ branch_zero:
  */
 void op_int_1(const char *msg)
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
 
     /*svs_okno(msg);*/
     cpu->M[SPSW] = (cpu->M[PSW] & (PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
@@ -1212,7 +1211,7 @@ void op_int_1(const char *msg)
  */
 void op_int_2()
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
 
     /*svs_okno("Внешнее прерывание");*/
     cpu->M[SPSW] = (cpu->M[PSW] & (PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
@@ -1233,13 +1232,13 @@ void op_int_2()
  */
 t_stat sim_instr(void)
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
     t_stat r;
     int iintr = 0;
 
     /* Restore register state */
     cpu->PC &= BITS(15);                            /* mask PC */
-    mmu_setup();                                    /* copy RP to TLB */
+    mmu_setup(cpu);                                 /* copy RP to TLB */
 
     /* An internal interrupt or user intervention */
     r = setjmp(cpu->exception);
@@ -1440,7 +1439,7 @@ ret:        return r;
  */
 t_stat fast_clk(UNIT * this)
 {
-    CORE *cpu = &cpu0_core;
+    CORE *cpu = &cpu_core[0];
     static unsigned counter;
     static unsigned tty_counter;
 
