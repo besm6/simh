@@ -176,6 +176,8 @@ static void reset_line(int num)
 
 t_stat tty_reset(DEVICE *dptr)
 {
+    CORE *cpu = &cpu0_core;
+
     memset(tty_active, 0, sizeof(tty_active));
     memset(tty_sym, 0, sizeof(tty_sym));
     memset(tty_typed, 0, sizeof(tty_typed));
@@ -189,7 +191,7 @@ t_stat tty_reset(DEVICE *dptr)
     /* In the READY2 register the ready flag for typewriters is inverted (0 means ready),
      * and the device is always ready. */
     /* Forcing a ready interrupt. */
-    PRP |= CONS_CAN_PRINT[0] | CONS_CAN_PRINT[1];
+    cpu->PRP |= CONS_CAN_PRINT[0] | CONS_CAN_PRINT[1];
     // Schedule the very first TTY interrupt to match the next clock interrupt.
     return sim_clock_coschedule(tty_unit, 0);
 }
@@ -197,9 +199,10 @@ t_stat tty_reset(DEVICE *dptr)
 /* Bit 19 of GRP, should be <tty_rate> Hz */
 t_stat vt_clk(UNIT * this)
 {
+    CORE *cpu = &cpu0_core;
     int num;
 
-    GRP |= MGRP & GRP_SERIAL;
+    cpu->GRP |= cpu->MGRP & GRP_SERIAL;
 
     /* Polling receiving from sockets */
     tmxr_poll_rx(&tty_desc);
@@ -1217,6 +1220,7 @@ int odd_parity(unsigned char c)
  */
 void vt_receive()
 {
+    CORE *cpu = &cpu0_core;
     uint32 workset = vt_mask;
     int num;
 
@@ -1253,11 +1257,11 @@ void vt_receive()
                 }
                 tty_instate[num] = 1;
                 TTY_IN |= mask;         /* start bit */
-                GRP |= GRP_TTY_START;   /* not used ? */
+                cpu->GRP |= GRP_TTY_START;   /* not used ? */
                 /* auto-enabling the interrupt just in case
                  * (seems to be unneeded as the interrupt is never disabled)
                  */
-                MGRP |= GRP_SERIAL;
+                cpu->MGRP |= GRP_SERIAL;
                 vt_receiving |= mask;
             }
             break;
@@ -1302,7 +1306,9 @@ int tty_query()
 
 void consul_print(int dev_num, uint32 cmd)
 {
+    CORE *cpu = &cpu0_core;
     int line_num = dev_num + TTY_MAX + 1;
+
     if (tty_dev.dctrl)
         svs_debug(">>> CONSUL%o: %03o", line_num, cmd & 0377);
     cmd &= 0177;
@@ -1314,12 +1320,13 @@ void consul_print(int dev_num, uint32 cmd)
         svs_debug(">>> CONSUL%o: Native charset not implemented", line_num);
         break;
     }
-    PRP |= CONS_CAN_PRINT[dev_num];
+    cpu->PRP |= CONS_CAN_PRINT[dev_num];
     vt_idle = 0;
 }
 
 void consul_receive()
 {
+    CORE *cpu = &cpu0_core;
     int c, line_num, dev_num;
 
     for (dev_num = 0; dev_num < 2; ++dev_num){
@@ -1347,7 +1354,7 @@ void consul_receive()
                 (c == '\r' || c == '\n')) {
                 CONSUL_IN[dev_num] = 3;
             }
-            PRP |= CONS_HAS_INPUT[dev_num];
+            cpu->PRP |= CONS_HAS_INPUT[dev_num];
             vt_idle = 0;
         }
     }

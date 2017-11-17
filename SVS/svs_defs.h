@@ -34,10 +34,6 @@
 #include "scp.h"
 #include <setjmp.h>
 
-/* Rename of global PC variable to avoid namespace conflicts on some platforms */
-
-#define PC PC_Global
-
 /*
  * Memory.
  */
@@ -119,19 +115,44 @@ extern UNIT cpu_unit;
 extern UNIT tty_unit[];
 extern UNIT clocks[];
 extern t_value memory[MEMSIZE];
-extern t_value pult[11][8];
-extern unsigned pult_packet_switch; /* selector of hardwired programs */
-
-extern uint32 PC, RAU, RUU;
-extern uint32 M[NREGS];
-extern t_value BRZ[8], RP[8], GRP, MGRP;
-extern uint32 PRP, MPRP;
-extern t_value ACC, RMR;
-extern uint32 BAZ[8], TABST, RZ;
-extern DEVICE cpu_dev, mmu_dev;
+extern DEVICE cpu_dev;
 extern DEVICE clock_dev;
 extern DEVICE tty_dev;
-extern jmp_buf cpu_halt;
+
+/*
+ * Состояние одного процессора.
+ */
+typedef struct {
+    uint32 PC, RK, Aex, M[NREGS], RAU, RUU;
+    t_value ACC, RMR, GRP, MGRP;
+    uint32 PRP, MPRP;
+
+    /*
+     * 64-битные регистры RP0-RP7 - для отображения регистров приписки,
+     * группами по 4 ради компактности, 12 бит на страницу.
+     * TLB0-TLB31 - постраничные регистры приписки, копии RPi.
+     * Обращение к памяти должно вестись через TLBi.
+     */
+    t_value RP[8];          /* РП, регистры приписки страниц */
+    uint32 TLB[32];         /* они же постранично */
+
+    uint32 RZ;              /* РЗ, регистр защиты */
+
+    unsigned pult_switch;   /* переключатель пультовых программ */
+    t_value pult[8];        /* тубмлерные регистры */
+
+    int corr_stack;         /* коррекция стека при прерывании */
+    jmp_buf exception;      /* прерывание */
+
+    uint32 bad_addr;        /* адрес, вызвавший прерывание */
+} CORE;
+
+extern CORE cpu0_core;      /* state of processor 0 */
+
+/*
+ * Таблица пультовых программ.
+ */
+extern t_value pult_tab[11][8];
 
 /*
  * Разряды режима АУ.
@@ -400,8 +421,5 @@ t_value svs_unpack(t_value val, t_value mask);
 #define PRP_CONS2_INPUT   000002000             /* 11 */
 #define PRP_CONS1_DONE    000001000             /* 10 */
 #define PRP_CONS2_DONE    000000400             /* 9 */
-
-/* Номер блока ОЗУ или номер страницы, вызвавших прерывание */
-extern uint32 iintr_data;
 
 #endif

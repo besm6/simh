@@ -32,10 +32,10 @@
 #include <float.h>
 #include <time.h>
 
-t_value memory[MEMSIZE];
-uint32 PC, RK, Aex, M[NREGS], RAU, RUU;
-t_value ACC, RMR, GRP, MGRP;
-uint32 PRP, MPRP;
+t_value memory[MEMSIZE];                /* physical memory */
+
+CORE cpu0_core;                         /* state of processor 0 */
+
 int32 tmr_poll = CLK_DELAY;             /* pgm timer poll */
 
 extern const char *scp_errors[];
@@ -54,9 +54,6 @@ extern const char *scp_errors[];
 #define PRP_WIRED_BITS (PRP_UVVK1_END | PRP_UVVK2_END |\
                         PRP_PCARD1_PUNCH | PRP_PCARD2_PUNCH |\
                         PRP_PTAPE1_PUNCH | PRP_PTAPE2_PUNCH )
-
-int corr_stack;
-jmp_buf cpu_halt;
 
 t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
 t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw);
@@ -79,39 +76,55 @@ UNIT cpu_unit = { UDATA(NULL, UNIT_FIX, MEMSIZE) };
 #define ORDATAVM(nm,loc,wd) REGDATA(nm,(loc),8,wd,0,1,NULL,NULL,REG_VMIO,0,0)
 
 REG cpu_reg[] = {
-    { ORDATA   ( "СчАС",  PC,       15) }, /* счётчик адреса команды */
-    { ORDATA   ( "РК",    RK,       24) }, /* регистр выполняемой команды */
-    { ORDATA   ( "Аисп",  Aex,      15) }, /* исполнительный адрес */
-    { ORDATAVM ( "СМ",    ACC,      48) }, /* сумматор */
-    { ORDATAVM ( "РМР",   RMR,      48) }, /* регистр младших разрядов */
-    { BINRDATA ( "РАУ",   RAU,       6) }, /* режимы АУ */
-    { ORDATA   ( "М1",    M[1],     15) }, /* регистры-модификаторы */
-    { ORDATA   ( "М2",    M[2],     15) },
-    { ORDATA   ( "М3",    M[3],     15) },
-    { ORDATA   ( "М4",    M[4],     15) },
-    { ORDATA   ( "М5",    M[5],     15) },
-    { ORDATA   ( "М6",    M[6],     15) },
-    { ORDATA   ( "М7",    M[7],     15) },
-    { ORDATA   ( "М10",   M[010],   15) },
-    { ORDATA   ( "М11",   M[011],   15) },
-    { ORDATA   ( "М12",   M[012],   15) },
-    { ORDATA   ( "М13",   M[013],   15) },
-    { ORDATA   ( "М14",   M[014],   15) },
-    { ORDATA   ( "М15",   M[015],   15) },
-    { ORDATA   ( "М16",   M[016],   15) },
-    { ORDATA   ( "М17",   M[017],   15) }, /* указатель магазина */
-    { ORDATA   ( "М20",   M[020],   15) }, /* MOD - модификатор адреса */
-    { ORDATA   ( "М21",   M[021],   15) }, /* PSW - режимы УУ */
-    { ORDATA   ( "М27",   M[027],   15) }, /* SPSW - упрятывание режимов УУ */
-    { ORDATA   ( "М32",   M[032],   15) }, /* ERET - адрес возврата из экстракода */
-    { ORDATA   ( "М33",   M[033],   15) }, /* IRET - адрес возврата из прерывания */
-    { ORDATA   ( "М34",   M[034],   16) }, /* IBP - адрес прерывания по выполнению */
-    { ORDATA   ( "М35",   M[035],   16) }, /* DWP - адрес прерывания по чтению/записи */
-    { BINRDATA ( "РУУ",   RUU,       9) }, /* ПКП, ПКЛ, РежЭ, РежПр, ПрИК, БРО, ПрК */
-    { ORDATAVM ( "ГРП",   GRP,      48) }, /* главный регистр прерываний */
-    { ORDATAVM ( "МГРП",  MGRP,     48) }, /* маска ГРП */
-    { ORDATA   ( "ПРП",   PRP,      24) }, /* периферийный регистр прерываний */
-    { ORDATA   ( "МПРП",  MPRP,     24) }, /* маска ПРП */
+    { ORDATA   ( "PC",    cpu0_core.PC,         15) },  /* program counter */
+    { ORDATA   ( "RK",    cpu0_core.RK,         24) },  /* instruction register */
+    { ORDATA   ( "Aex",   cpu0_core.Aex,        15) },  /* effective address */
+    { ORDATAVM ( "ACC",   cpu0_core.ACC,        48) },  /* accumulator */
+    { ORDATAVM ( "RMR",   cpu0_core.RMR,        48) },  /* LSB register */
+    { BINRDATA ( "RAU",   cpu0_core.RAU,         6) },  /* ALU modes */
+    { ORDATA   ( "M1",    cpu0_core.M[1],       15) },  /* index (modifier) registers */
+    { ORDATA   ( "M2",    cpu0_core.M[2],       15) },
+    { ORDATA   ( "M3",    cpu0_core.M[3],       15) },
+    { ORDATA   ( "M4",    cpu0_core.M[4],       15) },
+    { ORDATA   ( "M5",    cpu0_core.M[5],       15) },
+    { ORDATA   ( "M6",    cpu0_core.M[6],       15) },
+    { ORDATA   ( "M7",    cpu0_core.M[7],       15) },
+    { ORDATA   ( "M10",   cpu0_core.M[010],     15) },
+    { ORDATA   ( "M11",   cpu0_core.M[011],     15) },
+    { ORDATA   ( "M12",   cpu0_core.M[012],     15) },
+    { ORDATA   ( "M13",   cpu0_core.M[013],     15) },
+    { ORDATA   ( "M14",   cpu0_core.M[014],     15) },
+    { ORDATA   ( "M15",   cpu0_core.M[015],     15) },
+    { ORDATA   ( "M16",   cpu0_core.M[016],     15) },
+    { ORDATA   ( "M17",   cpu0_core.M[017],     15) },  /* also the stack pointer */
+    { ORDATA   ( "M20",   cpu0_core.M[020],     15) },  /* MOD - address modifier register */
+    { ORDATA   ( "M21",   cpu0_core.M[021],     15) },  /* PSW - CU modes */
+    { ORDATA   ( "M27",   cpu0_core.M[027],     15) },  /* SPSW - saved CU modes */
+    { ORDATA   ( "M32",   cpu0_core.M[032],     15) },  /* ERET - extracode return address */
+    { ORDATA   ( "M33",   cpu0_core.M[033],     15) },  /* IRET - interrupt return address */
+    { ORDATA   ( "M34",   cpu0_core.M[034],     16) },  /* IBP - instruction bkpt address */
+    { ORDATA   ( "M35",   cpu0_core.M[035],     16) },  /* DWP - watchpoint address */
+    { BINRDATA ( "RUU",   cpu0_core.RUU,         9) },  /* execution modes  */
+    { ORDATAVM ( "GRP",   cpu0_core.GRP,        48) },  /* main interrupt reg */
+    { ORDATAVM ( "MGRP",  cpu0_core.MGRP,       48) },  /* mask of the above  */
+    { ORDATA   ( "PRP",   cpu0_core.PRP,        24) },  /* peripheral interrupt reg */
+    { ORDATA   ( "MPRP",  cpu0_core.MPRP,       24) },  /* mask of the above*/
+    { ORDATAVM ( "RP0",   cpu0_core.RP[0],      48) },
+    { ORDATAVM ( "RP1",   cpu0_core.RP[1],      48) },
+    { ORDATAVM ( "RP2",   cpu0_core.RP[2],      48) },
+    { ORDATAVM ( "RP3",   cpu0_core.RP[3],      48) },
+    { ORDATAVM ( "RP4",   cpu0_core.RP[4],      48) },
+    { ORDATAVM ( "RP5",   cpu0_core.RP[5],      48) },
+    { ORDATAVM ( "RP6",   cpu0_core.RP[6],      48) },
+    { ORDATAVM ( "RP7",   cpu0_core.RP[7],      48) },
+    { ORDATA   ( "RZ",    cpu0_core.RZ,         32) },
+    { ORDATAVM ( "FP1",   cpu0_core.pult[1],    50) },
+    { ORDATAVM ( "FP2",   cpu0_core.pult[2],    50) },
+    { ORDATAVM ( "FP3",   cpu0_core.pult[3],    50) },
+    { ORDATAVM ( "FP4",   cpu0_core.pult[4],    50) },
+    { ORDATAVM ( "FP5",   cpu0_core.pult[5],    50) },
+    { ORDATAVM ( "FP6",   cpu0_core.pult[6],    50) },
+    { ORDATAVM ( "FP7",   cpu0_core.pult[7],    50) },
     { 0 }
 };
 
@@ -128,6 +141,9 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV|MTAB_VALO,
         0, "PULT",  "PULT",     &cpu_set_pult,      &cpu_show_pult,     NULL,
                                 "Selects a hardwired program or switch reg." },
+    //TODO: Разрешить/запретить контроль числа.
+    //{ 2, 0, "NOCHECK", "NOCHECK" },
+    //{ 2, 2, "CHECK",   "CHECK" },
     { 0 }
 };
 
@@ -137,72 +153,6 @@ DEVICE cpu_dev = {
     &cpu_examine, &cpu_deposit, &cpu_reset,
     NULL, NULL, NULL, NULL,
     DEV_DEBUG
-};
-
-/*
- * REG: A pseudo-device containing Latin synonyms of all CPU registers.
- */
-REG reg_reg[] = {
-    { ORDATA   ( "PC",    PC,         15) },          /* program counter */
-    { ORDATA   ( "RK",    RK,         24) },          /* instruction register */
-    { ORDATA   ( "Aex",   Aex,        15) },          /* effective address */
-    { ORDATAVM ( "ACC",   ACC,        48) },          /* accumulator */
-    { ORDATAVM ( "RMR",   RMR,        48) },          /* LSB register */
-    { BINRDATA ( "RAU",   RAU,         6) },          /* ALU modes */
-    { ORDATA   ( "M1",    M[1],       15) },          /* index (modifier) registers */
-    { ORDATA   ( "M2",    M[2],       15) },
-    { ORDATA   ( "M3",    M[3],       15) },
-    { ORDATA   ( "M4",    M[4],       15) },
-    { ORDATA   ( "M5",    M[5],       15) },
-    { ORDATA   ( "M6",    M[6],       15) },
-    { ORDATA   ( "M7",    M[7],       15) },
-    { ORDATA   ( "M10",   M[010],     15) },
-    { ORDATA   ( "M11",   M[011],     15) },
-    { ORDATA   ( "M12",   M[012],     15) },
-    { ORDATA   ( "M13",   M[013],     15) },
-    { ORDATA   ( "M14",   M[014],     15) },
-    { ORDATA   ( "M15",   M[015],     15) },
-    { ORDATA   ( "M16",   M[016],     15) },
-    { ORDATA   ( "M17",   M[017],     15) },          /* also the stack pointer */
-    { ORDATA   ( "M20",   M[020],     15) },          /* MOD - address modifier register */
-    { ORDATA   ( "M21",   M[021],     15) },          /* PSW - CU modes */
-    { ORDATA   ( "M27",   M[027],     15) },          /* SPSW - saved CU modes */
-    { ORDATA   ( "M32",   M[032],     15) },          /* ERET - extracode return address */
-    { ORDATA   ( "M33",   M[033],     15) },          /* IRET - interrupt return address */
-    { ORDATA   ( "M34",   M[034],     16) },          /* IBP - instruction bkpt address */
-    { ORDATA   ( "M35",   M[035],     16) },          /* DWP - watchpoint address */
-    { BINRDATA ( "RUU",   RUU,         9) },          /* execution modes  */
-    { ORDATAVM ( "GRP",   GRP,        48) },          /* main interrupt reg */
-    { ORDATAVM ( "MGRP",  MGRP,       48) },          /* mask of the above  */
-    { ORDATA   ( "PRP",   PRP,        24) },          /* peripheral interrupt reg */
-    { ORDATA   ( "MPRP",  MPRP,       24) },          /* mask of the above*/
-
-    { ORDATAVM ( "RP0",   RP[0],      48) },
-    { ORDATAVM ( "RP1",   RP[1],      48) },
-    { ORDATAVM ( "RP2",   RP[2],      48) },
-    { ORDATAVM ( "RP3",   RP[3],      48) },
-    { ORDATAVM ( "RP4",   RP[4],      48) },
-    { ORDATAVM ( "RP5",   RP[5],      48) },
-    { ORDATAVM ( "RP6",   RP[6],      48) },
-    { ORDATAVM ( "RP7",   RP[7],      48) },
-    { ORDATA   ( "RZ",    RZ,         32) },
-    { ORDATAVM ( "FP1",   pult[0][1], 50) },
-    { ORDATAVM ( "FP2",   pult[0][2], 50) },
-    { ORDATAVM ( "FP3",   pult[0][3], 50) },
-    { ORDATAVM ( "FP4",   pult[0][4], 50) },
-    { ORDATAVM ( "FP5",   pult[0][5], 50) },
-    { ORDATAVM ( "FP6",   pult[0][6], 50) },
-    { ORDATAVM ( "FP7",   pult[0][7], 50) },
-    { 0 }
-};
-
-UNIT reg_unit = {
-    UDATA(NULL, 0, 8)
-};
-
-DEVICE reg_dev = {
-    "REG", &reg_unit, reg_reg, NULL,
-    1, 8, 1, 1, 8, 50,
 };
 
 /*
@@ -224,8 +174,6 @@ int32 sim_emax = 1;     /* max number of addressable units per instruction */
 
 DEVICE *sim_devices[] = {
     &cpu_dev,
-    &reg_dev,
-    &mmu_dev,
     &clock_dev,
     &tty_dev,           /* терминалы - телетайпы, видеотоны, "Консулы" */
     0
@@ -260,16 +208,18 @@ const char *sim_stop_messages[] = {
  */
 t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
 {
+    CORE *cpu = &cpu0_core;
+
     if (addr >= MEMSIZE)
         return SCPE_NXM;
     if (vptr) {
         if (addr < 010) {
-            if ((pult[pult_packet_switch][0] >> addr) & 1) {
+            if ((pult_tab[cpu->pult_switch][0] >> addr) & 1) {
                 /* hardwired */
-                *vptr = pult[pult_packet_switch][addr];
+                *vptr = pult_tab[cpu->pult_switch][addr];
             } else {
                 /* from switch regs */
-                *vptr = pult[0][addr];
+                *vptr = cpu->pult[addr];
             }
         } else
             *vptr = memory[addr];
@@ -282,13 +232,15 @@ t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
  */
 t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
 {
+    CORE *cpu = &cpu0_core;
+
     if (addr >= MEMSIZE)
         return SCPE_NXM;
     if (addr < 010) {
         /* Deposited values for the switch register address range
          * always go to switch registers.
          */
-        pult[0][addr] = SET_PARITY(val, PARITY_INSN);
+        cpu->pult[addr] = SET_PARITY(val, PARITY_INSN);
     } else
         memory[addr] = SET_PARITY(val, PARITY_INSN);
     return SCPE_OK;
@@ -299,26 +251,33 @@ t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
  */
 t_stat cpu_reset(DEVICE *dptr)
 {
+    CORE *cpu = &cpu0_core;
     int i;
 
-    ACC = 0;
-    RMR = 0;
-    RAU = 0;
-    RUU = RUU_EXTRACODE | RUU_AVOST_DISABLE;
+    cpu->ACC = 0;
+    cpu->RMR = 0;
+    cpu->RAU = 0;
+    cpu->RUU = RUU_EXTRACODE | RUU_AVOST_DISABLE;
     for (i=0; i<NREGS; ++i)
-        M[i] = 0;
+        cpu->M[i] = 0;
 
     /* Регистр 17: БлП, БлЗ, ПОП, ПОК, БлПр */
-    M[PSW] = PSW_MMAP_DISABLE | PSW_PROT_DISABLE | PSW_INTR_HALT |
+    cpu->M[PSW] = PSW_MMAP_DISABLE | PSW_PROT_DISABLE | PSW_INTR_HALT |
         PSW_CHECK_HALT | PSW_INTR_DISABLE;
 
     /* Регистр 23: БлП, БлЗ, РежЭ, БлПр */
-    M[SPSW] = SPSW_MMAP_DISABLE | SPSW_PROT_DISABLE | SPSW_EXTRACODE |
+    cpu->M[SPSW] = SPSW_MMAP_DISABLE | SPSW_PROT_DISABLE | SPSW_EXTRACODE |
         SPSW_INTR_DISABLE;
 
-    GRP = MGRP = 0;
+    cpu->GRP = cpu->MGRP = 0;
+
+    for (i = 0; i < 8; ++i) {
+        cpu->RP[i] = 0;
+    }
+    cpu->RZ = 0;
+
     // Disabled due to a conflict with loading
-    // PC = 1;                 /* "reset cpu; go" should start from 1  */
+    // cpu->PC = 1;             /* "reset cpu; go" should start from 1  */
 
     sim_brk_types = SWMASK('E') | SWMASK('R') | SWMASK('W');
     sim_brk_dflt = SWMASK('E');
@@ -331,7 +290,9 @@ t_stat cpu_reset(DEVICE *dptr)
  */
 t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
-    GRP |= GRP_PANEL_REQ;
+    CORE *cpu = &cpu0_core;
+
+    cpu->GRP |= GRP_PANEL_REQ;
     return SCPE_OK;
 }
 
@@ -340,6 +301,7 @@ t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
  */
 t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
+    CORE *cpu = &cpu0_core;
     int sw;
 
     if (cptr)
@@ -348,7 +310,7 @@ t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc)
         sw = 0;
 
     if (sw >= 0 && sw <= 10) {
-        pult_packet_switch = sw;
+        cpu->pult_switch = sw;
         if (sw)
             sim_printf("Pult packet switch set to hardwired program %d\n", sw);
         else
@@ -361,7 +323,9 @@ t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc)
 
 t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp)
 {
-    fprintf(st, "Pult packet switch position is %d", pult_packet_switch);
+    CORE *cpu = &cpu0_core;
+
+    fprintf(st, "Pult packet switch position is %d", cpu->pult_switch);
     return SCPE_OK;
 }
 
@@ -395,27 +359,35 @@ utf8_putc(unsigned ch, FILE *fout)
  */
 void svs_okno(const char *message)
 {
+    CORE *cpu = &cpu0_core;
+
     svs_log_cont("_%%%%%% %s: ", message);
     if (sim_log)
-        svs_fprint_cmd(sim_log, RK);
+        svs_fprint_cmd(sim_log, cpu->RK);
     svs_log("_");
 
     /* СчАС, системные индекс-регистры 020-035. */
     svs_log("_    СчАС:%05o  20:%05o  21:%05o  27:%05o  32:%05o  33:%05o  34:%05o  35:%05o",
-               PC, M[020], M[021], M[027], M[032], M[033], M[034], M[035]);
+        cpu->PC, cpu->M[020], cpu->M[021], cpu->M[027],
+        cpu->M[032], cpu->M[033], cpu->M[034], cpu->M[035]);
+
     /* Индекс-регистры 1-7. */
     svs_log("_       1:%05o   2:%05o   3:%05o   4:%05o   5:%05o   6:%05o   7:%05o",
-               M[1], M[2], M[3], M[4], M[5], M[6], M[7]);
+        cpu->M[1], cpu->M[2], cpu->M[3], cpu->M[4],
+        cpu->M[5], cpu->M[6], cpu->M[7]);
+
     /* Индекс-регистры 010-017. */
     svs_log("_      10:%05o  11:%05o  12:%05o  13:%05o  14:%05o  15:%05o  16:%05o  17:%05o",
-               M[010], M[011], M[012], M[013], M[014], M[015], M[016], M[017]);
+        cpu->M[010], cpu->M[011], cpu->M[012], cpu->M[013],
+        cpu->M[014], cpu->M[015], cpu->M[016], cpu->M[017]);
+
     /* Сумматор, РМР, режимы АУ и УУ. */
     svs_log("_      СМ:%04o %04o %04o %04o  РМР:%04o %04o %04o %04o  РАУ:%02o    РУУ:%03o",
-               (int) (ACC >> 36) & BITS(12), (int) (ACC >> 24) & BITS(12),
-               (int) (ACC >> 12) & BITS(12), (int) ACC & BITS(12),
-               (int) (RMR >> 36) & BITS(12), (int) (RMR >> 24) & BITS(12),
-               (int) (RMR >> 12) & BITS(12), (int) RMR & BITS(12),
-               RAU, RUU);
+        (int) (cpu->ACC >> 36) & BITS(12), (int) (cpu->ACC >> 24) & BITS(12),
+        (int) (cpu->ACC >> 12) & BITS(12), (int) cpu->ACC & BITS(12),
+        (int) (cpu->RMR >> 36) & BITS(12), (int) (cpu->RMR >> 24) & BITS(12),
+        (int) (cpu->RMR >> 12) & BITS(12), (int) cpu->RMR & BITS(12),
+        cpu->RAU, cpu->RUU);
 }
 
 /*
@@ -423,8 +395,11 @@ void svs_okno(const char *message)
  */
 static void cmd_002()
 {
-    svs_debug("*** рег %03o", Aex & 0377);
-    switch (Aex & 0377) {
+    CORE *cpu = &cpu0_core;
+
+    svs_debug("*** рег %03o", cpu->Aex & 0377);
+
+    switch (cpu->Aex & 0377) {
     /*TODO:
      * Некоторые регистры:
      * 36 МГРП
@@ -444,25 +419,25 @@ static void cmd_002()
 #if 0
     case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7:
         /* Запись в БРЗ */
-        //mmu_setcache(Aex & 7, ACC);
+        //mmu_setcache(cpu->Aex & 7, cpu->ACC);
         break;
     case 020: case 021: case 022: case 023:
     case 024: case 025: case 026: case 027:
         /* Запись в регистры приписки */
-        mmu_setrp(Aex & 7, ACC);
+        mmu_setrp(cpu->Aex & 7, cpu->ACC);
         break;
     case 030: case 031: case 032: case 033:
         /* Запись в регистры защиты */
-        mmu_setprotection(Aex & 3, ACC);
+        mmu_setprotection(cpu->Aex & 3, cpu->ACC);
         break;
     case 036:
         /* Запись в маску главного регистра прерываний */
-        MGRP = ACC;
+        cpu->MGRP = cpu->ACC;
         break;
     case 037:
         /* Clearing the main interrupt register: */
         /* it is impossible to clear wired (stateless) bits this way */
-        GRP &= ACC | GRP_WIRED_BITS;
+        cpu->GRP &= cpu->ACC | GRP_WIRED_BITS;
         break;
     case 64: case 65: case 66: case 67: case 68: case 69: case 70: case 71:
     case 72: case 73: case 74: case 75: case 76: case 77: case 78: case 79:
@@ -472,50 +447,51 @@ static void cmd_002()
          * Бит 1: управление блокировкой режима останова БРО.
          * Биты 2 и 3 - признаки формирования контрольных
          * разрядов (ПКП и ПКЛ). */
-        if (Aex & 1)
-            RUU |= RUU_AVOST_DISABLE;
+        if (cpu->Aex & 1)
+            cpu->RUU |= RUU_AVOST_DISABLE;
         else
-            RUU &= ~RUU_AVOST_DISABLE;
-        if (Aex & 2)
-            RUU |= RUU_PARITY_RIGHT;
+            cpu->RUU &= ~RUU_AVOST_DISABLE;
+        if (cpu->Aex & 2)
+            cpu->RUU |= RUU_PARITY_RIGHT;
         else
-            RUU &= ~RUU_PARITY_RIGHT;
-        if (Aex & 4)
-            RUU |= RUU_PARITY_LEFT;
+            cpu->RUU &= ~RUU_PARITY_RIGHT;
+        if (cpu->Aex & 4)
+            cpu->RUU |= RUU_PARITY_LEFT;
         else
-            RUU &= ~RUU_PARITY_LEFT;
+            cpu->RUU &= ~RUU_PARITY_LEFT;
         break;
     case 0200: case 0201: case 0202: case 0203:
     case 0204: case 0205: case 0206: case 0207:
         /* Чтение БРЗ */
-        //ACC = mmu_getcache(Aex & 7);
+        //cpu->ACC = mmu_getcache(cpu->Aex & 7);
         break;
     case 0237:
         /* Чтение главного регистра прерываний */
-        ACC = GRP;
+        cpu->ACC = cpu->GRP;
         break;
 #endif
     default:
 #if 0
-        if ((Aex & 0340) == 0140) {
+        if ((cpu->Aex & 0340) == 0140) {
             /* TODO: watchdog reset mechanism */
-            longjmp(cpu_halt, STOP_UNIMPLEMENTED);
+            longjmp(cpu->exception, STOP_UNIMPLEMENTED);
         }
 #endif
         /* Неиспользуемые адреса */
         svs_debug("*** %05o%s: РЕГ %o - неправильный адрес спец.регистра",
-                     PC, (RUU & RUU_RIGHT_INSTR) ? "п" : "л", Aex);
+            cpu->PC, (cpu->RUU & RUU_RIGHT_INSTR) ? "п" : "л", cpu->Aex);
         break;
     }
 }
 
 /*
  * Execute one instruction, placed on address PC:RUU_RIGHT_INSTR.
- * When stopped, perform a longjmp to cpu_halt,
+ * When stopped, perform a longjmp to cpu->exception,
  * sending a stop code.
  */
 void cpu_one_inst()
 {
+    CORE *cpu = &cpu0_core;
     int reg, opcode, addr, nextpc, next_mod;
     t_value word;
 
@@ -527,256 +503,256 @@ void cpu_one_inst()
      */
     uint32 delay;
 
-    corr_stack = 0;
-    word = mmu_fetch(PC);
-    if (RUU & RUU_RIGHT_INSTR)
-        RK = (uint32)word;      /* get right instruction */
+    cpu->corr_stack = 0;
+    word = mmu_fetch(cpu->PC);
+    if (cpu->RUU & RUU_RIGHT_INSTR)
+        cpu->RK = (uint32)word;         /* get right instruction */
     else
-        RK = (uint32)(word >> 24);/* get left instruction */
+        cpu->RK = (uint32)(word >> 24); /* get left instruction */
 
-    RK &= BITS(24);
+    cpu->RK &= BITS(24);
 
-    reg = RK >> 20;
-    if (RK & BBIT(20)) {
-        addr = RK & BITS(15);
-        opcode = (RK >> 12) & 0370;
+    reg = cpu->RK >> 20;
+    if (cpu->RK & BBIT(20)) {
+        addr = cpu->RK & BITS(15);
+        opcode = (cpu->RK >> 12) & 0370;
     } else {
-        addr = RK & BITS(12);
-        if (RK & BBIT(19))
+        addr = cpu->RK & BITS(12);
+        if (cpu->RK & BBIT(19))
             addr |= 070000;
-        opcode = (RK >> 12) & 077;
+        opcode = (cpu->RK >> 12) & 077;
     }
 
     if (sim_deb && cpu_dev.dctrl) {
-        fprintf(sim_deb, "*** %05o%s: ", PC,
-                 (RUU & RUU_RIGHT_INSTR) ? "п" : "л");
-        svs_fprint_cmd(sim_deb, RK);
+        fprintf(sim_deb, "*** %05o%s: ", cpu->PC,
+                 (cpu->RUU & RUU_RIGHT_INSTR) ? "п" : "л");
+        svs_fprint_cmd(sim_deb, cpu->RK);
         fprintf(sim_deb, "\tСМ=");
-        fprint_sym(sim_deb, 0, &ACC, 0, 0);
-        fprintf(sim_deb, "\tРАУ=%02o", RAU);
+        fprint_sym(sim_deb, 0, &cpu->ACC, 0, 0);
+        fprintf(sim_deb, "\tРАУ=%02o", cpu->RAU);
         if (reg)
-            fprintf(sim_deb, "\tМ[%o]=%05o", reg, M[reg]);
+            fprintf(sim_deb, "\tМ[%o]=%05o", reg, cpu->M[reg]);
         fprintf(sim_deb, "\n");
     }
-    nextpc = ADDR(PC + 1);
-    if (RUU & RUU_RIGHT_INSTR) {
-        PC += 1;                        /* increment PC */
-        RUU &= ~RUU_RIGHT_INSTR;
+    nextpc = ADDR(cpu->PC + 1);
+    if (cpu->RUU & RUU_RIGHT_INSTR) {
+        cpu->PC += 1;                               /* increment PC */
+        cpu->RUU &= ~RUU_RIGHT_INSTR;
     } else {
-        mmu_prefetch(nextpc | (IS_SUPERVISOR(RUU) ? BBIT(16) : 0), 0);
-        RUU |= RUU_RIGHT_INSTR;
+        mmu_prefetch(nextpc | (IS_SUPERVISOR(cpu->RUU) ? BBIT(16) : 0), 0);
+        cpu->RUU |= RUU_RIGHT_INSTR;
     }
 
-    if (RUU & RUU_MOD_RK) {
-        addr = ADDR(addr + M[MOD]);
+    if (cpu->RUU & RUU_MOD_RK) {
+        addr = ADDR(addr + cpu->M[MOD]);
     }
     next_mod = 0;
     delay = 0;
 
     switch (opcode) {
     case 000:                                       /* зп, atx */
-        Aex = ADDR(addr + M[reg]);
-        mmu_store(Aex, ACC);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        mmu_store(cpu->Aex, cpu->ACC);
         if (! addr && reg == 017)
-            M[017] = ADDR(M[017] + 1);
+            cpu->M[017] = ADDR(cpu->M[017] + 1);
         delay = MEAN_TIME(3, 3);
         break;
     case 001:                                       /* зпм, stx */
-        Aex = ADDR(addr + M[reg]);
-        mmu_store(Aex, ACC);
-        M[017] = ADDR(M[017] - 1);
-        corr_stack = 1;
-        ACC = mmu_load(M[017]);
-        RAU = SET_LOGICAL(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        mmu_store(cpu->Aex, cpu->ACC);
+        cpu->M[017] = ADDR(cpu->M[017] - 1);
+        cpu->corr_stack = 1;
+        cpu->ACC = mmu_load(cpu->M[017]);
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(6, 6);
         break;
     case 002:                                       /* рег, mod */
-        Aex = ADDR(addr + M[reg]);
-        if (! IS_SUPERVISOR(RUU))
-            longjmp(cpu_halt, STOP_BADCMD);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        if (! IS_SUPERVISOR(cpu->RUU))
+            longjmp(cpu->exception, STOP_BADCMD);
         cmd_002();
         /* Режим АУ - логический, если операция была "чтение" */
-        if (Aex & 0200)
-            RAU = SET_LOGICAL(RAU);
+        if (cpu->Aex & 0200)
+            cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 3);
         break;
     case 003:                                       /* счм, xts */
-        mmu_store(M[017], ACC);
-        M[017] = ADDR(M[017] + 1);
-        corr_stack = -1;
-        Aex = ADDR(addr + M[reg]);
-        ACC = mmu_load(Aex);
-        RAU = SET_LOGICAL(RAU);
+        mmu_store(cpu->M[017], cpu->ACC);
+        cpu->M[017] = ADDR(cpu->M[017] + 1);
+        cpu->corr_stack = -1;
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->ACC = mmu_load(cpu->Aex);
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(6, 6);
         break;
     case 004:                                       /* сл, a+x */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        svs_add(mmu_load(Aex), 0, 0);
-        RAU = SET_ADDITIVE(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        svs_add(mmu_load(cpu->Aex), 0, 0);
+        cpu->RAU = SET_ADDITIVE(cpu->RAU);
         delay = MEAN_TIME(3, 11);
         break;
     case 005:                                       /* вч, a-x */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        svs_add(mmu_load(Aex), 0, 1);
-        RAU = SET_ADDITIVE(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        svs_add(mmu_load(cpu->Aex), 0, 1);
+        cpu->RAU = SET_ADDITIVE(cpu->RAU);
         delay = MEAN_TIME(3, 11);
         break;
     case 006:                                       /* вчоб, x-a */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        svs_add(mmu_load(Aex), 1, 0);
-        RAU = SET_ADDITIVE(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        svs_add(mmu_load(cpu->Aex), 1, 0);
+        cpu->RAU = SET_ADDITIVE(cpu->RAU);
         delay = MEAN_TIME(3, 11);
         break;
     case 007:                                       /* вчаб, amx */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        svs_add(mmu_load(Aex), 1, 1);
-        RAU = SET_ADDITIVE(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        svs_add(mmu_load(cpu->Aex), 1, 1);
+        cpu->RAU = SET_ADDITIVE(cpu->RAU);
         delay = MEAN_TIME(3, 11);
         break;
     case 010:                                       /* сч, xta */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        ACC = mmu_load(Aex);
-        RAU = SET_LOGICAL(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->ACC = mmu_load(cpu->Aex);
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 3);
         break;
     case 011:                                       /* и, aax */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        ACC &= mmu_load(Aex);
-        RMR = 0;
-        RAU = SET_LOGICAL(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->ACC &= mmu_load(cpu->Aex);
+        cpu->RMR = 0;
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 4);
         break;
     case 012:                                       /* нтж, aex */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        RMR = ACC;
-        ACC ^= mmu_load(Aex);
-        RAU = SET_LOGICAL(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->RMR = cpu->ACC;
+        cpu->ACC ^= mmu_load(cpu->Aex);
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 3);
         break;
     case 013:                                       /* слц, arx */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        ACC += mmu_load(Aex);
-        if (ACC & BIT49)
-            ACC = (ACC + 1) & BITS48;
-        RMR = 0;
-        RAU = SET_MULTIPLICATIVE(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->ACC += mmu_load(cpu->Aex);
+        if (cpu->ACC & BIT49)
+            cpu->ACC = (cpu->ACC + 1) & BITS48;
+        cpu->RMR = 0;
+        cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 6);
         break;
     case 014:                                       /* знак, avx */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        svs_change_sign(mmu_load(Aex) >> 40 & 1);
-        RAU = SET_ADDITIVE(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        svs_change_sign(mmu_load(cpu->Aex) >> 40 & 1);
+        cpu->RAU = SET_ADDITIVE(cpu->RAU);
         delay = MEAN_TIME(3, 5);
         break;
     case 015:                                       /* или, aox */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        ACC |= mmu_load(Aex);
-        RMR = 0;
-        RAU = SET_LOGICAL(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->ACC |= mmu_load(cpu->Aex);
+        cpu->RMR = 0;
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 4);
         break;
     case 016:                                       /* дел, a/x */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        svs_divide(mmu_load(Aex));
-        RAU = SET_MULTIPLICATIVE(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        svs_divide(mmu_load(cpu->Aex));
+        cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 50);
         break;
     case 017:                                       /* умн, a*x */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        svs_multiply(mmu_load(Aex));
-        RAU = SET_MULTIPLICATIVE(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        svs_multiply(mmu_load(cpu->Aex));
+        cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 18);
         break;
     case 020:                                       /* сбр, apx */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        ACC = svs_pack(ACC, mmu_load(Aex));
-        RMR = 0;
-        RAU = SET_LOGICAL(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->ACC = svs_pack(cpu->ACC, mmu_load(cpu->Aex));
+        cpu->RMR = 0;
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 53);
         break;
     case 021:                                       /* рзб, aux */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        ACC = svs_unpack(ACC, mmu_load(Aex));
-        RMR = 0;
-        RAU = SET_LOGICAL(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->ACC = svs_unpack(cpu->ACC, mmu_load(cpu->Aex));
+        cpu->RMR = 0;
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 53);
         break;
     case 022:                                       /* чед, acx */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        ACC = svs_count_ones(ACC) + mmu_load(Aex);
-        if (ACC & BIT49)
-            ACC = (ACC + 1) & BITS48;
-        RAU = SET_LOGICAL(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->ACC = svs_count_ones(cpu->ACC) + mmu_load(cpu->Aex);
+        if (cpu->ACC & BIT49)
+            cpu->ACC = (cpu->ACC + 1) & BITS48;
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 56);
         break;
     case 023:                                       /* нед, anx */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        if (ACC) {
-            int n = svs_highest_bit(ACC);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        if (cpu->ACC) {
+            int n = svs_highest_bit(cpu->ACC);
 
             /* "Остаток" сумматора, исключая бит,
              * номер которого определен, помещается в РМР,
@@ -784,202 +760,203 @@ void cpu_one_inst()
             svs_shift(48 - n);
 
             /* Циклическое сложение номера со словом по Аисп. */
-            ACC = n + mmu_load(Aex);
-            if (ACC & BIT49)
-                ACC = (ACC + 1) & BITS48;
+            cpu->ACC = n + mmu_load(cpu->Aex);
+            if (cpu->ACC & BIT49)
+                cpu->ACC = (cpu->ACC + 1) & BITS48;
         } else {
-            RMR = 0;
-            ACC = mmu_load(Aex);
+            cpu->RMR = 0;
+            cpu->ACC = mmu_load(cpu->Aex);
         }
-        RAU = SET_LOGICAL(RAU);
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 32);
         break;
     case 024:                                       /* слп, e+x */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        svs_add_exponent((mmu_load(Aex) >> 41) - 64);
-        RAU = SET_MULTIPLICATIVE(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        svs_add_exponent((mmu_load(cpu->Aex) >> 41) - 64);
+        cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 5);
         break;
     case 025:                                       /* вчп, e-x */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        svs_add_exponent(64 - (mmu_load(Aex) >> 41));
-        RAU = SET_MULTIPLICATIVE(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        svs_add_exponent(64 - (mmu_load(cpu->Aex) >> 41));
+        cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 5);
         break;
     case 026: {                                     /* сд, asx */
         int n;
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        n = (mmu_load(Aex) >> 41) - 64;
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        n = (mmu_load(cpu->Aex) >> 41) - 64;
         svs_shift(n);
-        RAU = SET_LOGICAL(RAU);
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 4 + abs(n));
         break;
     }
     case 027:                                       /* рж, xtr */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        RAU = (mmu_load(Aex) >> 41) & 077;
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->RAU = (mmu_load(cpu->Aex) >> 41) & 077;
         delay = MEAN_TIME(3, 3);
         break;
     case 030:                                       /* счрж, rte */
-        Aex = ADDR(addr + M[reg]);
-        ACC = (t_value) (RAU & Aex & 0177) << 41;
-        RAU = SET_LOGICAL(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->ACC = (t_value) (cpu->RAU & cpu->Aex & 0177) << 41;
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 3);
         break;
     case 031:                                       /* счмр, yta */
-        Aex = ADDR(addr + M[reg]);
-        if (IS_LOGICAL(RAU)) {
-            ACC = RMR;
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        if (IS_LOGICAL(cpu->RAU)) {
+            cpu->ACC = cpu->RMR;
         } else {
-            t_value x = RMR;
-            ACC = (ACC & ~BITS41) | (RMR & BITS40);
-            svs_add_exponent((Aex & 0177) - 64);
-            RMR = x;
+            t_value x = cpu->RMR;
+            cpu->ACC = (cpu->ACC & ~BITS41) | (cpu->RMR & BITS40);
+            svs_add_exponent((cpu->Aex & 0177) - 64);
+            cpu->RMR = x;
         }
         delay = MEAN_TIME(3, 5);
         break;
     case 032:                                       /* зпп, запись полноразрядная */
-        Aex = ADDR(addr + M[reg]);
-        if (! IS_SUPERVISOR(RUU))
-            longjmp(cpu_halt, STOP_BADCMD);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        if (! IS_SUPERVISOR(cpu->RUU))
+            longjmp(cpu->exception, STOP_BADCMD);
         //TODO
-        svs_debug("*** зпп %05o", Aex);
+        svs_debug("*** зпп %05o", cpu->Aex);
         delay = MEAN_TIME(3, 8);
         break;
     case 033:                                       /* счп, считывание полноразрядное */
-        Aex = ADDR(addr + M[reg]);
-        if (! IS_SUPERVISOR(RUU))
-            longjmp(cpu_halt, STOP_BADCMD);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        if (! IS_SUPERVISOR(cpu->RUU))
+            longjmp(cpu->exception, STOP_BADCMD);
         //TODO
-        svs_debug("*** счп %05o", Aex);
+        svs_debug("*** счп %05o", cpu->Aex);
         delay = MEAN_TIME(3, 8);
         break;
     case 034:                                       /* слпа, e+n */
-        Aex = ADDR(addr + M[reg]);
-        svs_add_exponent((Aex & 0177) - 64);
-        RAU = SET_MULTIPLICATIVE(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        svs_add_exponent((cpu->Aex & 0177) - 64);
+        cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 5);
         break;
     case 035:                                       /* вчпа, e-n */
-        Aex = ADDR(addr + M[reg]);
-        svs_add_exponent(64 - (Aex & 0177));
-        RAU = SET_MULTIPLICATIVE(RAU);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        svs_add_exponent(64 - (cpu->Aex & 0177));
+        cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 5);
         break;
     case 036: {                                     /* сда, asn */
         int n;
-        Aex = ADDR(addr + M[reg]);
-        n = (Aex & 0177) - 64;
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        n = (cpu->Aex & 0177) - 64;
         svs_shift(n);
-        RAU = SET_LOGICAL(RAU);
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 4 + abs(n));
         break;
     }
     case 037:                                       /* ржа, ntr */
-        Aex = ADDR(addr + M[reg]);
-        RAU = Aex & 077;
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->RAU = cpu->Aex & 077;
         delay = MEAN_TIME(3, 3);
         break;
     case 040:                                       /* уи, ati */
-        Aex = ADDR(addr + M[reg]);
-        if (IS_SUPERVISOR(RUU)) {
-            int reg = Aex & 037;
-            M[reg] = ADDR(ACC);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        if (IS_SUPERVISOR(cpu->RUU)) {
+            int reg = cpu->Aex & 037;
+            cpu->M[reg] = ADDR(cpu->ACC);
             /* breakpoint/watchpoint regs will match physical
              * or virtual addresses depending on the current
              * mapping mode.
              */
-            if ((M[PSW] & PSW_MMAP_DISABLE) &&
+            if ((cpu->M[PSW] & PSW_MMAP_DISABLE) &&
                 (reg == IBP || reg == DWP))
-                M[reg] |= BBIT(16);
+                cpu->M[reg] |= BBIT(16);
 
         } else
-            M[Aex & 017] = ADDR(ACC);
-        M[0] = 0;
+            cpu->M[cpu->Aex & 017] = ADDR(cpu->ACC);
+        cpu->M[0] = 0;
         delay = MEAN_TIME(14, 3);
         break;
     case 041: {                                     /* уим, sti */
         unsigned rg, ad;
 
-        Aex = ADDR(addr + M[reg]);
-        rg = Aex & (IS_SUPERVISOR(RUU) ? 037 : 017);
-        ad = ADDR(ACC);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        rg = cpu->Aex & (IS_SUPERVISOR(cpu->RUU) ? 037 : 017);
+        ad = ADDR(cpu->ACC);
         if (rg != 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        ACC = mmu_load(rg != 017 ? M[017] : ad);
-        M[rg] = ad;
-        if ((M[PSW] & PSW_MMAP_DISABLE) && (rg == IBP || rg == DWP))
-            M[rg] |= BBIT(16);
-        M[0] = 0;
-        RAU = SET_LOGICAL(RAU);
+        cpu->ACC = mmu_load(rg != 017 ? cpu->M[017] : ad);
+        cpu->M[rg] = ad;
+        if ((cpu->M[PSW] & PSW_MMAP_DISABLE) && (rg == IBP || rg == DWP))
+            cpu->M[rg] |= BBIT(16);
+        cpu->M[0] = 0;
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(14, 3);
         break;
     }
     case 042:                                       /* счи, ita */
         delay = MEAN_TIME(6, 3);
-    load_modifier:  Aex = ADDR(addr + M[reg]);
-        ACC = ADDR(M[Aex & (IS_SUPERVISOR(RUU) ? 037 : 017)]);
-        RAU = SET_LOGICAL(RAU);
+load_modifier:
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->ACC = ADDR(cpu->M[cpu->Aex & (IS_SUPERVISOR(cpu->RUU) ? 037 : 017)]);
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         break;
     case 043:                                       /* счим, its */
-        mmu_store(M[017], ACC);
-        M[017] = ADDR(M[017] + 1);
+        mmu_store(cpu->M[017], cpu->ACC);
+        cpu->M[017] = ADDR(cpu->M[017] + 1);
         delay = MEAN_TIME(9, 6);
         goto load_modifier;
     case 044:                                       /* уии, mtj */
-        Aex = addr;
-        if (IS_SUPERVISOR(RUU)) {
+        cpu->Aex = addr;
+        if (IS_SUPERVISOR(cpu->RUU)) {
 transfer_modifier:
-            M[Aex & 037] = M[reg];
-            if ((M[PSW] & PSW_MMAP_DISABLE) &&
-                ((Aex & 037) == IBP || (Aex & 037) == DWP))
-                M[Aex & 037] |= BBIT(16);
+            cpu->M[cpu->Aex & 037] = cpu->M[reg];
+            if ((cpu->M[PSW] & PSW_MMAP_DISABLE) &&
+                ((cpu->Aex & 037) == IBP || (cpu->Aex & 037) == DWP))
+                cpu->M[cpu->Aex & 037] |= BBIT(16);
 
         } else
-            M[Aex & 017] = M[reg];
-        M[0] = 0;
+            cpu->M[cpu->Aex & 017] = cpu->M[reg];
+        cpu->M[0] = 0;
         delay = 6;
         break;
     case 045:                                       /* сли, j+m */
-        Aex = addr;
-        if ((Aex & 020) && IS_SUPERVISOR(RUU))
+        cpu->Aex = addr;
+        if ((cpu->Aex & 020) && IS_SUPERVISOR(cpu->RUU))
             goto transfer_modifier;
-        M[Aex & 017] = ADDR(M[Aex & 017] + M[reg]);
-        M[0] = 0;
+        cpu->M[cpu->Aex & 017] = ADDR(cpu->M[cpu->Aex & 017] + cpu->M[reg]);
+        cpu->M[0] = 0;
         delay = 6;
         break;
     case 046:                                       /* cоп, специальное обращение к памяти */
-        Aex = addr;
-        if (! IS_SUPERVISOR(RUU))
-            longjmp(cpu_halt, STOP_BADCMD);
+        cpu->Aex = addr;
+        if (! IS_SUPERVISOR(cpu->RUU))
+            longjmp(cpu->exception, STOP_BADCMD);
         //TODO
-        svs_debug("*** соп %05o", Aex);
+        svs_debug("*** соп %05o", cpu->Aex);
         delay = 6;
         break;
     case 047:                                       /* э47, x47 */
-        Aex = addr;
-        if (! IS_SUPERVISOR(RUU))
-            longjmp(cpu_halt, STOP_BADCMD);
-        M[Aex & 017] = ADDR(M[Aex & 017] + Aex);
-        M[0] = 0;
+        cpu->Aex = addr;
+        if (! IS_SUPERVISOR(cpu->RUU))
+            longjmp(cpu->exception, STOP_BADCMD);
+        cpu->M[cpu->Aex & 017] = ADDR(cpu->M[cpu->Aex & 017] + cpu->Aex);
+        cpu->M[0] = 0;
         delay = 6;
         break;
     case 050: case 051: case 052: case 053:
@@ -991,158 +968,158 @@ transfer_modifier:
     case 0200:                                      /* э20 */
     case 0210:                                      /* э21 */
 stop_as_extracode:
-            Aex = ADDR(addr + M[reg]);
+            cpu->Aex = ADDR(addr + cpu->M[reg]);
             if (! sim_deb && sim_log && cpu_dev.dctrl && opcode != 075) {
                 /* Если включен console log и cpu debug,
                  * но нет console debug, то печатаем только экстракоды.
                  * Пропускаем э75, их обычно слишком много. */
-                t_value word = mmu_load(Aex);
-                fprintf(sim_log, "*** %05o%s: ", PC,
-                         (RUU & RUU_RIGHT_INSTR) ? "п" : "л");
-                svs_fprint_cmd(sim_log, RK);
-                fprintf(sim_log, "\tАисп=%05o (=", Aex);
+                t_value word = mmu_load(cpu->Aex);
+                fprintf(sim_log, "*** %05o%s: ", cpu->PC,
+                         (cpu->RUU & RUU_RIGHT_INSTR) ? "п" : "л");
+                svs_fprint_cmd(sim_log, cpu->RK);
+                fprintf(sim_log, "\tАисп=%05o (=", cpu->Aex);
                 fprint_sym(sim_log, 0, &word, 0, 0);
                 fprintf(sim_log, ")  СМ=");
-                fprint_sym(sim_log, 0, &ACC, 0, 0);
+                fprint_sym(sim_log, 0, &cpu->ACC, 0, 0);
                 if (reg)
-                    fprintf(sim_log, "  М[%o]=%05o", reg, M[reg]);
+                    fprintf(sim_log, "  М[%o]=%05o", reg, cpu->M[reg]);
                 fprintf(sim_log, "\n");
             }
             /*svs_okno("экстракод");*/
             /* Адрес возврата из экстракода. */
-            M[ERET] = nextpc;
+            cpu->M[ERET] = nextpc;
             /* Сохранённые режимы УУ. */
-            M[SPSW] = (M[PSW] & (PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
-                                 PSW_PROT_DISABLE)) | IS_SUPERVISOR(RUU);
+            cpu->M[SPSW] = (cpu->M[PSW] & (PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
+                                           PSW_PROT_DISABLE)) | IS_SUPERVISOR(cpu->RUU);
             /* Текущие режимы УУ. */
-            M[PSW] = PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
-                PSW_PROT_DISABLE | /*?*/ PSW_INTR_HALT;
-            M[14] = Aex;
-            RUU = SET_SUPERVISOR(RUU, SPSW_EXTRACODE);
+            cpu->M[PSW] = PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
+                          PSW_PROT_DISABLE | /*?*/ PSW_INTR_HALT;
+            cpu->M[14] = cpu->Aex;
+            cpu->RUU = SET_SUPERVISOR(cpu->RUU, SPSW_EXTRACODE);
 
             if (opcode <= 077)
-                PC = 0500 + opcode;             /* э50-э77 */
+                cpu->PC = 0500 + opcode;            /* э50-э77 */
             else
-                PC = 0540 + (opcode >> 3);      /* э20, э21 */
-            RUU &= ~RUU_RIGHT_INSTR;
+                cpu->PC = 0540 + (opcode >> 3);     /* э20, э21 */
+            cpu->RUU &= ~RUU_RIGHT_INSTR;
             delay = 7;
             break;
     case 0220:                                      /* мода, utc */
-        Aex = ADDR(addr + M[reg]);
-        next_mod = Aex;
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        next_mod = cpu->Aex;
         delay = 4;
         break;
     case 0230:                                      /* мод, wtc */
         if (! addr && reg == 017) {
-            M[017] = ADDR(M[017] - 1);
-            corr_stack = 1;
+            cpu->M[017] = ADDR(cpu->M[017] - 1);
+            cpu->corr_stack = 1;
         }
-        Aex = ADDR(addr + M[reg]);
-        next_mod = ADDR(mmu_load(Aex));
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        next_mod = ADDR(mmu_load(cpu->Aex));
         delay = MEAN_TIME(13, 3);
         break;
     case 0240:                                      /* уиа, vtm */
-        Aex = addr;
-        M[reg] = addr;
-        M[0] = 0;
-        if (IS_SUPERVISOR(RUU) && reg == 0) {
-            M[PSW] &= ~(PSW_INTR_DISABLE |
-                        PSW_MMAP_DISABLE | PSW_PROT_DISABLE);
-            M[PSW] |= addr & (PSW_INTR_DISABLE |
-                              PSW_MMAP_DISABLE | PSW_PROT_DISABLE);
+        cpu->Aex = addr;
+        cpu->M[reg] = addr;
+        cpu->M[0] = 0;
+        if (IS_SUPERVISOR(cpu->RUU) && reg == 0) {
+            cpu->M[PSW] &= ~(PSW_INTR_DISABLE |
+                             PSW_MMAP_DISABLE | PSW_PROT_DISABLE);
+            cpu->M[PSW] |= addr & (PSW_INTR_DISABLE |
+                                   PSW_MMAP_DISABLE | PSW_PROT_DISABLE);
         }
         delay = 4;
         break;
     case 0250:                                      /* слиа, utm */
-        Aex = ADDR(addr + M[reg]);
-        M[reg] = Aex;
-        M[0] = 0;
-        if (IS_SUPERVISOR(RUU) && reg == 0) {
-            M[PSW] &= ~(PSW_INTR_DISABLE |
-                        PSW_MMAP_DISABLE | PSW_PROT_DISABLE);
-            M[PSW] |= addr & (PSW_INTR_DISABLE |
-                              PSW_MMAP_DISABLE | PSW_PROT_DISABLE);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->M[reg] = cpu->Aex;
+        cpu->M[0] = 0;
+        if (IS_SUPERVISOR(cpu->RUU) && reg == 0) {
+            cpu->M[PSW] &= ~(PSW_INTR_DISABLE |
+                             PSW_MMAP_DISABLE | PSW_PROT_DISABLE);
+            cpu->M[PSW] |= addr & (PSW_INTR_DISABLE |
+                                   PSW_MMAP_DISABLE | PSW_PROT_DISABLE);
         }
         delay = 4;
         break;
     case 0260:                                      /* по, uza */
-        Aex = ADDR(addr + M[reg]);
-        RMR = ACC;
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->RMR = cpu->ACC;
         delay = MEAN_TIME(12, 3);
-        if (IS_ADDITIVE(RAU)) {
-            if (ACC & BIT41)
+        if (IS_ADDITIVE(cpu->RAU)) {
+            if (cpu->ACC & BIT41)
                 break;
-        } else if (IS_MULTIPLICATIVE(RAU)) {
-            if (! (ACC & BIT48))
+        } else if (IS_MULTIPLICATIVE(cpu->RAU)) {
+            if (! (cpu->ACC & BIT48))
                 break;
-        } else if (IS_LOGICAL(RAU)) {
-            if (ACC)
+        } else if (IS_LOGICAL(cpu->RAU)) {
+            if (cpu->ACC)
                 break;
         } else
             break;
-        PC = Aex;
-        RUU &= ~RUU_RIGHT_INSTR;
+        cpu->PC = cpu->Aex;
+        cpu->RUU &= ~RUU_RIGHT_INSTR;
         delay += 3;
         break;
     case 0270:                                      /* пе, u1a */
-        Aex = ADDR(addr + M[reg]);
-        RMR = ACC;
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->RMR = cpu->ACC;
         delay = MEAN_TIME(12, 3);
-        if (IS_ADDITIVE(RAU)) {
-            if (! (ACC & BIT41))
+        if (IS_ADDITIVE(cpu->RAU)) {
+            if (! (cpu->ACC & BIT41))
                 break;
-        } else if (IS_MULTIPLICATIVE(RAU)) {
-            if (ACC & BIT48)
+        } else if (IS_MULTIPLICATIVE(cpu->RAU)) {
+            if (cpu->ACC & BIT48)
                 break;
-        } else if (IS_LOGICAL(RAU)) {
-            if (! ACC)
+        } else if (IS_LOGICAL(cpu->RAU)) {
+            if (! cpu->ACC)
                 break;
         } else
             /* fall thru, i.e. branch */;
-        PC = Aex;
-        RUU &= ~RUU_RIGHT_INSTR;
+        cpu->PC = cpu->Aex;
+        cpu->RUU &= ~RUU_RIGHT_INSTR;
         delay += 3;
         break;
     case 0300:                                      /* пб, uj */
-        Aex = ADDR(addr + M[reg]);
-        PC = Aex;
-        RUU &= ~RUU_RIGHT_INSTR;
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
+        cpu->PC = cpu->Aex;
+        cpu->RUU &= ~RUU_RIGHT_INSTR;
         delay = 7;
         break;
     case 0310:                                      /* пв, vjm */
-        Aex = addr;
-        M[reg] = nextpc;
-        M[0] = 0;
-        PC = addr;
-        RUU &= ~RUU_RIGHT_INSTR;
+        cpu->Aex = addr;
+        cpu->M[reg] = nextpc;
+        cpu->M[0] = 0;
+        cpu->PC = addr;
+        cpu->RUU &= ~RUU_RIGHT_INSTR;
         delay = 7;
         break;
     case 0320:                                      /* выпр, iret */
-        Aex = addr;
-        if (! IS_SUPERVISOR(RUU)) {
-            longjmp(cpu_halt, STOP_BADCMD);
+        cpu->Aex = addr;
+        if (! IS_SUPERVISOR(cpu->RUU)) {
+            longjmp(cpu->exception, STOP_BADCMD);
         }
-        M[PSW] = (M[PSW] & PSW_WRITE_WATCH) |
-            (M[SPSW] & (SPSW_INTR_DISABLE |
-                        SPSW_MMAP_DISABLE | SPSW_PROT_DISABLE));
-        PC = M[(reg & 3) | 030];
-        RUU &= ~RUU_RIGHT_INSTR;
-        if (M[SPSW] & SPSW_RIGHT_INSTR)
-            RUU |= RUU_RIGHT_INSTR;
+        cpu->M[PSW] = (cpu->M[PSW] & PSW_WRITE_WATCH) |
+                      (cpu->M[SPSW] & (SPSW_INTR_DISABLE |
+                                       SPSW_MMAP_DISABLE | SPSW_PROT_DISABLE));
+        cpu->PC = cpu->M[(reg & 3) | 030];
+        cpu->RUU &= ~RUU_RIGHT_INSTR;
+        if (cpu->M[SPSW] & SPSW_RIGHT_INSTR)
+            cpu->RUU |= RUU_RIGHT_INSTR;
         else
-            RUU &= ~RUU_RIGHT_INSTR;
-        RUU = SET_SUPERVISOR(RUU,
-                              M[SPSW] & (SPSW_EXTRACODE | SPSW_INTERRUPT));
-        if (M[SPSW] & SPSW_MOD_RK)
-            next_mod = M[MOD];
+            cpu->RUU &= ~RUU_RIGHT_INSTR;
+        cpu->RUU = SET_SUPERVISOR(cpu->RUU,
+                                  cpu->M[SPSW] & (SPSW_EXTRACODE | SPSW_INTERRUPT));
+        if (cpu->M[SPSW] & SPSW_MOD_RK)
+            next_mod = cpu->M[MOD];
         /*svs_okno("Выход из прерывания");*/
         delay = 7;
         break;
     case 0330:                                      /* стоп, stop */
-        Aex = ADDR(addr + M[reg]);
+        cpu->Aex = ADDR(addr + cpu->M[reg]);
         delay = 7;
-        if (! IS_SUPERVISOR(RUU)) {
-            if (M[PSW] & PSW_CHECK_HALT)
+        if (! IS_SUPERVISOR(cpu->RUU)) {
+            if (cpu->M[PSW] & PSW_CHECK_HALT)
                 break;
             else {
                 opcode = 063;
@@ -1150,54 +1127,55 @@ stop_as_extracode:
             }
         }
         //mmu_print_brz();
-        longjmp(cpu_halt, STOP_STOP);
+        longjmp(cpu->exception, STOP_STOP);
         break;
     case 0340:                                      /* пио, vzm */
-    branch_zero:    Aex = addr;
+branch_zero:
+        cpu->Aex = addr;
         delay = 4;
-        if (! M[reg]) {
-            PC = addr;
-            RUU &= ~RUU_RIGHT_INSTR;
+        if (! cpu->M[reg]) {
+            cpu->PC = addr;
+            cpu->RUU &= ~RUU_RIGHT_INSTR;
             delay += 3;
         }
         break;
     case 0350:                                      /* пино, v1m */
-        Aex = addr;
+        cpu->Aex = addr;
         delay = 4;
-        if (M[reg]) {
-            PC = addr;
-            RUU &= ~RUU_RIGHT_INSTR;
+        if (cpu->M[reg]) {
+            cpu->PC = addr;
+            cpu->RUU &= ~RUU_RIGHT_INSTR;
             delay += 3;
         }
         break;
     case 0360:                                      /* э36, *36 */
         goto branch_zero;
     case 0370:                                      /* цикл, vlm */
-        Aex = addr;
+        cpu->Aex = addr;
         delay = 4;
-        if (! M[reg])
+        if (! cpu->M[reg])
             break;
-        M[reg] = ADDR(M[reg] + 1);
-        PC = addr;
-        RUU &= ~RUU_RIGHT_INSTR;
+        cpu->M[reg] = ADDR(cpu->M[reg] + 1);
+        cpu->PC = addr;
+        cpu->RUU &= ~RUU_RIGHT_INSTR;
         delay += 3;
         break;
     default:
         /* Unknown instruction - cannot happen. */
-        longjmp(cpu_halt, STOP_STOP);
+        longjmp(cpu->exception, STOP_STOP);
         break;
     }
     if (next_mod) {
         /* Модификация адреса следующей команды. */
-        M[MOD] = next_mod;
-        RUU |= RUU_MOD_RK;
+        cpu->M[MOD] = next_mod;
+        cpu->RUU |= RUU_MOD_RK;
     } else
-        RUU &= ~RUU_MOD_RK;
+        cpu->RUU &= ~RUU_MOD_RK;
 
 #if 0
     //TODO
     /* Не находимся ли мы в цикле "ЖДУ" диспака? */
-    if (RUU == 047 && PC == 04440 && RK == 067704440) {
+    if (cpu->RUU == 047 && cpu->PC == 04440 && cpu->RK == 067704440) {
         //check_initial_setup();
         sim_idle(0, TRUE);
     }
@@ -1210,20 +1188,22 @@ stop_as_extracode:
  */
 void op_int_1(const char *msg)
 {
+    CORE *cpu = &cpu0_core;
+
     /*svs_okno(msg);*/
-    M[SPSW] = (M[PSW] & (PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
-                         PSW_PROT_DISABLE)) | IS_SUPERVISOR(RUU);
-    if (RUU & RUU_RIGHT_INSTR)
-        M[SPSW] |= SPSW_RIGHT_INSTR;
-    M[IRET] = PC;
-    M[PSW] |= PSW_INTR_DISABLE | PSW_MMAP_DISABLE | PSW_PROT_DISABLE;
-    if (RUU & RUU_MOD_RK) {
-        M[SPSW] |= SPSW_MOD_RK;
-        RUU &= ~RUU_MOD_RK;
+    cpu->M[SPSW] = (cpu->M[PSW] & (PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
+                                   PSW_PROT_DISABLE)) | IS_SUPERVISOR(cpu->RUU);
+    if (cpu->RUU & RUU_RIGHT_INSTR)
+        cpu->M[SPSW] |= SPSW_RIGHT_INSTR;
+    cpu->M[IRET] = cpu->PC;
+    cpu->M[PSW] |= PSW_INTR_DISABLE | PSW_MMAP_DISABLE | PSW_PROT_DISABLE;
+    if (cpu->RUU & RUU_MOD_RK) {
+        cpu->M[SPSW] |= SPSW_MOD_RK;
+        cpu->RUU &= ~RUU_MOD_RK;
     }
-    PC = 0500;
-    RUU &= ~RUU_RIGHT_INSTR;
-    RUU = SET_SUPERVISOR(RUU, SPSW_INTERRUPT);
+    cpu->PC = 0500;
+    cpu->RUU &= ~RUU_RIGHT_INSTR;
+    cpu->RUU = SET_SUPERVISOR(cpu->RUU, SPSW_INTERRUPT);
 }
 
 /*
@@ -1232,18 +1212,20 @@ void op_int_1(const char *msg)
  */
 void op_int_2()
 {
+    CORE *cpu = &cpu0_core;
+
     /*svs_okno("Внешнее прерывание");*/
-    M[SPSW] = (M[PSW] & (PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
-                         PSW_PROT_DISABLE)) | IS_SUPERVISOR(RUU);
-    M[IRET] = PC;
-    M[PSW] |= PSW_INTR_DISABLE | PSW_MMAP_DISABLE | PSW_PROT_DISABLE;
-    if (RUU & RUU_MOD_RK) {
-        M[SPSW] |= SPSW_MOD_RK;
-        RUU &= ~RUU_MOD_RK;
+    cpu->M[SPSW] = (cpu->M[PSW] & (PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
+                                   PSW_PROT_DISABLE)) | IS_SUPERVISOR(cpu->RUU);
+    cpu->M[IRET] = cpu->PC;
+    cpu->M[PSW] |= PSW_INTR_DISABLE | PSW_MMAP_DISABLE | PSW_PROT_DISABLE;
+    if (cpu->RUU & RUU_MOD_RK) {
+        cpu->M[SPSW] |= SPSW_MOD_RK;
+        cpu->RUU &= ~RUU_MOD_RK;
     }
-    PC = 0501;
-    RUU &= ~RUU_RIGHT_INSTR;
-    RUU = SET_SUPERVISOR(RUU, SPSW_INTERRUPT);
+    cpu->PC = 0501;
+    cpu->RUU &= ~RUU_RIGHT_INSTR;
+    cpu->RUU = SET_SUPERVISOR(cpu->RUU, SPSW_INTERRUPT);
 }
 
 /*
@@ -1251,23 +1233,24 @@ void op_int_2()
  */
 t_stat sim_instr(void)
 {
+    CORE *cpu = &cpu0_core;
     t_stat r;
     int iintr = 0;
 
     /* Restore register state */
-    PC = PC & BITS(15);                             /* mask PC */
+    cpu->PC &= BITS(15);                            /* mask PC */
     mmu_setup();                                    /* copy RP to TLB */
 
     /* An internal interrupt or user intervention */
-    r = setjmp(cpu_halt);
+    r = setjmp(cpu->exception);
     if (r) {
-        M[017] += corr_stack;
+        cpu->M[017] += cpu->corr_stack;
         if (cpu_dev.dctrl) {
             const char *message = (r >= SCPE_BASE) ?
                 scp_errors[r - SCPE_BASE] :
                 sim_stop_messages[r];
-            svs_debug("/// %05o%s: %s", PC,
-                (RUU & RUU_RIGHT_INSTR) ? "п" : "л", message);
+            svs_debug("/// %05o%s: %s", cpu->PC,
+                (cpu->RUU & RUU_RIGHT_INSTR) ? "п" : "л", message);
         }
 
         /*
@@ -1284,122 +1267,122 @@ ret:        return r;
         case STOP_RWATCH:
         case STOP_WWATCH:
             /* Step back one insn to reexecute it */
-            if (! (RUU & RUU_RIGHT_INSTR)) {
-                --PC;
+            if (! (cpu->RUU & RUU_RIGHT_INSTR)) {
+                --cpu->PC;
             }
-            RUU ^= RUU_RIGHT_INSTR;
+            cpu->RUU ^= RUU_RIGHT_INSTR;
             goto ret;
         case STOP_BADCMD:
-            if (M[PSW] & PSW_INTR_HALT)             /* ПоП */
+            if (cpu->M[PSW] & PSW_INTR_HALT)        /* ПоП */
                 goto ret;
             op_int_1(sim_stop_messages[r]);
             // SPSW_NEXT_RK is not important for this interrupt
-            GRP |= GRP_ILL_INSN;
+            cpu->GRP |= GRP_ILL_INSN;
             break;
         case STOP_INSN_CHECK:
-            if (M[PSW] & PSW_CHECK_HALT)            /* ПоК */
+            if (cpu->M[PSW] & PSW_CHECK_HALT)       /* ПоК */
                 goto ret;
             op_int_1(sim_stop_messages[r]);
             // SPSW_NEXT_RK must be 0 for this interrupt; it is already
-            GRP |= GRP_INSN_CHECK;
+            cpu->GRP |= GRP_INSN_CHECK;
             break;
         case STOP_INSN_PROT:
-            if (M[PSW] & PSW_INTR_HALT)             /* ПоП */
+            if (cpu->M[PSW] & PSW_INTR_HALT)        /* ПоП */
                 goto ret;
-            if (RUU & RUU_RIGHT_INSTR) {
-                ++PC;
+            if (cpu->RUU & RUU_RIGHT_INSTR) {
+                ++cpu->PC;
             }
-            RUU ^= RUU_RIGHT_INSTR;
+            cpu->RUU ^= RUU_RIGHT_INSTR;
             op_int_1(sim_stop_messages[r]);
             // SPSW_NEXT_RK must be 1 for this interrupt
-            M[SPSW] |= SPSW_NEXT_RK;
-            GRP |= GRP_INSN_PROT;
+            cpu->M[SPSW] |= SPSW_NEXT_RK;
+            cpu->GRP |= GRP_INSN_PROT;
             break;
         case STOP_OPERAND_PROT:
 #if 0
 /* ДИСПАК держит признак ПоП установленным.
  * При запуске СЕРП возникает обращение к чужому листу. */
-            if (M[PSW] & PSW_INTR_HALT)             /* ПоП */
+            if (cpu->M[PSW] & PSW_INTR_HALT)        /* ПоП */
                 goto ret;
 #endif
-            if (RUU & RUU_RIGHT_INSTR) {
-                ++PC;
+            if (cpu->RUU & RUU_RIGHT_INSTR) {
+                ++cpu->PC;
             }
-            RUU ^= RUU_RIGHT_INSTR;
+            cpu->RUU ^= RUU_RIGHT_INSTR;
             op_int_1(sim_stop_messages[r]);
-            M[SPSW] |= SPSW_NEXT_RK;
+            cpu->M[SPSW] |= SPSW_NEXT_RK;
             // The offending virtual page is in bits 5-9
-            GRP |= GRP_OPRND_PROT;
-            GRP = GRP_SET_PAGE(GRP, iintr_data);
+            cpu->GRP |= GRP_OPRND_PROT;
+            cpu->GRP = GRP_SET_PAGE(cpu->GRP, cpu->bad_addr);
             break;
         case STOP_RAM_CHECK:
-            if (M[PSW] & PSW_CHECK_HALT)            /* ПоК */
+            if (cpu->M[PSW] & PSW_CHECK_HALT)       /* ПоК */
                 goto ret;
             op_int_1(sim_stop_messages[r]);
             // The offending interleaved block # is in bits 1-3.
-            GRP |= GRP_CHECK | GRP_RAM_CHECK;
-            GRP = GRP_SET_BLOCK(GRP, iintr_data);
+            cpu->GRP |= GRP_CHECK | GRP_RAM_CHECK;
+            cpu->GRP = GRP_SET_BLOCK(cpu->GRP, cpu->bad_addr);
             break;
         case STOP_CACHE_CHECK:
-            if (M[PSW] & PSW_CHECK_HALT)            /* ПоК */
+            if (cpu->M[PSW] & PSW_CHECK_HALT)       /* ПоК */
                 goto ret;
             op_int_1(sim_stop_messages[r]);
             // The offending BRZ # is in bits 1-3.
-            GRP |= GRP_CHECK;
-            GRP &= ~GRP_RAM_CHECK;
-            GRP = GRP_SET_BLOCK(GRP, iintr_data);
+            cpu->GRP |= GRP_CHECK;
+            cpu->GRP &= ~GRP_RAM_CHECK;
+            cpu->GRP = GRP_SET_BLOCK(cpu->GRP, cpu->bad_addr);
             break;
         case STOP_INSN_ADDR_MATCH:
-            if (M[PSW] & PSW_INTR_HALT)             /* ПоП */
+            if (cpu->M[PSW] & PSW_INTR_HALT)        /* ПоП */
                 goto ret;
-            if (RUU & RUU_RIGHT_INSTR) {
-                ++PC;
+            if (cpu->RUU & RUU_RIGHT_INSTR) {
+                ++cpu->PC;
             }
-            RUU ^= RUU_RIGHT_INSTR;
+            cpu->RUU ^= RUU_RIGHT_INSTR;
             op_int_1(sim_stop_messages[r]);
-            M[SPSW] |= SPSW_NEXT_RK;
-            GRP |= GRP_BREAKPOINT;
+            cpu->M[SPSW] |= SPSW_NEXT_RK;
+            cpu->GRP |= GRP_BREAKPOINT;
             break;
         case STOP_LOAD_ADDR_MATCH:
-            if (M[PSW] & PSW_INTR_HALT)             /* ПоП */
+            if (cpu->M[PSW] & PSW_INTR_HALT)        /* ПоП */
                 goto ret;
-            if (RUU & RUU_RIGHT_INSTR) {
-                ++PC;
+            if (cpu->RUU & RUU_RIGHT_INSTR) {
+                ++cpu->PC;
             }
-            RUU ^= RUU_RIGHT_INSTR;
+            cpu->RUU ^= RUU_RIGHT_INSTR;
             op_int_1(sim_stop_messages[r]);
-            M[SPSW] |= SPSW_NEXT_RK;
-            GRP |= GRP_WATCHPT_R;
+            cpu->M[SPSW] |= SPSW_NEXT_RK;
+            cpu->GRP |= GRP_WATCHPT_R;
             break;
         case STOP_STORE_ADDR_MATCH:
-            if (M[PSW] & PSW_INTR_HALT)             /* ПоП */
+            if (cpu->M[PSW] & PSW_INTR_HALT)        /* ПоП */
                 goto ret;
-            if (RUU & RUU_RIGHT_INSTR) {
-                ++PC;
+            if (cpu->RUU & RUU_RIGHT_INSTR) {
+                ++cpu->PC;
             }
-            RUU ^= RUU_RIGHT_INSTR;
+            cpu->RUU ^= RUU_RIGHT_INSTR;
             op_int_1(sim_stop_messages[r]);
-            M[SPSW] |= SPSW_NEXT_RK;
-            GRP |= GRP_WATCHPT_W;
+            cpu->M[SPSW] |= SPSW_NEXT_RK;
+            cpu->GRP |= GRP_WATCHPT_W;
             break;
         case STOP_OVFL:
             /* Прерывание по АУ вызывает останов, если БРО=0
              * и установлен ПоП или ПоК.
              * Страница 118 ТО9.*/
-            if (! (RUU & RUU_AVOST_DISABLE) &&      /* ! БРО */
-                ((M[PSW] & PSW_INTR_HALT) ||        /* ПоП */
-                 (M[PSW] & PSW_CHECK_HALT)))        /* ПоК */
+            if (! (cpu->RUU & RUU_AVOST_DISABLE) && /* ! БРО */
+                ((cpu->M[PSW] & PSW_INTR_HALT) ||   /* ПоП */
+                 (cpu->M[PSW] & PSW_CHECK_HALT)))   /* ПоК */
                 goto ret;
             op_int_1(sim_stop_messages[r]);
-            GRP |= GRP_OVERFLOW|GRP_RAM_CHECK;
+            cpu->GRP |= GRP_OVERFLOW|GRP_RAM_CHECK;
             break;
         case STOP_DIVZERO:
-            if (! (RUU & RUU_AVOST_DISABLE) &&      /* ! БРО */
-                ((M[PSW] & PSW_INTR_HALT) ||        /* ПоП */
-                 (M[PSW] & PSW_CHECK_HALT)))        /* ПоК */
+            if (! (cpu->RUU & RUU_AVOST_DISABLE) && /* ! БРО */
+                ((cpu->M[PSW] & PSW_INTR_HALT) ||   /* ПоП */
+                 (cpu->M[PSW] & PSW_CHECK_HALT)))   /* ПоК */
                 goto ret;
             op_int_1(sim_stop_messages[r]);
-            GRP |= GRP_DIVZERO|GRP_RAM_CHECK;
+            cpu->GRP |= GRP_DIVZERO|GRP_RAM_CHECK;
             break;
         }
         ++iintr;
@@ -1417,7 +1400,7 @@ ret:        return r;
             }
         }
 
-        if (PC > BITS(15) && IS_SUPERVISOR(RUU)) {
+        if (cpu->PC > BITS(15) && IS_SUPERVISOR(cpu->RUU)) {
           /*
            * Runaway instruction execution in supervisor mode
            * warrants attention.
@@ -1426,18 +1409,19 @@ ret:        return r;
         }
 
         if (sim_brk_summ & SWMASK('E') &&       /* breakpoint? */
-            sim_brk_test(PC, SWMASK('E'))) {
+            sim_brk_test(cpu->PC, SWMASK('E'))) {
             return STOP_IBKPT;                  /* stop simulation */
         }
 
-        if (PRP & MPRP) {
+        if (cpu->PRP & cpu->MPRP) {
             /* There are interrupts pending in the peripheral
              * interrupt register */
-            GRP |= GRP_SLAVE;
+            cpu->GRP |= GRP_SLAVE;
         }
 
-        if (! iintr && ! (RUU & RUU_RIGHT_INSTR) &&
-            ! (M[PSW] & PSW_INTR_DISABLE) && (GRP & MGRP)) {
+        if (! iintr && ! (cpu->RUU & RUU_RIGHT_INSTR) &&
+            ! (cpu->M[PSW] & PSW_INTR_DISABLE) &&
+            (cpu->GRP & cpu->MGRP)) {
             /* external interrupt */
             op_int_2();
         }
@@ -1456,13 +1440,14 @@ ret:        return r;
  */
 t_stat fast_clk(UNIT * this)
 {
+    CORE *cpu = &cpu0_core;
     static unsigned counter;
     static unsigned tty_counter;
 
     ++counter;
     ++tty_counter;
 
-    GRP |= GRP_TIMER;
+    cpu->GRP |= GRP_TIMER;
 
     if ((counter & 3) == 0) {
         /*
@@ -1471,7 +1456,7 @@ t_stat fast_clk(UNIT * this)
          * terminal I/O. Its frequency was reportedly about 50-60 Hz;
          * 16 ms is a good enough approximation.
          */
-        GRP |= GRP_SLOW_CLK;
+        cpu->GRP |= GRP_SLOW_CLK;
     }
 
     /* Baudot TTYs are synchronised to the main timer rather than the

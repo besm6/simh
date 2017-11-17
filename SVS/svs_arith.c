@@ -88,11 +88,12 @@ int svs_highest_bit(t_value val)
  */
 static void normalize_and_round(alureg_t acc, t_uint64 mr, int rnd_rq)
 {
+    CORE *cpu = &cpu0_core;
     t_uint64 rr = 0;
     int i;
     t_uint64 r;
 
-    if (RAU & RAU_NORM_DISABLE)
+    if (cpu->RAU & RAU_NORM_DISABLE)
         goto chk_rnd;
     i = (acc.mantissa >> 39) & 3;
     if (i == 0) {
@@ -151,22 +152,22 @@ chk_zero:
 chk_rnd:
     if (acc.exponent & 0x8000)
         goto zero;
-    if (! (RAU & RAU_ROUND_DISABLE) && rnd_rq)
+    if (! (cpu->RAU & RAU_ROUND_DISABLE) && rnd_rq)
         acc.mantissa |= 1;
 
-    if (! acc.mantissa && ! (RAU & RAU_NORM_DISABLE)) {
-      zero:           ACC = 0;
-        RMR &= ~BITS40;
+    if (! acc.mantissa && ! (cpu->RAU & RAU_NORM_DISABLE)) {
+zero:   cpu->ACC = 0;
+        cpu->RMR &= ~BITS40;
         return;
     }
 
-    ACC = (t_value) (acc.exponent & BITS(7)) << 41 |
+    cpu->ACC = (t_value) (acc.exponent & BITS(7)) << 41 |
         (acc.mantissa & BITS41);
-    RMR = (RMR & ~BITS40) | (mr & BITS40);
+    cpu->RMR = (cpu->RMR & ~BITS40) | (mr & BITS40);
     /* При переполнении мантисса и младшие разряды порядка верны */
     if (acc.exponent & 0x80) {
-        if (! (RAU & RAU_OVF_DISABLE))
-            longjmp(cpu_halt, STOP_OVFL);
+        if (! (cpu->RAU & RAU_OVF_DISABLE))
+            longjmp(cpu->exception, STOP_OVFL);
     }
 }
 
@@ -177,11 +178,12 @@ chk_rnd:
  */
 void svs_add(t_value val, int negate_acc, int negate_val)
 {
+    CORE *cpu = &cpu0_core;
     t_uint64 mr;
     alureg_t acc, word, a1, a2;
     int diff, neg, rnd_rq = 0;
 
-    acc = toalu(ACC);
+    acc = toalu(cpu->ACC);
     word = toalu(val);
     if (! negate_acc) {
         if (! negate_val) {
@@ -301,14 +303,15 @@ static alureg_t nrdiv(alureg_t n, alureg_t d)
  */
 void svs_divide(t_value val)
 {
+    CORE *cpu = &cpu0_core;
     alureg_t acc;
     alureg_t dividend, divisor;
 
     if (((val ^ (val << 1)) & BIT41) == 0) {
         /* Ненормализованный делитель: деление на ноль. */
-        longjmp(cpu_halt, STOP_DIVZERO);
+        longjmp(cpu->exception, STOP_DIVZERO);
     }
-    dividend = toalu(ACC);
+    dividend = toalu(cpu->ACC);
     divisor = toalu(val);
 
     acc = nrdiv(dividend, divisor);
@@ -323,19 +326,20 @@ void svs_divide(t_value val)
  */
 void svs_multiply(t_value val)
 {
-    uint8           neg = 0;
-    alureg_t        acc, word, a, b;
-    t_uint64        mr, alo, blo, ahi, bhi;
+    CORE     *cpu = &cpu0_core;
+    uint8    neg = 0;
+    alureg_t acc, word, a, b;
+    t_uint64 mr, alo, blo, ahi, bhi;
 
     register t_uint64 l;
 
-    if (! ACC || ! val) {
+    if (! cpu->ACC || ! val) {
         /* multiplication by zero is zero */
-        ACC = 0;
-        RMR &= ~BITS40;
+        cpu->ACC = 0;
+        cpu->RMR &= ~BITS40;
         return;
     }
-    acc = toalu(ACC);
+    acc = toalu(cpu->ACC);
     word = toalu(val);
 
     a = acc;
@@ -381,12 +385,13 @@ void svs_multiply(t_value val)
  */
 void svs_change_sign(int negate_acc)
 {
+    CORE *cpu = &cpu0_core;
     alureg_t acc;
 
-    acc = toalu(ACC);
+    acc = toalu(cpu->ACC);
     if (negate_acc)
         negate(&acc);
-    RMR = 0;
+    cpu->RMR = 0;
     normalize_and_round(acc, 0, 0);
 }
 
@@ -396,11 +401,12 @@ void svs_change_sign(int negate_acc)
  */
 void svs_add_exponent(int val)
 {
+    CORE *cpu = &cpu0_core;
     alureg_t acc;
 
-    acc = toalu(ACC);
+    acc = toalu(cpu->ACC);
     acc.exponent += val;
-    RMR = 0;
+    cpu->RMR = 0;
     normalize_and_round(acc, 0, 0);
 }
 
@@ -460,25 +466,27 @@ int svs_count_ones(t_value word)
  */
 void svs_shift(int i)
 {
-    RMR = 0;
+    CORE *cpu = &cpu0_core;
+
+    cpu->RMR = 0;
     if (i > 0) {
         /* Сдвиг вправо. */
         if (i < 48) {
-            RMR = (ACC << (48-i)) & BITS48;
-            ACC >>= i;
+            cpu->RMR = (cpu->ACC << (48-i)) & BITS48;
+            cpu->ACC >>= i;
         } else {
-            RMR = ACC >> (i-48);
-            ACC = 0;
+            cpu->RMR = cpu->ACC >> (i-48);
+            cpu->ACC = 0;
         }
     } else if (i < 0) {
         /* Сдвиг влево. */
         i = -i;
         if (i < 48) {
-            RMR = ACC >> (48-i);
-            ACC = (ACC << i) & BITS48;
+            cpu->RMR = cpu->ACC >> (48-i);
+            cpu->ACC = (cpu->ACC << i) & BITS48;
         } else {
-            RMR = (ACC << (i-48)) & BITS48;
-            ACC = 0;
+            cpu->RMR = (cpu->ACC << (i-48)) & BITS48;
+            cpu->ACC = 0;
         }
     }
 }

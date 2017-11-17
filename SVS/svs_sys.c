@@ -475,6 +475,7 @@ void svs_fprint_insn(FILE *of, uint32 insn)
 t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
                    UNIT *uptr, int32 sw)
 {
+    CORE *cpu = &cpu0_core; //TODO
     t_value cmd;
 
     if (uptr && (uptr != &cpu_unit))                /* must be CPU */
@@ -482,16 +483,15 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
 
     cmd = val[0];
 
-
     if (sw & SWMASK('M')) {                         /* symbolic decode? */
-        if (sw & SIM_SW_STOP && addr == PC && !(RUU & RUU_RIGHT_INSTR))
+        if ((sw & SIM_SW_STOP) && (addr == cpu->PC) && !(cpu->RUU & RUU_RIGHT_INSTR))
             fprintf(of, "-> ");
         svs_fprint_cmd(of, (uint32)(cmd >> 24));
         if (sw & SIM_SW_STOP)                       /* stop point */
             fprintf(of, ", ");
         else
             fprintf(of, ",\n\t");
-        if (sw & SIM_SW_STOP && addr == PC && (RUU & RUU_RIGHT_INSTR))
+        if (sw & SIM_SW_STOP && addr == cpu->PC && (cpu->RUU & RUU_RIGHT_INSTR))
             fprintf(of, "-> ");
         svs_fprint_cmd(of, cmd & BITS(24));
 
@@ -640,12 +640,13 @@ bad:
  */
 t_stat svs_load(FILE *input)
 {
+    CORE *cpu = &cpu0_core; //TODO
     int addr, type;
     t_value word;
     t_stat err;
 
     addr = 1;
-    PC = 1;
+    cpu->PC = 1;
     for (;;) {
         err = svs_read_line(input, &type, &word);
         if (err)
@@ -658,20 +659,20 @@ t_stat svs_load(FILE *input)
             break;
         case '=':               /* word */
             if (addr < 010)
-                pult[0][addr] = SET_PARITY(word, PARITY_NUMBER);
+                cpu->pult[addr] = SET_PARITY(word, PARITY_NUMBER);
             else
                 memory[addr] = SET_PARITY(word, PARITY_NUMBER);
             ++addr;
             break;
         case '*':               /* instruction */
             if (addr < 010)
-                pult[0][addr] = SET_PARITY(word, PARITY_INSN);
+                cpu->pult[addr] = SET_PARITY(word, PARITY_INSN);
             else
                 memory[addr] = SET_PARITY(word, PARITY_INSN);
             ++addr;
             break;
         case '@':               /* start address */
-            PC = (uint32)word;
+            cpu->PC = (uint32)word;
             break;
         }
         if (addr > MEMSIZE)
@@ -685,17 +686,20 @@ t_stat svs_load(FILE *input)
  */
 t_stat svs_dump(FILE *of, const char *fnam)
 {
+    CORE *cpu = &cpu0_core; //TODO
     int addr, last_addr = -1;
     t_value word;
 
     fprintf(of, "; %s\n", fnam);
     for (addr=1; addr<MEMSIZE; ++addr) {
         if (addr < 010)
-            word = pult[0][addr];
+            word = cpu->pult[addr];
         else
             word = memory[addr];
+
         if (word == 0)
             continue;
+
         if (addr != last_addr+1) {
             fprintf(of, "\nв %05o\n", addr);
         }

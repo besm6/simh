@@ -29,30 +29,6 @@
  */
 #include "svs_defs.h"
 
-/*
- * MMU data structures
- *
- * mmu_dev      MMU device descriptor
- * mmu_unit     MMU unit descriptor
- * mmu_reg      MMU register list
- */
-UNIT mmu_unit = {
-    UDATA(NULL, UNIT_FIX, 8)
-};
-
-/*
- * 64-битные регистры RP0-RP7 - для отображения регистров приписки,
- * группами по 4 ради компактности, 12 бит на страницу.
- * TLB0-TLB31 - постраничные регистры приписки, копии RPi.
- * Обращение к памяти должно вестись через TLBi.
- */
-t_value RP[8];
-uint32 TLB[32];
-
-uint32 RZ;
-
-uint32 iintr_data;    /* protected page number or parity check location */
-
 /* There were several hardwired configurations of registers
  * corresponding to up to 7 first words of the memory space, selected by
  * a packet switch. Here selection 0 corresponds to settable switch registers,
@@ -60,10 +36,9 @@ uint32 iintr_data;    /* protected page number or parity check location */
  * The configuration is selected with "SET CPU PULT=N" where 0 <= N <= 10
  * is the configuration number.
  */
-unsigned pult_packet_switch;
 
 /* Location 0 of each configuration is the bitset of its hardwired locations */
-t_value pult[11][8] = {
+t_value pult_tab[11][8] = {
 /* Switch registers */
     { 0 },
 /* Hardwired program 1, a simple CU test */
@@ -149,82 +124,20 @@ t_value pult[11][8] = {
     },
 };
 
-#define ORDATAVM(nm,loc,wd) REGDATA(nm,(loc),8,wd,0,1,NULL,NULL,REG_VMIO,0,0)
-#define ORDATAH(nm,loc,wd) REGDATA(nm,(loc),8,wd,0,1,NULL,NULL,REG_HIDDEN,0,0)
-
-REG mmu_reg[] = {
-    { ORDATAVM ( "РП0",   RP[0],      48) },                      /* Регистры приписки, по 12 бит */
-    { ORDATAVM ( "РП1",   RP[1],      48) },
-    { ORDATAVM ( "РП2",   RP[2],      48) },
-    { ORDATAVM ( "РП3",   RP[3],      48) },
-    { ORDATAVM ( "РП4",   RP[4],      48) },
-    { ORDATAVM ( "РП5",   RP[5],      48) },
-    { ORDATAVM ( "РП6",   RP[6],      48) },
-    { ORDATAVM ( "РП7",   RP[7],      48) },
-    { ORDATA   ( "РЗ",    RZ,         32) },                      /* Регистр защиты */
-    { ORDATAVM ( "ТР1",   pult[0][1], 50) },                      /* Тумблерные регистры */
-    { ORDATAVM ( "ТР2",   pult[0][2], 50) },
-    { ORDATAVM ( "ТР3",   pult[0][3], 50) },
-    { ORDATAVM ( "ТР4",   pult[0][4], 50) },
-    { ORDATAVM ( "ТР5",   pult[0][5], 50) },
-    { ORDATAVM ( "ТР6",   pult[0][6], 50) },
-    { ORDATAVM ( "ТР7",   pult[0][7], 50) },
-    { 0 }
-};
-
-#define CHECK_ENB 2
-
-MTAB mmu_mod[] = {
-    { 2, 0, "NOCHECK", "NOCHECK" },
-    { 2, 2, "CHECK",   "CHECK" },
-    { 0 }
-};
-
-t_stat mmu_reset(DEVICE *dptr);
-
-t_stat mmu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
-{
-    //mmu_print_brz();
-    return SCPE_NOFNC;
-}
-
-DEVICE mmu_dev = {
-    "MMU", &mmu_unit, mmu_reg, mmu_mod,
-    1, 8, 3, 1, 8, 50,
-    &mmu_examine, NULL, &mmu_reset,
-    NULL, NULL, NULL, NULL,
-    DEV_DEBUG
-};
-
-/*
- * Reset routine
- */
-t_stat mmu_reset(DEVICE *dptr)
-{
-    int i;
-    for (i = 0; i < 8; ++i) {
-        RP[i] = 0;
-    }
-    RZ = 0;
-    /*
-     * Front panel switches survive the reset
-     */
-    sim_cancel(&mmu_unit);
-    return SCPE_OK;
-}
-
 void mmu_protection_check(int addr)
 {
+    CORE *cpu = &cpu0_core;
+
     /* Защита блокируется в режиме супервизора для физических (!) адресов 1-7 (ТО-8) - WTF? */
-    int tmp_prot_disabled = (M[PSW] & PSW_PROT_DISABLE) ||
-        (IS_SUPERVISOR(RUU) && (M[PSW] & PSW_MMAP_DISABLE) && addr < 010);
+    int tmp_prot_disabled = (cpu->M[PSW] & PSW_PROT_DISABLE) ||
+        (IS_SUPERVISOR(cpu->RUU) && (cpu->M[PSW] & PSW_MMAP_DISABLE) && addr < 010);
 
     /* Защита не заблокирована, а лист закрыт */
-    if (! tmp_prot_disabled && (RZ & (1 << (addr >> 10)))) {
-        iintr_data = addr >> 10;
-        if (mmu_dev.dctrl)
+    if (! tmp_prot_disabled && (cpu->RZ & (1 << (addr >> 10)))) {
+        cpu->bad_addr = addr >> 10;
+        if (cpu_dev.dctrl)
             svs_debug("--- (%05o) защита числа", addr);
-        longjmp(cpu_halt, STOP_OPERAND_PROT);
+        longjmp(cpu->exception, STOP_OPERAND_PROT);
     }
 }
 
@@ -233,12 +146,13 @@ void mmu_protection_check(int addr)
  */
 void mmu_store(int addr, t_value val)
 {
+    CORE *cpu = &cpu0_core;
     int matching;
 
     addr &= BITS(15);
     if (addr == 0)
         return;
-    if (sim_log && mmu_dev.dctrl) {
+    if (sim_log && cpu_dev.dctrl) {
         fprintf(sim_log, "--- (%05o) запись ", addr);
         fprint_sym(sim_log, 0, &val, 0, 0);
         fprintf(sim_log, "\n");
@@ -247,51 +161,53 @@ void mmu_store(int addr, t_value val)
     mmu_protection_check(addr);
 
     /* Различаем адреса с припиской и без */
-    if (M[PSW] & PSW_MMAP_DISABLE)
+    if (cpu->M[PSW] & PSW_MMAP_DISABLE)
         addr |= 0100000;
 
     /* ЗПСЧ: ЗП */
-    if (M[DWP] == addr && (M[PSW] & PSW_WRITE_WATCH))
-        longjmp(cpu_halt, STOP_STORE_ADDR_MATCH);
+    if (cpu->M[DWP] == addr && (cpu->M[PSW] & PSW_WRITE_WATCH))
+        longjmp(cpu->exception, STOP_STORE_ADDR_MATCH);
 
     if (sim_brk_summ & SWMASK('W') &&
         sim_brk_test(addr, SWMASK('W')))
-        longjmp(cpu_halt, STOP_WWATCH);
+        longjmp(cpu->exception, STOP_WWATCH);
 }
 
 t_value mmu_memaccess(int addr)
 {
+    CORE *cpu = &cpu0_core;
     t_value val;
 
     /* Вычисляем физический адрес слова */
     addr = (addr > 0100000) ? (addr - 0100000) :
-        (addr & 01777) | (TLB[addr >> 10] << 10);
+        (addr & 01777) | (cpu->TLB[addr >> 10] << 10);
     if (addr >= 010) {
         /* Из памяти */
         val = memory[addr];
     } else {
         /* С тумблерных регистров */
-        if (mmu_dev.dctrl)
-            svs_debug("--- (%05o) чтение ТР%o", PC, addr);
-        if ((pult[pult_packet_switch][0] >> addr) & 1) {
+        if (cpu_dev.dctrl)
+            svs_debug("--- (%05o) чтение ТР%o", cpu->PC, addr);
+
+        if ((pult_tab[cpu->pult_switch][0] >> addr) & 1) {
             /* hardwired */
-            val = pult[pult_packet_switch][addr];
+            val = pult_tab[cpu->pult_switch][addr];
         } else {
             /* from switch regs */
-            val = pult[0][addr];
+            val = cpu->pult[addr];
         }
     }
-    if (sim_log && (mmu_dev.dctrl || (cpu_dev.dctrl && sim_deb))) {
+    if (sim_log && (cpu_dev.dctrl && sim_deb)) {
         fprintf(sim_log, "--- (%05o) чтение ", addr & BITS(15));
         fprint_sym(sim_log, 0, &val, 0, 0);
         fprintf(sim_log, "\n");
     }
 
     /* На тумблерных регистрах контроля числа не бывает */
-    if (addr >= 010 && ! IS_NUMBER(val) && (mmu_unit.flags & CHECK_ENB)) {
-        iintr_data = addr & 7;
+    if (addr >= 010 && ! IS_NUMBER(val) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
+        cpu->bad_addr = addr & 7;
         svs_debug("--- (%05o) контроль числа", addr);
-        longjmp(cpu_halt, STOP_RAM_CHECK);
+        longjmp(cpu->exception, STOP_RAM_CHECK);
     }
     return val;
 }
@@ -301,6 +217,7 @@ t_value mmu_memaccess(int addr)
  */
 t_value mmu_load(int addr)
 {
+    CORE *cpu = &cpu0_core;
     int matching = -1;
     t_value val;
 
@@ -311,34 +228,36 @@ t_value mmu_load(int addr)
     mmu_protection_check(addr);
 
     /* Различаем адреса с припиской и без */
-    if (M[PSW] & PSW_MMAP_DISABLE)
+    if (cpu->M[PSW] & PSW_MMAP_DISABLE)
         addr |= 0100000;
 
     /* ЗПСЧ: СЧ */
-    if (M[DWP] == addr && !(M[PSW] & PSW_WRITE_WATCH))
-        longjmp(cpu_halt, STOP_LOAD_ADDR_MATCH);
+    if (cpu->M[DWP] == addr && !(cpu->M[PSW] & PSW_WRITE_WATCH))
+        longjmp(cpu->exception, STOP_LOAD_ADDR_MATCH);
 
     if (sim_brk_summ & SWMASK('R') &&
         sim_brk_test(addr, SWMASK('R')))
-        longjmp(cpu_halt, STOP_RWATCH);
+        longjmp(cpu->exception, STOP_RWATCH);
 
     return mmu_memaccess(addr) & BITS48;
 }
 
 void mmu_fetch_check(int addr)
 {
+    CORE *cpu = &cpu0_core;
+
     /* В режиме супервизора защиты нет */
-    if (! IS_SUPERVISOR(RUU)) {
-        int page = TLB[addr >> 10];
+    if (! IS_SUPERVISOR(cpu->RUU)) {
+        int page = cpu->TLB[addr >> 10];
         /*
          * Для команд в режиме пользователя признак защиты -
          * 0 в регистре приписки.
          */
         if (page == 0) {
-            iintr_data = addr >> 10;
-            if (mmu_dev.dctrl)
+            cpu->bad_addr = addr >> 10;
+            if (cpu_dev.dctrl)
                 svs_debug("--- (%05o) защита команды", addr);
-            longjmp(cpu_halt, STOP_INSN_PROT);
+            longjmp(cpu->exception, STOP_INSN_PROT);
         }
     }
 }
@@ -348,6 +267,7 @@ void mmu_fetch_check(int addr)
  */
 t_value mmu_prefetch(int addr, int actual)
 {
+    CORE *cpu = &cpu0_core;
     t_value val;
     int i;
 
@@ -359,7 +279,7 @@ t_value mmu_prefetch(int addr, int actual)
     }
 
     if (addr < 0100000) {
-        int page = TLB[addr >> 10];
+        int page = cpu->TLB[addr >> 10];
 
         /* Вычисляем физический адрес слова */
         addr = (addr & 01777) | (page << 10);
@@ -368,12 +288,12 @@ t_value mmu_prefetch(int addr, int actual)
     }
 
     if (addr < 010) {
-        if ((pult[pult_packet_switch][0] >> addr) & 1) {
+        if ((pult_tab[cpu->pult_switch][0] >> addr) & 1) {
             /* hardwired */
-            val = pult[pult_packet_switch][addr];
+            val = pult_tab[cpu->pult_switch][addr];
         } else {
             /* from switch regs */
-            val = pult[0][addr];
+            val = cpu->pult[addr];
         }
     } else
         val = memory[addr];
@@ -386,27 +306,28 @@ t_value mmu_prefetch(int addr, int actual)
  */
 t_value mmu_fetch(int addr)
 {
+    CORE *cpu = &cpu0_core;
     t_value val;
 
     if (addr == 0) {
-        if (mmu_dev.dctrl)
+        if (cpu_dev.dctrl)
             svs_debug("--- передача управления на 0");
-        longjmp(cpu_halt, STOP_INSN_CHECK);
+        longjmp(cpu->exception, STOP_INSN_CHECK);
     }
 
     mmu_fetch_check(addr);
 
     /* Различаем адреса с припиской и без */
-    if (IS_SUPERVISOR(RUU))
+    if (IS_SUPERVISOR(cpu->RUU))
         addr |= 0100000;
 
     /* КРА */
-    if (M[IBP] == addr)
-        longjmp(cpu_halt, STOP_INSN_ADDR_MATCH);
+    if (cpu->M[IBP] == addr)
+        longjmp(cpu->exception, STOP_INSN_ADDR_MATCH);
 
     val = mmu_prefetch(addr, 1);
 
-    if (sim_log && mmu_dev.dctrl) {
+    if (sim_log && cpu_dev.dctrl) {
         fprintf(sim_log, "--- (%05o) выборка ", addr);
         fprint_sym(sim_log, 0, &val, 0, SWMASK('I'));
         fprintf(sim_log, "\n");
@@ -415,13 +336,14 @@ t_value mmu_fetch(int addr)
     /* Тумблерные регистры пока только с командной сверткой */
     if (addr >= 010 && ! IS_INSN(val)) {
         svs_debug("--- (%05o) контроль команды", addr);
-        longjmp(cpu_halt, STOP_INSN_CHECK);
+        longjmp(cpu->exception, STOP_INSN_CHECK);
     }
     return val & BITS48;
 }
 
 void mmu_setrp(int idx, t_value val)
 {
+    CORE *cpu = &cpu0_core;
     uint32 p0, p1, p2, p3;
     const uint32 mask = (MEMSIZE >> 10) - 1;
 
@@ -442,31 +364,35 @@ void mmu_setrp(int idx, t_value val)
     p2 &= mask;
     p3 &= mask;
 
-    RP[idx] = p0 | p1 << 12 | p2 << 24 | (t_value) p3 << 36;
-    TLB[idx*4] = p0;
-    TLB[idx*4+1] = p1;
-    TLB[idx*4+2] = p2;
-    TLB[idx*4+3] = p3;
+    cpu->RP[idx] = p0 | p1 << 12 | p2 << 24 | (t_value) p3 << 36;
+    cpu->TLB[idx*4] = p0;
+    cpu->TLB[idx*4+1] = p1;
+    cpu->TLB[idx*4+2] = p2;
+    cpu->TLB[idx*4+3] = p3;
 }
 
 void mmu_setup()
 {
+    CORE *cpu = &cpu0_core;
     const uint32 mask = (MEMSIZE >> 10) - 1;
     int i;
 
     /* Перепись РПi в TLBj. */
     for (i=0; i<8; ++i) {
-        TLB[i*4] = RP[i] & mask;
-        TLB[i*4+1] = RP[i] >> 12 & mask;
-        TLB[i*4+2] = RP[i] >> 24 & mask;
-        TLB[i*4+3] = RP[i] >> 36 & mask;
+        cpu->TLB[i*4] = cpu->RP[i] & mask;
+        cpu->TLB[i*4+1] = cpu->RP[i] >> 12 & mask;
+        cpu->TLB[i*4+2] = cpu->RP[i] >> 24 & mask;
+        cpu->TLB[i*4+3] = cpu->RP[i] >> 36 & mask;
     }
 }
 
 void mmu_setprotection(int idx, t_value val)
 {
+    CORE *cpu = &cpu0_core;
+
     /* Разряды сумматора, записываемые в регистр защиты - 21-28 */
     int mask = 0xff << (idx * 8);
+
     val = ((val >> 20) & 0xff) << (idx * 8);
-    RZ = (uint32)((RZ & ~mask) | val);
+    cpu->RZ = (uint32)((cpu->RZ & ~mask) | val);
 }
