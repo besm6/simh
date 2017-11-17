@@ -423,10 +423,25 @@ void svs_okno(const char *message)
  */
 static void cmd_002()
 {
-#if 0
     svs_debug("*** рег %03o", Aex & 0377);
-#endif
     switch (Aex & 0377) {
+    /*TODO:
+     * Некоторые регистры:
+     * 36 МГРП
+     * 37 ГРП
+     * 46 маска РВП
+     * 47 РВП
+     * 44 тег (для ЗПП и СЧТ)
+     * 50 прерывания процессорам
+     * 51 ответы (другой тип прерывания) процессорам. (Ответ -> ПВВ вызывает reset ПВВ.)
+     * 52 прерывания от процессоров
+     * 53 ответы от процессоров
+     * 54 конфигурация процессоров (online)
+     * 55 конфигурация памяти
+     * 56 часы
+     * 57 таймер
+     */
+#if 0
     case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7:
         /* Запись в БРЗ */
         //mmu_setcache(Aex & 7, ACC);
@@ -479,312 +494,18 @@ static void cmd_002()
         /* Чтение главного регистра прерываний */
         ACC = GRP;
         break;
+#endif
     default:
+#if 0
         if ((Aex & 0340) == 0140) {
             /* TODO: watchdog reset mechanism */
             longjmp(cpu_halt, STOP_UNIMPLEMENTED);
         }
+#endif
         /* Неиспользуемые адреса */
         svs_debug("*** %05o%s: РЕГ %o - неправильный адрес спец.регистра",
                      PC, (RUU & RUU_RIGHT_INSTR) ? "п" : "л", Aex);
         break;
-    }
-}
-
-/*
- * Команда "увв"
- */
-static void cmd_033()
-{
-#if 0
-    svs_debug("*** увв %04o, СМ[24:1]=%08o",
-                 Aex & 04177, (uint32) ACC & BITS(24));
-#endif
-    switch (Aex & 04177) {
-    case 0:
-        /*
-         * Releasing the drum printer solenoids. No effect on simulation.
-         */
-        break;
-    case 1: case 2:
-        /* Управление обменом с магнитными барабанами */
-        //drum(Aex - 1, (uint32) ACC);
-        break;
-    case 3: case 4:
-        /* Передача управляющего слова для обмена
-         * с магнитными дисками */
-        //disk_io(Aex - 3, (uint32) ACC);
-        break;
-    case 5: case 6: case 7:
-        /* TODO: управление обменом с магнитными лентами */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 010: case 011:
-        /* управление устройствами ввода с перфоленты */
-        //fs_control(Aex - 010, (uint32) (ACC & 07));
-        break;
-    case 012: case 013:
-        /* TODO: управление устройствами ввода с перфоленты по запаянной программе */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 014: case 015:
-        /* Управление АЦПУ */
-        //printer_control(Aex - 014, (uint32) (ACC & 017));
-        break;
-    case 023: case 024:
-        /* Управление обменом с магнитными дисками */
-        //disk_ctl(Aex - 023, (uint32) ACC);
-        break;
-    case 030:
-        /* Гашение ПРП */
-        svs_debug(">>> гашение ПРП");
-        PRP &= ACC | PRP_WIRED_BITS;
-        break;
-    case 031:
-        /* Имитация сигналов прерывания ГРП */
-        svs_debug("*** %05o%s: имитация прерываний ГРП %016llo",
-            PC, (RUU & RUU_RIGHT_INSTR) ? "п" : "л", ACC << 24);
-        GRP |= (ACC & BITS(24)) << 24;
-        break;
-    case 032: case 033:
-        /* TODO: имитация сигналов из КМБ в КВУ */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 034:
-        /* Запись в МПРП */
-        svs_debug(">>> запись в МПРП");
-        MPRP = ACC & 077777777;
-        break;
-    case 035:
-        /* TODO: управление режимом имитации обмена
-         * с МБ и МЛ, имитация обмена */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 040: case 041: case 042: case 043:
-    case 044: case 045: case 046: case 047:
-    case 050: case 051: case 052: case 053:
-    case 054: case 055: case 056: case 057:
-        /* Управление молоточками АЦПУ */
-        //printer_hammer(Aex >= 050, Aex & 7, (uint32) (ACC & BITS(16)));
-        break;
-    case 0140:
-        /* Запись в регистр телеграфных каналов */
-        tty_send((uint32) ACC & BITS(24));
-        break;
-    case 0141:
-        /* TODO: formatting magnetic tape */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 0142:
-        /* TODO: имитация сигналов прерывания ПРП */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 0147:
-        /* Writing to the power supply control register
-         * does not have any observable effect
-         */
-        break;
-    case 0150: case 0151:
-        /* TODO: reading from punchcards */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 0153:
-        /* гашение аппаратуры сопряжения с терминалами */
-        svs_debug(">>> гашение АС: %08o", (uint32) ACC & BITS(24));
-        break;
-    case 0154: case 0155:
-        /*
-         * Punchcard output: the two selected bits control the motor
-         * and the culling mechanism.
-         */
-        //pi_control(Aex & 1, (uint32) ACC & 011);
-        break;
-    case 0160:  case 0161:  case 0162: case 0163:
-    case 0164:  case 0165:  case 0166: case 0167:
-        /* Punchcard output: activating the punching solenoids, 20 at a time. */
-        //pi_write(Aex & 7, (uint32) ACC & BITS(20));
-        break;
-    case 0170: case 0171:
-        /* TODO: пробивка строки на перфоленте */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 0174: case 0175:
-        /* Выдача кода в пульт оператора */
-        consul_print(Aex & 1, (uint32) ACC & BITS(8));
-        break;
-    case 0177:
-        /* управление табло ГПВЦ СО АН СССР */
-        svs_debug(">>> ТАБЛО: %08o", (uint32) ACC & BITS(24));
-        break;
-    case 04001: case 04002:
-        /* TODO: считывание слога в режиме имитации обмена */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 04003: case 04004:
-        /* Запрос статуса контроллера магнитных дисков */
-        //ACC = disk_state(Aex - 04003);
-        break;
-    case 04006:
-        /* TODO: считывание строки с устройства ввода
-         * с перфоленты в запаянной программе */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 04007:
-        /* TODO: опрос синхроимпульса ненулевой строки
-         * в запаянной программе ввода с перфоленты */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 04014: case 04015:
-        /* считывание строки с устройства ввода с перфоленты */
-        //ACC = fs_read(Aex - 04014);
-        break;
-    case 04016: case 04017:
-        /* TODO: считывание строки с устройства
-         * ввода с перфоленты */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 04020: case 04021: case 04022: case 04023:
-        /* TODO: считывание слога в режиме имитации
-         * внешнего обмена */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 04030:
-        /* Чтение старшей половины ПРП */
-        ACC = PRP & 077770000;
-        break;
-    case 04031:
-        /* Опрос сигналов готовности (АЦПУ и пр.) */
-        //svs_debug("Reading READY");
-        //ACC = READY;
-        break;
-    case 04034:
-        /* Чтение младшей половины ПРП */
-        ACC = (PRP & 07777) | 0377;
-        break;
-    case 04035:
-        /* Опрос триггера ОШМi - наличие ошибок при внешнем обмене. */
-        //ACC = drum_errors() | disk_errors();
-        break;
-    case 04100:
-        /* Опрос телеграфных каналов связи */
-        ACC = tty_query();
-        break;
-    case 04102:
-        /* Опрос сигналов готовности перфокарт и перфолент */
-        //svs_debug("Reading punchcard/punchtape READY @%05o", PC);
-        //ACC = READY2;
-        break;
-    case 04103: case 04104: case 04105: case 04106:
-        /* Опрос состояния лентопротяжных механизмов.
-         * Все устройства не готовы. */
-        ACC = BITS(24);
-        break;
-    case 04107:
-        /* TODO: опрос схемы контроля записи на МЛ */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 04115:
-        /* Неизвестное обращение. ДИСПАК выдаёт эту команду
-         * группами по 8 штук каждые несколько секунд. */
-        ACC = 0;
-        break;
-    case 04160: case 04161: case 04162: case 04163:
-    case 04164: case 04165: case 04166: case 04167:
-        /* Punchcard output: reading a punched line for checking, 20 bit at a time */
-        //ACC = pi_read(Aex & 7);
-        break;
-    case 04170: case 04171: case 04172: case 04173:
-        /* TODO: считывание контрольного кода
-         * строки перфоленты */
-        longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        break;
-    case 04174: case 04175:
-        /* Считывание кода с пульта оператора */
-        ACC = consul_read(Aex & 1);
-        break;
-    case 04177:
-        /* чтение табло ГПВЦ СО АН СССР */
-        ACC = 0;
-        break;
-    default: {
-        unsigned val = Aex & 04177;
-        if (0100 <= val && val <= 0137) {
-            /* Управление лентопротяжными механизмами
-             * и гашение разрядов регистров признаков
-             * окончания подвода зоны. Игнорируем. */
-        } else if (04140 <= val && val <= 04157) {
-            /* TODO: считывание строки перфокарты */
-            longjmp(cpu_halt, STOP_UNIMPLEMENTED);
-        } else {
-            /* Неиспользуемые адреса */
-            /*if (sim_deb && cpu_dev.dctrl)*/
-            svs_debug("*** %05o%s: УВВ %o - неправильный адрес ввода-вывода",
-                PC, (RUU & RUU_RIGHT_INSTR) ? "п" : "л", Aex);
-            ACC = 0;
-        }
-    } break;
-    }
-}
-
-void check_initial_setup()
-{
-    const int MGRP_COPY = 01455;    /* OS version specific? */
-    const int TAKEN = 0442;         /* fixed? */
-    const int YEAR = 0221;          /* fixed */
-
-    /* 47 р. яч. ЗАНЯТА - разр. приказы вообще */
-    const t_value SETUP_REQS_ENABLED = 1LL << 46;
-
-    /* 7 р. яч. ЗАНЯТА - разр любые приказы */
-    const t_value ALL_REQS_ENABLED = 1 << 6;
-
-    if (!vt_is_idle()) {
-        /* Avoid sending setup requests while the OS
-         * is still printing boot-up messages.
-         */
-        return;
-    }
-    if ((memory[TAKEN] & SETUP_REQS_ENABLED) == 0 || /* not ready for setup */
-        (memory[TAKEN] & ALL_REQS_ENABLED) != 0 ||   /* all done */
-        (MGRP & GRP_PANEL_REQ) == 0) {               /* not at the moment */
-        return;
-    }
-
-    /* Выдаем приказы оператора СМЕ и ВРЕ,
-     * а дату корректируем непосредственно в памяти.
-     */
-    /* Номер смены в 22-24 рр. МГРП: если еще не установлен, установить */
-    if (((memory[MGRP_COPY] >> 21) & 3) == 0) {
-        /* приказ СМЕ: ТР6 = 010, ТР4 = 1, 22-24 р ТР5 - #смены */
-        pult[0][6] = 010;
-        pult[0][4] = 1;
-        pult[0][5] = 1 << 21;
-        GRP |= GRP_PANEL_REQ;
-    } else {
-        struct tm * d;
-
-        /* Яч. ГОД обновляем самостоятельно */
-        time_t t;
-        t_value date;
-        time(&t);
-        d = localtime(&t);
-        ++d->tm_mon;
-        date = (t_value) (d->tm_mday / 10) << 33 |
-            (t_value) (d->tm_mday % 10) << 29 |
-            (d->tm_mon / 10) << 28 |
-            (d->tm_mon % 10) << 24 |
-            (d->tm_year % 10) << 20 |
-            ((d->tm_year / 10) % 10) << 16 |
-            (memory[YEAR] & 7);
-        memory[YEAR] = SET_PARITY(date, PARITY_NUMBER);
-        /* приказ ВРЕ: ТР6 = 016, ТР5 = 9-14 р.-часы, 1-8 р.-минуты */
-        pult[0][6] = 016;
-        pult[0][4] = 0;
-        pult[0][5] = (d->tm_hour / 10) << 12 |
-            (d->tm_hour % 10) << 8 |
-            (d->tm_min / 10) << 4 |
-            (d->tm_min % 10);
-        GRP |= GRP_PANEL_REQ;
     }
 }
 
@@ -1133,16 +854,20 @@ void cpu_one_inst()
         }
         delay = MEAN_TIME(3, 5);
         break;
-    case 032:                                       /* э32, ext */
-        /* Fall through... */
-    case 033:                                       /* увв, ext */
+    case 032:                                       /* зпп, запись полноразрядная */
         Aex = ADDR(addr + M[reg]);
         if (! IS_SUPERVISOR(RUU))
             longjmp(cpu_halt, STOP_BADCMD);
-        cmd_033();
-        /* Режим АУ - логический, если операция была "чтение" */
-        if (Aex & 04000)
-            RAU = SET_LOGICAL(RAU);
+        //TODO
+        svs_debug("*** зпп %05o", Aex);
+        delay = MEAN_TIME(3, 8);
+        break;
+    case 033:                                       /* счп, считывание полноразрядное */
+        Aex = ADDR(addr + M[reg]);
+        if (! IS_SUPERVISOR(RUU))
+            longjmp(cpu_halt, STOP_BADCMD);
+        //TODO
+        svs_debug("*** счп %05o", Aex);
         delay = MEAN_TIME(3, 8);
         break;
     case 034:                                       /* слпа, e+n */
@@ -1241,12 +966,12 @@ transfer_modifier:
         M[0] = 0;
         delay = 6;
         break;
-    case 046:                                       /* э46, x46 */
+    case 046:                                       /* cоп, специальное обращение к памяти */
         Aex = addr;
         if (! IS_SUPERVISOR(RUU))
             longjmp(cpu_halt, STOP_BADCMD);
-        M[Aex & 017] = ADDR(Aex);
-        M[0] = 0;
+        //TODO
+        svs_debug("*** соп %05o", Aex);
         delay = 6;
         break;
     case 047:                                       /* э47, x47 */
@@ -1469,11 +1194,14 @@ stop_as_extracode:
     } else
         RUU &= ~RUU_MOD_RK;
 
+#if 0
+    //TODO
     /* Не находимся ли мы в цикле "ЖДУ" диспака? */
     if (RUU == 047 && PC == 04440 && RK == 067704440) {
-        check_initial_setup();
+        //check_initial_setup();
         sim_idle(0, TRUE);
     }
+#endif
 }
 
 /*
