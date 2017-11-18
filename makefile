@@ -1489,7 +1489,7 @@ endif
 SVSD = SVS
 SVS = ${SVSD}/svs_cpu.c ${SVSD}/svs_sys.c ${SVSD}/svs_mmu.c \
         ${SVSD}/svs_arith.c ${SVSD}/svs_tty.c
-SVS_OPT = -I ${SVSD} -DUSE_INT64
+SVS_OPT = -I ${SVSD} -DUSE_INT64 -DNUM_CORES=1
 
 ###
 ### Experimental simulators

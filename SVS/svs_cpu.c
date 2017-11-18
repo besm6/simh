@@ -61,6 +61,11 @@ t_stat cpu_reset(DEVICE *dptr);
 t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp);
+t_stat cpu_set_trace(UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_set_itrace(UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_set_etrace(UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_show_trace(FILE *st, UNIT *up, int32 v, CONST void *dp);
+t_stat cpu_clr_trace(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 
 /*
  * CPU data structures
@@ -141,6 +146,19 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV|MTAB_VALO,
         0, "PULT",  "PULT",     &cpu_set_pult,      &cpu_show_pult,     NULL,
                                 "Selects a hardwired program or switch reg." },
+    { MTAB_XTD|MTAB_VDV,
+        0, "TRACE", "TRACE",    &cpu_set_trace,     &cpu_show_trace,    NULL,
+                                "Enables full tracing of processor state" },
+    { MTAB_XTD|MTAB_VDV,
+        0, NULL,    "ITRACE",   &cpu_set_itrace,    NULL,               NULL,
+                                "Enables instruction tracing" },
+    { MTAB_XTD|MTAB_VDV,
+        0, NULL,    "ETRACE",   &cpu_set_etrace,    NULL,               NULL,
+                                "Enables extracode only tracing" },
+    { MTAB_XTD|MTAB_VDV,
+        0, NULL,    "NOTRACE",  &cpu_clr_trace,     NULL,               NULL,
+                                "Disables tracing" },
+
     //TODO: Разрешить/запретить контроль числа.
     //{ 2, 0, "NOCHECK", "NOCHECK" },
     //{ 2, 2, "CHECK",   "CHECK" },
@@ -327,6 +345,47 @@ t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp)
     CORE *cpu = &cpu_core[0];
 
     fprintf(st, "Pult packet switch position is %d", cpu->pult_switch);
+    return SCPE_OK;
+}
+
+/*
+ * Trace level selector
+ */
+t_stat cpu_set_trace(UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    svs_trace = TRACE_ALL;
+    sim_printf("Trace instructions, registers and memory access\n");
+    return SCPE_OK;
+}
+
+t_stat cpu_set_etrace(UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    svs_trace = TRACE_EXTRACODES;
+    sim_printf("Trace extracodes (except e75)\n");
+    return SCPE_OK;
+}
+
+t_stat cpu_set_itrace(UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    svs_trace = TRACE_INSTRUCTIONS;
+    sim_printf("Trace instructions only\n");
+    return SCPE_OK;
+}
+
+t_stat cpu_clr_trace (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
+{
+    svs_trace = TRACE_NONE;
+    return SCPE_OK;
+}
+
+t_stat cpu_show_trace(FILE *st, UNIT *up, int32 v, CONST void *dp)
+{
+    switch (svs_trace) {
+    case TRACE_NONE:         break;
+    case TRACE_EXTRACODES:   fprintf(st, "trace extracodes"); break;
+    case TRACE_INSTRUCTIONS: fprintf(st, "trace instructions"); break;
+    case TRACE_ALL:          fprintf(st, "trace all"); break;
+    }
     return SCPE_OK;
 }
 

@@ -149,13 +149,30 @@ typedef struct {
     uint32 bad_addr;        /* адрес, вызвавший прерывание */
 } CORE;
 
-#define NUM_CORES 8                 /* max 8 processors */
+#ifndef NUM_CORES
+#   define NUM_CORES 4              /* default 4 processors */
+#else
+#   if NUM_CORES > 10
+#      error "SVS can have up to 10 processors"
+#   endif
+#endif
+
 extern CORE cpu_core[NUM_CORES];    /* state of processor 0 */
 
 /*
  * Таблица пультовых программ.
  */
 extern t_value pult_tab[11][8];
+
+/*
+ * Четыре режима трассировки.
+ */
+enum {
+    TRACE_NONE = 0,
+    TRACE_EXTRACODES,               /* только экстракоды (кроме э75) */
+    TRACE_INSTRUCTIONS,             /* только команды процессора */
+    TRACE_ALL,                      /* команды, регистры и обращения к памяти */
+} svs_trace;
 
 /*
  * Разряды режима АУ.
