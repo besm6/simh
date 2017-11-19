@@ -2,7 +2,8 @@
  * SVS arithmetic instructions.
  *
  * Copyright (c) 1997-2009, Leonid Broukhis
- * Copyright (c) 2009, Serge Vakulenko
+ * Copyright (c) 2009-2017, Serge Vakulenko
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
  * to deal in the Software without restriction, including without limitation

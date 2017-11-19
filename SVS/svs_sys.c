@@ -1,7 +1,7 @@
 /*
  * SVS simulator interface
  *
- * Copyright (c) 2009, Serge Vakulenko
+ * Copyright (c) 2009-2017, Serge Vakulenko
  * Copyright (c) 2009, Leonid Broukhis
  *
  * Permission is hereby granted, free of charge, to any person obtaining a

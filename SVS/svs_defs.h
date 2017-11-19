@@ -2,7 +2,7 @@
  * SVS simulator definitions
  *
  * Copyright (c) 2009, Serge Vakulenko
- * Copyright (c) 2009, Leonid Broukhis
+ * Copyright (c) 2009-2017, Leonid Broukhis
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -76,7 +76,7 @@ enum {
 #define BIT48           004000000000000000LL    /* 48-й бит - знак порядка */
 #define BIT49           010000000000000000LL    /* бит 49 */
 #define BITS(n)         (~0U >> (32-n))         /* маска битов n..1 */
-#define BITS40          00017777777777777LL     /* биты 41..1 - мантисса */
+#define BITS40          00017777777777777LL     /* биты 40..1 - мантисса */
 #define BITS41          00037777777777777LL     /* биты 41..1 - мантисса и знак */
 #define BITS42          00077777777777777LL     /* биты 42..1 - мантисса и оба знака */
 #define BITS48          07777777777777777LL     /* биты 48..1 */
@@ -167,12 +167,14 @@ extern t_value pult_tab[11][8];
 /*
  * Четыре режима трассировки.
  */
-enum {
+typedef enum {
     TRACE_NONE = 0,
     TRACE_EXTRACODES,               /* только экстракоды (кроме э75) */
     TRACE_INSTRUCTIONS,             /* только команды процессора */
     TRACE_ALL,                      /* команды, регистры и обращения к памяти */
-} svs_trace;
+} TRACEMODE;
+
+extern TRACEMODE svs_trace;
 
 /*
  * Разряды режима АУ.
@@ -327,7 +329,7 @@ enum {
  */
 extern void mmu_store(CORE *cpu, int addr, t_value word);
 extern t_value mmu_load(CORE *cpu, int addr);
-extern t_value mmu_fetch(CORE *cpu, int addr);
+extern t_value mmu_fetch(CORE *cpu, int addr, int *paddrp);
 extern void mmu_set_rp(CORE *cpu, int idx, t_value word);
 extern void mmu_setup(CORE *cpu);
 extern void mmu_set_protection(CORE *cpu, int idx, t_value word);
@@ -354,11 +356,14 @@ int vt_is_idle(void);
  * Отладочная выдача.
  */
 void svs_fprint_cmd(FILE *of, uint32 cmd);
+void svs_fprint_insn(FILE *of, uint32 insn);
 void svs_log(const char *fmt, ...);
 void svs_log_cont(const char *fmt, ...);
 void svs_debug(const char *fmt, ...);
 t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
                   UNIT *uptr, int32 sw);
+void svs_trace_opcode(CORE *cpu, int paddr);
+void svs_trace_registers(CORE *cpu);
 
 /*
  * Арифметика.

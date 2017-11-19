@@ -2,7 +2,7 @@
  * SVS CPU simulator.
  *
  * Copyright (c) 1997-2009, Leonid Broukhis
- * Copyright (c) 2009, Serge Vakulenko
+ * Copyright (c) 2009-2017, Serge Vakulenko
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -37,6 +37,8 @@ t_value memory[MEMSIZE];                /* physical memory */
 CORE cpu_core[NUM_CORES];               /* state of all processors */
 
 int32 tmr_poll = CLK_DELAY;             /* pgm timer poll */
+
+TRACEMODE svs_trace;                    /* trace mode */
 
 extern const char *scp_errors[];
 
@@ -159,7 +161,7 @@ MTAB cpu_mod[] = {
         0, NULL,    "NOTRACE",  &cpu_clr_trace,     NULL,               NULL,
                                 "Disables tracing" },
 
-    //TODO: Разрешить/запретить контроль числа.
+    // TODO: Разрешить/запретить контроль числа.
     //{ 2, 0, "NOCHECK", "NOCHECK" },
     //{ 2, 2, "CHECK",   "CHECK" },
     { 0 }
@@ -269,7 +271,7 @@ t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
  */
 t_stat cpu_reset(DEVICE *dptr)
 {
-    //TODO: initialize cpu_core[1..7]
+    // TODO: initialize cpu_core[1..7]
     CORE *cpu = &cpu_core[0];
     int i;
 
@@ -353,6 +355,10 @@ t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp)
  */
 t_stat cpu_set_trace(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
+    if (! sim_log) {
+        sim_printf("Cannot enable tracing: please set console log first\n");
+        return SCPE_INCOMP;
+    }
     svs_trace = TRACE_ALL;
     sim_printf("Trace instructions, registers and memory access\n");
     return SCPE_OK;
@@ -360,6 +366,10 @@ t_stat cpu_set_trace(UNIT *u, int32 val, CONST char *cptr, void *desc)
 
 t_stat cpu_set_etrace(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
+    if (! sim_log) {
+        sim_printf("Cannot enable tracing: please set console log first\n");
+        return SCPE_INCOMP;
+    }
     svs_trace = TRACE_EXTRACODES;
     sim_printf("Trace extracodes (except e75)\n");
     return SCPE_OK;
@@ -367,6 +377,10 @@ t_stat cpu_set_etrace(UNIT *u, int32 val, CONST char *cptr, void *desc)
 
 t_stat cpu_set_itrace(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
+    if (! sim_log) {
+        sim_printf("Cannot enable tracing: please set console log first\n");
+        return SCPE_INCOMP;
+    }
     svs_trace = TRACE_INSTRUCTIONS;
     sim_printf("Trace instructions only\n");
     return SCPE_OK;
@@ -460,7 +474,7 @@ static void cmd_002()
     svs_debug("*** рег %03o", cpu->Aex & 0377);
 
     switch (cpu->Aex & 0377) {
-    /*TODO:
+    /* TODO:
      * Некоторые регистры:
      * 36 МГРП
      * 37 ГРП
@@ -544,6 +558,22 @@ static void cmd_002()
     }
 }
 
+static int is_extracode(int opcode)
+{
+    switch (opcode) {
+    case 050: case 051: case 052: case 053: /* э50...э77 кроме э75 */
+    case 054: case 055: case 056: case 057:
+    case 060: case 061: case 062: case 063:
+    case 064: case 065: case 066: case 067:
+    case 070: case 071: case 072: case 073:
+    case 074: case 076: case 077:
+    case 0200:                              /* э20 */
+    case 0210:                              /* э21 */
+        return 1;
+    }
+    return 0;
+}
+
 /*
  * Execute one instruction, placed on address PC:RUU_RIGHT_INSTR.
  * When stopped, perform a longjmp to cpu->exception,
@@ -552,7 +582,7 @@ static void cmd_002()
 void cpu_one_inst()
 {
     CORE *cpu = &cpu_core[0];
-    int reg, opcode, addr, nextpc, next_mod;
+    int reg, opcode, addr, paddr, nextpc, next_mod;
     t_value word;
 
     /*
@@ -564,7 +594,7 @@ void cpu_one_inst()
     uint32 delay;
 
     cpu->corr_stack = 0;
-    word = mmu_fetch(cpu, cpu->PC);
+    word = mmu_fetch(cpu, cpu->PC, &paddr);
     if (cpu->RUU & RUU_RIGHT_INSTR)
         cpu->RK = (uint32)word;         /* get right instruction */
     else
@@ -583,17 +613,15 @@ void cpu_one_inst()
         opcode = (cpu->RK >> 12) & 077;
     }
 
-    if (sim_deb && cpu_dev.dctrl) {
-        fprintf(sim_deb, "*** %05o%s: ", cpu->PC,
-                 (cpu->RUU & RUU_RIGHT_INSTR) ? "п" : "л");
-        svs_fprint_cmd(sim_deb, cpu->RK);
-        fprintf(sim_deb, "\tСМ=");
-        fprint_sym(sim_deb, 0, &cpu->ACC, 0, 0);
-        fprintf(sim_deb, "\tРАУ=%02o", cpu->RAU);
-        if (reg)
-            fprintf(sim_deb, "\tМ[%o]=%05o", reg, cpu->M[reg]);
-        fprintf(sim_deb, "\n");
+    if (svs_trace >= TRACE_INSTRUCTIONS ||
+        (svs_trace == TRACE_EXTRACODES && is_extracode(opcode)))
+    {
+        svs_trace_opcode(cpu, paddr);
+        if (svs_trace == TRACE_ALL) {
+            svs_trace_registers(cpu);
+        }
     }
+
     nextpc = ADDR(cpu->PC + 1);
     if (cpu->RUU & RUU_RIGHT_INSTR) {
         cpu->PC += 1;                               /* increment PC */
@@ -893,7 +921,7 @@ void cpu_one_inst()
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        //TODO
+        // TODO
         svs_debug("*** зпп %05o", cpu->Aex);
         delay = MEAN_TIME(3, 8);
         break;
@@ -901,7 +929,7 @@ void cpu_one_inst()
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        //TODO
+        // TODO
         svs_debug("*** счп %05o", cpu->Aex);
         delay = MEAN_TIME(3, 8);
         break;
@@ -1006,7 +1034,7 @@ transfer_modifier:
         cpu->Aex = addr;
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        //TODO
+        // TODO
         svs_debug("*** соп %05o", cpu->Aex);
         delay = 6;
         break;
@@ -1028,23 +1056,6 @@ transfer_modifier:
     case 0210:                                      /* э21 */
 stop_as_extracode:
             cpu->Aex = ADDR(addr + cpu->M[reg]);
-            if (! sim_deb && sim_log && cpu_dev.dctrl && opcode != 075) {
-                /* Если включен console log и cpu debug,
-                 * но нет console debug, то печатаем только экстракоды.
-                 * Пропускаем э75, их обычно слишком много. */
-                t_value word = mmu_load(cpu, cpu->Aex);
-                fprintf(sim_log, "*** %05o%s: ", cpu->PC,
-                         (cpu->RUU & RUU_RIGHT_INSTR) ? "п" : "л");
-                svs_fprint_cmd(sim_log, cpu->RK);
-                fprintf(sim_log, "\tАисп=%05o (=", cpu->Aex);
-                fprint_sym(sim_log, 0, &word, 0, 0);
-                fprintf(sim_log, ")  СМ=");
-                fprint_sym(sim_log, 0, &cpu->ACC, 0, 0);
-                if (reg)
-                    fprintf(sim_log, "  М[%o]=%05o", reg, cpu->M[reg]);
-                fprintf(sim_log, "\n");
-            }
-            /*svs_okno("экстракод");*/
             /* Адрес возврата из экстракода. */
             cpu->M[ERET] = nextpc;
             /* Сохранённые режимы УУ. */
@@ -1231,7 +1242,7 @@ branch_zero:
         cpu->RUU &= ~RUU_MOD_RK;
 
 #if 0
-    //TODO
+    // TODO
     /* Не находимся ли мы в цикле "ЖДУ" диспака? */
     if (cpu->RUU == 047 && cpu->PC == 04440 && cpu->RK == 067704440) {
         //check_initial_setup();

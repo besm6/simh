@@ -1,8 +1,8 @@
 /*
- * SVS fast write cache and TLB registers
- *（стойка БРУС)
+ * SVS TLB registers.
  *
  * Copyright (c) 2009, Leonid Broukhis
+ * Copyright (c) 2017, Serge Vakulenko
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -124,17 +124,17 @@ t_value pult_tab[11][8] = {
     },
 };
 
-static void mmu_protection_check(CORE *cpu, int addr)
+static void mmu_protection_check(CORE *cpu, int vaddr)
 {
     /* Защита блокируется в режиме супервизора для физических (!) адресов 1-7 (ТО-8) - WTF? */
     int tmp_prot_disabled = (cpu->M[PSW] & PSW_PROT_DISABLE) ||
-        (IS_SUPERVISOR(cpu->RUU) && (cpu->M[PSW] & PSW_MMAP_DISABLE) && addr < 010);
+        (IS_SUPERVISOR(cpu->RUU) && (cpu->M[PSW] & PSW_MMAP_DISABLE) && vaddr < 010);
 
     /* Защита не заблокирована, а лист закрыт */
-    if (! tmp_prot_disabled && (cpu->RZ & (1 << (addr >> 10)))) {
-        cpu->bad_addr = addr >> 10;
+    if (! tmp_prot_disabled && (cpu->RZ & (1 << (vaddr >> 10)))) {
+        cpu->bad_addr = vaddr >> 10;
         if (cpu_dev.dctrl)
-            svs_debug("--- (%05o) защита числа", addr);
+            svs_debug("--- (%05o) защита числа", vaddr);
         longjmp(cpu->exception, STOP_OPERAND_PROT);
     }
 }
@@ -142,65 +142,89 @@ static void mmu_protection_check(CORE *cpu, int addr)
 /*
  * Запись слова в память
  */
-void mmu_store(CORE *cpu, int addr, t_value val)
+void mmu_store(CORE *cpu, int vaddr, t_value val)
 {
-    addr &= BITS(15);
-    if (addr == 0)
+    vaddr &= BITS(15);
+    if (vaddr == 0)
         return;
-    if (sim_log && cpu_dev.dctrl) {
-        fprintf(sim_log, "--- (%05o) запись ", addr);
-        fprint_sym(sim_log, 0, &val, 0, 0);
-        fprintf(sim_log, "\n");
-    }
 
-    mmu_protection_check(cpu, addr);
+    mmu_protection_check(cpu, vaddr);
 
     /* Различаем адреса с припиской и без */
     if (cpu->M[PSW] & PSW_MMAP_DISABLE)
-        addr |= 0100000;
+        vaddr |= 0100000;
 
     /* ЗПСЧ: ЗП */
-    if (cpu->M[DWP] == addr && (cpu->M[PSW] & PSW_WRITE_WATCH))
+    if (cpu->M[DWP] == vaddr && (cpu->M[PSW] & PSW_WRITE_WATCH))
         longjmp(cpu->exception, STOP_STORE_ADDR_MATCH);
 
     if (sim_brk_summ & SWMASK('W') &&
-        sim_brk_test(addr, SWMASK('W')))
+        sim_brk_test(vaddr, SWMASK('W')))
         longjmp(cpu->exception, STOP_WWATCH);
+
+    if (vaddr >= 0100000 && vaddr < 0100010) {
+        /* Игнорируем запись в тумблерные регистры. */
+        if (svs_trace >= TRACE_INSTRUCTIONS) {
+            fprintf(sim_log, "cpu%d Ignore write to pult register %d\n",
+                cpu->index, vaddr - 0100000);
+        }
+        return;
+    }
+
+    /* Вычисляем физический адрес. */
+    int paddr = (vaddr >= 0100000) ? (vaddr - 0100000) :
+        (vaddr & 01777) | (cpu->TLB[vaddr >> 10] << 10);
+
+    /* Вычисляем тег. */
+    val = SET_PARITY(val, cpu->RUU ^ PARITY_INSN);
+
+    /* Пишем в память. */
+    memory[paddr] = val;
+
+    if (svs_trace >= TRACE_ALL) {
+        fprintf(sim_log, "cpu%d Memory Write [%05o %07o] = %o:",
+            cpu->index, vaddr & BITS(15), paddr, (int)(val >> 48));
+        fprint_sym(sim_log, 0, &val, 0, 0);
+        fprintf(sim_log, "\n");
+    }
 }
 
-static t_value mmu_memaccess(CORE *cpu, int addr)
+static t_value mmu_memaccess(CORE *cpu, int vaddr)
 {
     t_value val;
 
     /* Вычисляем физический адрес слова */
-    addr = (addr > 0100000) ? (addr - 0100000) :
-        (addr & 01777) | (cpu->TLB[addr >> 10] << 10);
-    if (addr >= 010) {
+    int paddr = (vaddr >= 0100000) ? (vaddr - 0100000) :
+        (vaddr & 01777) | (cpu->TLB[vaddr >> 10] << 10);
+
+    if (paddr >= 010) {
         /* Из памяти */
-        val = memory[addr];
+        val = memory[paddr];
     } else {
         /* С тумблерных регистров */
-        if (cpu_dev.dctrl)
-            svs_debug("--- (%05o) чтение ТР%o", cpu->PC, addr);
-
-        if ((pult_tab[cpu->pult_switch][0] >> addr) & 1) {
+        if ((pult_tab[cpu->pult_switch][0] >> paddr) & 1) {
             /* hardwired */
-            val = pult_tab[cpu->pult_switch][addr];
+            val = pult_tab[cpu->pult_switch][paddr];
         } else {
             /* from switch regs */
-            val = cpu->pult[addr];
+            val = cpu->pult[paddr];
         }
     }
-    if (sim_log && (cpu_dev.dctrl && sim_deb)) {
-        fprintf(sim_log, "--- (%05o) чтение ", addr & BITS(15));
+
+    if (svs_trace >= TRACE_ALL) {
+        if (paddr < 010)
+            fprintf(sim_log, "cpu%d Read TR%o = ", cpu->index, paddr);
+        else
+            fprintf(sim_log, "cpu%d Memory Read [%05o %07o] = %o:",
+                cpu->index, vaddr & BITS(15), paddr, (int)(val >> 48));
         fprint_sym(sim_log, 0, &val, 0, 0);
         fprintf(sim_log, "\n");
     }
 
     /* На тумблерных регистрах контроля числа не бывает */
-    if (addr >= 010 && ! IS_NUMBER(val) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
-        cpu->bad_addr = addr & 7;
-        svs_debug("--- (%05o) контроль числа", addr);
+    if (paddr >= 010 && ! IS_NUMBER(val) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
+        cpu->bad_addr = paddr & 7;
+        svs_debug("--- (%05o) контроль числа", paddr);
         longjmp(cpu->exception, STOP_RAM_CHECK);
     }
     return val;
@@ -209,114 +233,103 @@ static t_value mmu_memaccess(CORE *cpu, int addr)
 /*
  * Чтение операнда
  */
-t_value mmu_load(CORE *cpu, int addr)
+t_value mmu_load(CORE *cpu, int vaddr)
 {
-    addr &= BITS(15);
-    if (addr == 0)
+    vaddr &= BITS(15);
+    if (vaddr == 0)
         return 0;
 
-    mmu_protection_check(cpu, addr);
+    mmu_protection_check(cpu, vaddr);
 
     /* Различаем адреса с припиской и без */
     if (cpu->M[PSW] & PSW_MMAP_DISABLE)
-        addr |= 0100000;
+        vaddr |= 0100000;
 
     /* ЗПСЧ: СЧ */
-    if (cpu->M[DWP] == addr && !(cpu->M[PSW] & PSW_WRITE_WATCH))
+    if (cpu->M[DWP] == vaddr && !(cpu->M[PSW] & PSW_WRITE_WATCH))
         longjmp(cpu->exception, STOP_LOAD_ADDR_MATCH);
 
     if (sim_brk_summ & SWMASK('R') &&
-        sim_brk_test(addr, SWMASK('R')))
+        sim_brk_test(vaddr, SWMASK('R')))
         longjmp(cpu->exception, STOP_RWATCH);
 
-    return mmu_memaccess(cpu, addr) & BITS48;
+    return mmu_memaccess(cpu, vaddr) & BITS48;
 }
 
-static void mmu_fetch_check(CORE *cpu, int addr)
+static void mmu_fetch_check(CORE *cpu, int vaddr)
 {
     /* В режиме супервизора защиты нет */
     if (! IS_SUPERVISOR(cpu->RUU)) {
-        int page = cpu->TLB[addr >> 10];
+        int page = cpu->TLB[vaddr >> 10];
         /*
          * Для команд в режиме пользователя признак защиты -
          * 0 в регистре приписки.
          */
         if (page == 0) {
-            cpu->bad_addr = addr >> 10;
+            cpu->bad_addr = vaddr >> 10;
             if (cpu_dev.dctrl)
-                svs_debug("--- (%05o) защита команды", addr);
+                svs_debug("--- (%05o) защита команды", vaddr);
             longjmp(cpu->exception, STOP_INSN_PROT);
         }
     }
 }
 
 /*
- * Предвыборка команды на БРС
- */
-static t_value mmu_prefetch(CORE *cpu, int addr)
-{
-    t_value val;
-
-    if (addr < 0100000) {
-        int page = cpu->TLB[addr >> 10];
-
-        /* Вычисляем физический адрес слова */
-        addr = (addr & 01777) | (page << 10);
-    } else {
-        addr = addr & BITS(15);
-    }
-
-    if (addr < 010) {
-        if ((pult_tab[cpu->pult_switch][0] >> addr) & 1) {
-            /* hardwired */
-            val = pult_tab[cpu->pult_switch][addr];
-        } else {
-            /* from switch regs */
-            val = cpu->pult[addr];
-        }
-    } else {
-        val = memory[addr];
-    }
-
-    return val;
-}
-
-/*
  * Выборка команды
  */
-t_value mmu_fetch(CORE *cpu, int addr)
+t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
 {
     t_value val;
 
-    if (addr == 0) {
+    if (vaddr == 0) {
         if (cpu_dev.dctrl)
             svs_debug("--- передача управления на 0");
         longjmp(cpu->exception, STOP_INSN_CHECK);
     }
 
-    mmu_fetch_check(cpu, addr);
+    mmu_fetch_check(cpu, vaddr);
 
     /* Различаем адреса с припиской и без */
     if (IS_SUPERVISOR(cpu->RUU))
-        addr |= 0100000;
+        vaddr |= 0100000;
 
     /* КРА */
-    if (cpu->M[IBP] == addr)
+    if (cpu->M[IBP] == vaddr)
         longjmp(cpu->exception, STOP_INSN_ADDR_MATCH);
 
-    val = mmu_prefetch(cpu, addr);
+    /* Вычисляем физический адрес слова */
+    int paddr = (vaddr >= 0100000) ? (vaddr - 0100000) :
+        (vaddr & 01777) | (cpu->TLB[vaddr >> 10] << 10);
 
-    if (sim_log && cpu_dev.dctrl) {
-        fprintf(sim_log, "--- (%05o) выборка ", addr);
+    if (paddr >= 010) {
+        /* Из памяти */
+        val = memory[paddr];
+    } else {
+        if ((pult_tab[cpu->pult_switch][0] >> paddr) & 1) {
+            /* hardwired */
+            val = pult_tab[cpu->pult_switch][paddr];
+        } else {
+            /* from switch regs */
+            val = cpu->pult[paddr];
+        }
+    }
+
+    if (svs_trace >= TRACE_INSTRUCTIONS && cpu_dev.dctrl) {
+        // When both trace and cpu debug enabled,
+        // print the fetch information.
+        fprintf(sim_log, "cpu%d Fetch [%05o %07o] = %o:",
+            cpu->index, vaddr & BITS(15), paddr, (int)(val >> 48));
         fprint_sym(sim_log, 0, &val, 0, SWMASK('I'));
         fprintf(sim_log, "\n");
     }
 
     /* Тумблерные регистры пока только с командной сверткой */
-    if (addr >= 010 && ! IS_INSN(val)) {
-        svs_debug("--- (%05o) контроль команды", addr);
+    if (paddr >= 010 && ! IS_INSN(val)) {
+        svs_debug("--- (%05o) контроль команды", vaddr);
         longjmp(cpu->exception, STOP_INSN_CHECK);
     }
+
+    *paddrp = paddr;
     return val & BITS48;
 }
 
