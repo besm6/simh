@@ -1172,7 +1172,7 @@ void cpu_one_instr(CORE *cpu)
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-svs_debug("--- счп %05o", cpu->Aex);
+//svs_debug("--- счп %05o", cpu->Aex);
         cpu->ACC = mmu_load64(cpu, cpu->Aex, 1);
         cpu->RMR = (cpu->ACC & BITS(16)) << 32;
         cpu->ACC >>= 16;
@@ -1279,7 +1279,7 @@ transfer_modifier:
         cpu->Aex = addr;
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-svs_debug("--- соп %05o", cpu->Aex);
+//svs_debug("--- соп %05o", cpu->Aex);
         cpu->ACC = mmu_load64(cpu, cpu->Aex, 0);
         cpu->RMR = (cpu->ACC & BITS(16)) << 32;
         cpu->ACC >>= 16;
