@@ -114,7 +114,7 @@ enum {
 extern UNIT tty_unit[];
 extern UNIT clocks[];
 extern t_value memory[MEMSIZE];
-extern DEVICE cpu0_dev;
+extern DEVICE cpu_dev[];
 extern DEVICE clock_dev;
 extern DEVICE tty_dev;
 
@@ -156,7 +156,7 @@ typedef struct {
 #   endif
 #endif
 
-extern CORE cpu_core[NUM_CORES];    /* state of processor 0 */
+extern CORE cpu_core[];             /* state of processor 0 */
 
 /*
  * Таблица пультовых программ.

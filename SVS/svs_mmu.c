@@ -133,7 +133,7 @@ static void mmu_protection_check(CORE *cpu, int vaddr)
     /* Защита не заблокирована, а лист закрыт */
     if (! tmp_prot_disabled && (cpu->RZ & (1 << (vaddr >> 10)))) {
         cpu->bad_addr = vaddr >> 10;
-        if (cpu0_dev.dctrl)
+        if (cpu_dev[0].dctrl)
             svs_debug("--- (%05o) защита числа", vaddr);
         longjmp(cpu->exception, STOP_OPERAND_PROT);
     }
@@ -267,7 +267,7 @@ static void mmu_fetch_check(CORE *cpu, int vaddr)
          */
         if (page == 0) {
             cpu->bad_addr = vaddr >> 10;
-            if (cpu0_dev.dctrl)
+            if (cpu_dev[0].dctrl)
                 svs_debug("--- (%05o) защита команды", vaddr);
             longjmp(cpu->exception, STOP_INSN_PROT);
         }
@@ -282,7 +282,7 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
     t_value val;
 
     if (vaddr == 0) {
-        if (cpu0_dev.dctrl)
+        if (cpu_dev[0].dctrl)
             svs_debug("--- передача управления на 0");
         longjmp(cpu->exception, STOP_INSN_CHECK);
     }
@@ -314,7 +314,7 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
         }
     }
 
-    if (svs_trace >= TRACE_INSTRUCTIONS && cpu0_dev.dctrl &&
+    if (svs_trace >= TRACE_INSTRUCTIONS && cpu_dev[0].dctrl &&
         ! (cpu->RUU & RUU_RIGHT_INSTR)) {
         // When both trace and cpu debug enabled,
         // print the fetch information.

@@ -34,7 +34,7 @@
 
 t_value memory[MEMSIZE];                /* physical memory */
 
-CORE cpu_core[NUM_CORES];               /* state of all processors */
+CORE cpu_core[10];                      /* state of all processors */
 
 int32 tmr_poll = CLK_DELAY;             /* pgm timer poll */
 
@@ -59,7 +59,7 @@ extern const char *scp_errors[];
 
 t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
 t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw);
-t_stat cpu_reset(DEVICE *dptr);
+t_stat cpu_reset(DEVICE *dev);
 t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp);
@@ -72,13 +72,24 @@ t_stat cpu_clr_trace(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 /*
  * CPU data structures
  *
- * cpu0_dev     CPU device descriptor
- * cpu0_unit    CPU unit descriptor
+ * cpu_dev[]    CPU device descriptors
+ * cpu_unit[]   CPU unit descriptors
  * cpu0_reg     CPU register list
  * cpu_mod      CPU modifiers list
  */
 
-UNIT cpu0_unit = { UDATA(NULL, UNIT_FIX, MEMSIZE) };
+UNIT cpu_unit[10] = {
+    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
+    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
+    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
+    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
+    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
+    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
+    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
+    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
+    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
+    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
+};
 
 #define ORDATAVM(nm,loc,wd) REGDATA(nm,(loc),8,wd,0,1,NULL,NULL,REG_VMIO,0,0)
 
@@ -167,11 +178,47 @@ MTAB cpu_mod[] = {
     { 0 }
 };
 
-DEVICE cpu0_dev = {
-    "CPU0", &cpu0_unit, cpu0_reg, cpu_mod,
-    1, 8, 17, 1, 8, 50,
-    &cpu_examine, &cpu_deposit, &cpu_reset,
-    NULL, NULL, NULL, (void*)&cpu_core[0], DEV_DEBUG
+DEVICE cpu_dev[10] = {
+    { "CPU0", &cpu_unit[0], cpu0_reg, cpu_mod,
+      1, 8, 17, 1, 8, 50,
+      &cpu_examine, &cpu_deposit, &cpu_reset,
+      NULL, NULL, NULL, (void*)&cpu_core[0], DEV_DEBUG },
+    { "CPU1", &cpu_unit[1], NULL, cpu_mod,
+      1, 8, 17, 1, 8, 50,
+      &cpu_examine, &cpu_deposit, &cpu_reset,
+      NULL, NULL, NULL, (void*)&cpu_core[1], DEV_DEBUG },
+    { "CPU2", &cpu_unit[2], NULL, cpu_mod,
+      1, 8, 17, 1, 8, 50,
+      &cpu_examine, &cpu_deposit, &cpu_reset,
+      NULL, NULL, NULL, (void*)&cpu_core[2], DEV_DEBUG },
+    { "CPU3", &cpu_unit[3], NULL, cpu_mod,
+      1, 8, 17, 1, 8, 50,
+      &cpu_examine, &cpu_deposit, &cpu_reset,
+      NULL, NULL, NULL, (void*)&cpu_core[3], DEV_DEBUG },
+    { "CPU4", &cpu_unit[4], NULL, cpu_mod,
+      1, 8, 17, 1, 8, 50,
+      &cpu_examine, &cpu_deposit, &cpu_reset,
+      NULL, NULL, NULL, (void*)&cpu_core[4], DEV_DEBUG },
+    { "CPU5", &cpu_unit[5], NULL, cpu_mod,
+      1, 8, 17, 1, 8, 50,
+      &cpu_examine, &cpu_deposit, &cpu_reset,
+      NULL, NULL, NULL, (void*)&cpu_core[5], DEV_DEBUG },
+    { "CPU6", &cpu_unit[6], NULL, cpu_mod,
+      1, 8, 17, 1, 8, 50,
+      &cpu_examine, &cpu_deposit, &cpu_reset,
+      NULL, NULL, NULL, (void*)&cpu_core[6], DEV_DEBUG },
+    { "CPU7", &cpu_unit[7], NULL, cpu_mod,
+      1, 8, 17, 1, 8, 50,
+      &cpu_examine, &cpu_deposit, &cpu_reset,
+      NULL, NULL, NULL, (void*)&cpu_core[7], DEV_DEBUG },
+    { "CPU8", &cpu_unit[8], NULL, cpu_mod,
+      1, 8, 17, 1, 8, 50,
+      &cpu_examine, &cpu_deposit, &cpu_reset,
+      NULL, NULL, NULL, (void*)&cpu_core[8], DEV_DEBUG },
+    { "CPU9", &cpu_unit[9], NULL, cpu_mod,
+      1, 8, 17, 1, 8, 50,
+      &cpu_examine, &cpu_deposit, &cpu_reset,
+      NULL, NULL, NULL, (void*)&cpu_core[9], DEV_DEBUG },
 };
 
 /*
@@ -192,9 +239,38 @@ REG *sim_PC = &cpu0_reg[0];
 int32 sim_emax = 1;     /* max number of addressable units per instruction */
 
 DEVICE *sim_devices[] = {
-    &cpu0_dev,
-    &clock_dev,
-    &tty_dev,           /* терминалы - телетайпы, видеотоны, "Консулы" */
+    &cpu_dev[0],        /* процессоры */
+#if NUM_CORES > 1
+    &cpu_dev[1],
+#endif
+#if NUM_CORES > 2
+    &cpu_dev[2],
+#endif
+#if NUM_CORES > 3
+    &cpu_dev[3],
+#endif
+#if NUM_CORES > 4
+    &cpu_dev[4],
+#endif
+#if NUM_CORES > 5
+    &cpu_dev[5],
+#endif
+#if NUM_CORES > 6
+    &cpu_dev[6],
+#endif
+#if NUM_CORES > 7
+    &cpu_dev[7],
+#endif
+#if NUM_CORES > 8
+    &cpu_dev[8],
+#endif
+#if NUM_CORES > 9
+    &cpu_dev[9],
+#endif
+
+    &clock_dev,         /* таймер */
+
+    &tty_dev,           /* терминалы */
     0
 };
 
@@ -227,11 +303,11 @@ const char *sim_stop_messages[] = {
  */
 t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
 {
-    DEVICE *dptr = find_dev_from_unit(uptr);
-    if (! dptr)
+    DEVICE *dev = find_dev_from_unit(uptr);
+    if (! dev)
         return SCPE_IERR;
 
-    CORE *cpu = (CORE*) dptr->ctxt;
+    CORE *cpu = (CORE*) dev->ctxt;
     if (! cpu)
         return SCPE_IERR;
 
@@ -257,11 +333,11 @@ t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
  */
 t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
 {
-    DEVICE *dptr = find_dev_from_unit(uptr);
-    if (! dptr)
+    DEVICE *dev = find_dev_from_unit(uptr);
+    if (! dev)
         return SCPE_IERR;
 
-    CORE *cpu = (CORE*) dptr->ctxt;
+    CORE *cpu = (CORE*) dev->ctxt;
     if (! cpu)
         return SCPE_IERR;
 
@@ -280,12 +356,13 @@ t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
 /*
  * Reset routine
  */
-t_stat cpu_reset(DEVICE *dptr)
+t_stat cpu_reset(DEVICE *dev)
 {
-    CORE *cpu = (CORE*) dptr->ctxt;
+    CORE *cpu = (CORE*) dev->ctxt;
     if (! cpu)
         return SCPE_IERR;
 
+    cpu->index = dev->name[3] - '0';
     cpu->ACC = 0;
     cpu->RMR = 0;
     cpu->RAU = 0;
@@ -317,6 +394,22 @@ t_stat cpu_reset(DEVICE *dptr)
     sim_brk_types = SWMASK('E') | SWMASK('R') | SWMASK('W');
     sim_brk_dflt = SWMASK('E');
 
+    // Setup register descriptors.
+    if (! dev->registers) {
+        REG *rptr, *r;
+
+        rptr = (REG*) malloc(sizeof(cpu0_reg));
+        if (! rptr) {
+            return SCPE_MEM;
+        }
+        memcpy(rptr, &cpu0_reg, sizeof(cpu0_reg));
+        dev->registers = rptr;
+        for (r = rptr; r->name != NULL; r++) {
+            /* Update register pointer. */
+            r->loc = (char*)r->loc + sizeof(CORE)*cpu->index;
+        }
+    }
+
     if (svs_trace) {
         fprintf(sim_log, "cpu%d --- Reset\n", cpu->index);
     }
@@ -329,11 +422,11 @@ t_stat cpu_reset(DEVICE *dptr)
  */
 t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
-    DEVICE *dptr = find_dev_from_unit(u);
-    if (! dptr)
+    DEVICE *dev = find_dev_from_unit(u);
+    if (! dev)
         return SCPE_IERR;
 
-    CORE *cpu = (CORE*) dptr->ctxt;
+    CORE *cpu = (CORE*) dev->ctxt;
     if (! cpu)
         return SCPE_IERR;
 
@@ -346,11 +439,11 @@ t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
  */
 t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
-    DEVICE *dptr = find_dev_from_unit(u);
-    if (! dptr)
+    DEVICE *dev = find_dev_from_unit(u);
+    if (! dev)
         return SCPE_IERR;
 
-    CORE *cpu = (CORE*) dptr->ctxt;
+    CORE *cpu = (CORE*) dev->ctxt;
     if (! cpu)
         return SCPE_IERR;
 
@@ -363,9 +456,9 @@ t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc)
     if (sw >= 0 && sw <= 10) {
         cpu->pult_switch = sw;
         if (sw)
-            sim_printf("Pult packet switch set to hardwired program %d\n", sw);
+            sim_printf("Pult switch set to hardwired program %d\n", sw);
         else
-            sim_printf("Pult packet switch set to switch registers\n");
+            sim_printf("Pult switch set to switch registers\n");
         return SCPE_OK;
     }
     printf("Illegal value %s\n", cptr);
@@ -374,15 +467,15 @@ t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc)
 
 t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp)
 {
-    DEVICE *dptr = find_dev_from_unit(up);
-    if (! dptr)
+    DEVICE *dev = find_dev_from_unit(up);
+    if (! dev)
         return SCPE_IERR;
 
-    CORE *cpu = (CORE*) dptr->ctxt;
+    CORE *cpu = (CORE*) dev->ctxt;
     if (! cpu)
         return SCPE_IERR;
 
-    fprintf(st, "Pult packet switch position is %d", cpu->pult_switch);
+    fprintf(st, "Pult switch position = %d", cpu->pult_switch);
     return SCPE_OK;
 }
 
@@ -506,8 +599,7 @@ static void cmd_002(CORE *cpu)
     svs_debug("*** рег %03o", cpu->Aex & 0377);
 
     switch (cpu->Aex & 0377) {
-    /* TODO:
-     * Некоторые регистры:
+    /* TODO: Регистры команды РЕГ
      * 36 МГРП
      * 37 ГРП
      * 46 маска РВП
@@ -949,7 +1041,7 @@ void cpu_one_instr(CORE *cpu)
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        //TODO
+        //TODO: команда ЗПП
         svs_debug("*** зпп %05o", cpu->Aex);
         delay = MEAN_TIME(3, 8);
         break;
@@ -957,7 +1049,7 @@ void cpu_one_instr(CORE *cpu)
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        //TODO
+        //TODO: команда СЧП
         svs_debug("*** счп %05o", cpu->Aex);
         delay = MEAN_TIME(3, 8);
         break;
@@ -1062,7 +1154,7 @@ transfer_modifier:
         cpu->Aex = addr;
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        //TODO
+        //TODO: команда 046
         svs_debug("*** соп %05o", cpu->Aex);
         delay = 6;
         break;
@@ -1275,7 +1367,7 @@ branch_zero:
         svs_trace_registers(cpu);
     }
 #if 0
-    //TODO
+    //TODO: обнаружение цикла "ЖДУ" диспака
     /* Не находимся ли мы в цикле "ЖДУ" диспака? */
     if (cpu->RUU == 047 && cpu->PC == 04440 && cpu->RK == 067704440) {
         //check_initial_setup();
@@ -1331,7 +1423,7 @@ void op_int_2(CORE *cpu)
  */
 t_stat sim_instr(void)
 {
-    //TODO: process cpu1..9 as well
+    //TODO: выполнение инструкций на процессорах cpu1..9
     CORE *cpu = &cpu_core[0];
     t_stat r;
     int iintr = 0;
@@ -1550,11 +1642,11 @@ t_stat fast_clk(UNIT *this)
     static unsigned counter;
     static unsigned tty_counter;
 
-    DEVICE *dptr = find_dev_from_unit(this);
-    if (! dptr)
+    DEVICE *dev = find_dev_from_unit(this);
+    if (! dev)
         return SCPE_IERR;
 
-    CORE *cpu = (CORE*) dptr->ctxt;
+    CORE *cpu = (CORE*) dev->ctxt;
     if (! cpu)
         return SCPE_IERR;
 

@@ -479,18 +479,18 @@ static CORE *cpu_at_address(t_addr addr)
  * Inputs:
  *      *of     = output stream
  *      addr    = current PC
- *      *val    = pointer to data
+ *      *valp   = pointer to data
  *      *uptr   = pointer to unit
  *      sw      = switches
  * Outputs:
  *      return  = status code
  */
-t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
+t_stat fprint_sym(FILE *of, t_addr addr, t_value *valp,
                    UNIT *uptr, int32 sw)
 {
-    t_value cmd;
+    t_value value;
 
-    cmd = val[0];
+    value = valp[0];
 
     if (sw & SWMASK('M')) {                         /* symbolic decode? */
         CORE *cpu = (sw & SIM_SW_STOP) ? cpu_at_address(addr) : 0;
@@ -498,7 +498,7 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
         if ((sw & SIM_SW_STOP) && (cpu != 0) && !(cpu->RUU & RUU_RIGHT_INSTR))
             fprintf(of, "-> ");
 
-        svs_fprint_cmd(of, (uint32)(cmd >> 24));
+        svs_fprint_cmd(of, (uint32)(value >> 24));
 
         if (sw & SIM_SW_STOP)                       /* stop point */
             fprintf(of, ", ");
@@ -508,33 +508,33 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
         if ((sw & SIM_SW_STOP) && (cpu != 0) && (cpu->RUU & RUU_RIGHT_INSTR))
             fprintf(of, "-> ");
 
-        svs_fprint_cmd(of, cmd & BITS(24));
+        svs_fprint_cmd(of, value & BITS(24));
 
     } else if (sw & SWMASK('I')) {
-        svs_fprint_insn(of, (cmd >> 24) & BITS(24));
-        svs_fprint_insn(of, cmd & BITS(24));
+        svs_fprint_insn(of, (value >> 24) & BITS(24));
+        svs_fprint_insn(of, value & BITS(24));
 
     } else if (sw & SWMASK('F')) {
-        fprintf(of, "%#.2g", svs_to_ieee(cmd));
+        fprintf(of, "%#.2g", svs_to_ieee(value));
 
     } else if (sw & SWMASK('B')) {
         fprintf(of, "%03o %03o %03o %03o %03o %03o",
-                 (int) (cmd >> 40) & 0377,
-                 (int) (cmd >> 32) & 0377,
-                 (int) (cmd >> 24) & 0377,
-                 (int) (cmd >> 16) & 0377,
-                 (int) (cmd >> 8) & 0377,
-                 (int) cmd & 0377);
+                 (int) (value >> 40) & 0377,
+                 (int) (value >> 32) & 0377,
+                 (int) (value >> 24) & 0377,
+                 (int) (value >> 16) & 0377,
+                 (int) (value >> 8) & 0377,
+                 (int) value & 0377);
 
     } else if (sw & SWMASK('X')) {
-        fprintf(of, "%013llx", cmd);
+        fprintf(of, "%012llx", value & BITS48);
 
     } else
         fprintf(of, "%04o %04o %04o %04o",
-                 (int) (cmd >> 36) & 07777,
-                 (int) (cmd >> 24) & 07777,
-                 (int) (cmd >> 12) & 07777,
-                 (int) cmd & 07777);
+                 (int) (value >> 36) & 07777,
+                 (int) (value >> 24) & 07777,
+                 (int) (value >> 12) & 07777,
+                 (int) value & 07777);
 
     return SCPE_OK;
 }
