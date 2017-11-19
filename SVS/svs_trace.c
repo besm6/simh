@@ -52,59 +52,59 @@ void svs_trace_registers(CORE *cpu)
     int i;
 
     if (cpu->ACC != prev->ACC) {
-        fprintf(sim_log, "cpu%d Write ACC = ", cpu->index);
+        fprintf(sim_log, "cpu%d       Write ACC = ", cpu->index);
         fprint_sym(sim_log, 0, &cpu->ACC, 0, 0);
         fprintf(sim_log, "\n");
     }
     if (cpu->RMR != prev->RMR) {
-        fprintf(sim_log, "cpu%d Write RMR = ", cpu->index);
+        fprintf(sim_log, "cpu%d       Write RMR = ", cpu->index);
         fprint_sym(sim_log, 0, &cpu->RMR, 0, 0);
         fprintf(sim_log, "\n");
     }
     for (i = 0; i < NREGS; i++) {
         if (cpu->M[i] != prev->M[i])
-            fprintf(sim_log, "cpu%d Write M%o = %05o\n",
+            fprintf(sim_log, "cpu%d       Write M%o = %05o\n",
                 cpu->index, i, cpu->M[i]);
     }
     if (cpu->RAU != prev->RAU)
-        fprintf(sim_log, "cpu%d Write RAU = %02o\n",
+        fprintf(sim_log, "cpu%d       Write RAU = %02o\n",
             cpu->index, cpu->RAU);
-    if (cpu->RUU != prev->RUU)
-        fprintf(sim_log, "cpu%d Write RUU = %03o\n",
+    if ((cpu->RUU & ~RUU_RIGHT_INSTR) != (prev->RUU & ~RUU_RIGHT_INSTR))
+        fprintf(sim_log, "cpu%d       Write RUU = %03o\n",
             cpu->index, cpu->RUU);
     if (cpu->GRP != prev->GRP) {
-        fprintf(sim_log, "cpu%d Write GRP = ", cpu->index);
+        fprintf(sim_log, "cpu%d       Write GRP = ", cpu->index);
         fprint_sym(sim_log, 0, &cpu->GRP, 0, 0);
         fprintf(sim_log, "\n");
     }
     if (cpu->MGRP != prev->MGRP) {
-        fprintf(sim_log, "cpu%d Write MGRP = ", cpu->index);
+        fprintf(sim_log, "cpu%d       Write MGRP = ", cpu->index);
         fprint_sym(sim_log, 0, &cpu->MGRP, 0, 0);
         fprintf(sim_log, "\n");
     }
     if (cpu->PRP != prev->PRP) {
-        fprintf(sim_log, "cpu%d Write PRP = 0x%08x\n",
+        fprintf(sim_log, "cpu%d       Write PRP = 0x%08x\n",
             cpu->index, cpu->PRP);
         fprintf(sim_log, "\n");
     }
     if (cpu->MPRP != prev->MPRP) {
-        fprintf(sim_log, "cpu%d Write MPRP = 0x%08x\n",
+        fprintf(sim_log, "cpu%d       Write MPRP = 0x%08x\n",
             cpu->index, cpu->MPRP);
         fprintf(sim_log, "\n");
     }
     for (i = 0; i < 8; i++) {
         if (cpu->RP[i] != prev->RP[i]) {
-            fprintf(sim_log, "cpu%d Write RP%o = ",
+            fprintf(sim_log, "cpu%d       Write RP%o = ",
                 cpu->index, i);
             fprint_sym(sim_log, 0, &cpu->RP[i], 0, 0);
             fprintf(sim_log, "\n");
         }
     }
     if (cpu->RZ != prev->RZ)
-        fprintf(sim_log, "cpu%d Write RZ = 0x%08x\n",
+        fprintf(sim_log, "cpu%d       Write RZ = 0x%08x\n",
             cpu->index, cpu->RZ);
     if (cpu->bad_addr != prev->bad_addr)
-        fprintf(sim_log, "cpu%d Write EADDR = %03o\n",
+        fprintf(sim_log, "cpu%d       Write EADDR = %03o\n",
             cpu->index, cpu->bad_addr);
 
     *prev = *cpu;

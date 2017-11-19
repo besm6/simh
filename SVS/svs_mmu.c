@@ -165,7 +165,7 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
     if (vaddr >= 0100000 && vaddr < 0100010) {
         /* Игнорируем запись в тумблерные регистры. */
         if (svs_trace >= TRACE_INSTRUCTIONS) {
-            fprintf(sim_log, "cpu%d Ignore write to pult register %d\n",
+            fprintf(sim_log, "cpu%d --- Ignore write to pult register %d\n",
                 cpu->index, vaddr - 0100000);
         }
         return;
@@ -182,7 +182,7 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
     memory[paddr] = val;
 
     if (svs_trace >= TRACE_ALL) {
-        fprintf(sim_log, "cpu%d Memory Write [%05o %07o] = %o:",
+        fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %o:",
             cpu->index, vaddr & BITS(15), paddr, (int)(val >> 48));
         fprint_sym(sim_log, 0, &val, 0, 0);
         fprintf(sim_log, "\n");
@@ -213,9 +213,9 @@ static t_value mmu_memaccess(CORE *cpu, int vaddr)
 
     if (svs_trace >= TRACE_ALL) {
         if (paddr < 010)
-            fprintf(sim_log, "cpu%d Read TR%o = ", cpu->index, paddr);
+            fprintf(sim_log, "cpu%d       Read  TR%o = ", cpu->index, paddr);
         else
-            fprintf(sim_log, "cpu%d Memory Read [%05o %07o] = %o:",
+            fprintf(sim_log, "cpu%d       Memory Read [%05o %07o] = %o:",
                 cpu->index, vaddr & BITS(15), paddr, (int)(val >> 48));
         fprint_sym(sim_log, 0, &val, 0, 0);
         fprintf(sim_log, "\n");
@@ -314,10 +314,11 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
         }
     }
 
-    if (svs_trace >= TRACE_INSTRUCTIONS && cpu_dev.dctrl) {
+    if (svs_trace >= TRACE_INSTRUCTIONS && cpu_dev.dctrl &&
+        ! (cpu->RUU & RUU_RIGHT_INSTR)) {
         // When both trace and cpu debug enabled,
         // print the fetch information.
-        fprintf(sim_log, "cpu%d Fetch [%05o %07o] = %o:",
+        fprintf(sim_log, "cpu%d       Fetch [%05o %07o] = %o:",
             cpu->index, vaddr & BITS(15), paddr, (int)(val >> 48));
         fprint_sym(sim_log, 0, &val, 0, SWMASK('I'));
         fprintf(sim_log, "\n");

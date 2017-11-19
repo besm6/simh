@@ -303,6 +303,10 @@ t_stat cpu_reset(DEVICE *dptr)
     sim_brk_types = SWMASK('E') | SWMASK('R') | SWMASK('W');
     sim_brk_dflt = SWMASK('E');
 
+    if (svs_trace) {
+        fprintf(sim_log, "cpu%d --- Reset\n", cpu->index);
+    }
+
     return SCPE_OK;
 }
 
@@ -613,13 +617,10 @@ void cpu_one_inst()
         opcode = (cpu->RK >> 12) & 077;
     }
 
+    /* Трассировка команды: адрес, код и мнемоника. */
     if (svs_trace >= TRACE_INSTRUCTIONS ||
-        (svs_trace == TRACE_EXTRACODES && is_extracode(opcode)))
-    {
+        (svs_trace == TRACE_EXTRACODES && is_extracode(opcode))) {
         svs_trace_opcode(cpu, paddr);
-        if (svs_trace == TRACE_ALL) {
-            svs_trace_registers(cpu);
-        }
     }
 
     nextpc = ADDR(cpu->PC + 1);
@@ -1234,6 +1235,7 @@ branch_zero:
         longjmp(cpu->exception, STOP_STOP);
         break;
     }
+
     if (next_mod) {
         /* Модификация адреса следующей команды. */
         cpu->M[MOD] = next_mod;
@@ -1241,6 +1243,10 @@ branch_zero:
     } else
         cpu->RUU &= ~RUU_MOD_RK;
 
+    /* Трассировка изменённых регистров. */
+    if (svs_trace == TRACE_ALL) {
+        svs_trace_registers(cpu);
+    }
 #if 0
     //TODO
     /* Не находимся ли мы в цикле "ЖДУ" диспака? */
@@ -1306,6 +1312,11 @@ t_stat sim_instr(void)
     t_stat r;
     int iintr = 0;
 
+    /* Трассировка начального состояния. */
+    if (svs_trace == TRACE_ALL) {
+        svs_trace_registers(cpu);
+    }
+
     /* Restore register state */
     cpu->PC &= BITS(15);                            /* mask PC */
     mmu_setup(cpu);                                 /* copy RP to TLB */
@@ -1313,11 +1324,16 @@ t_stat sim_instr(void)
     /* An internal interrupt or user intervention */
     r = setjmp(cpu->exception);
     if (r) {
+        const char *message = (r >= SCPE_BASE) ?
+            scp_errors[r - SCPE_BASE] :
+            sim_stop_messages[r];
+
+        if (svs_trace >= TRACE_INSTRUCTIONS) {
+            fprintf(sim_log, "cpu%d --- %s\n",
+                cpu->index, message);
+        }
         cpu->M[017] += cpu->corr_stack;
         if (cpu_dev.dctrl) {
-            const char *message = (r >= SCPE_BASE) ?
-                scp_errors[r - SCPE_BASE] :
-                sim_stop_messages[r];
             svs_debug("/// %05o%s: %s", cpu->PC,
                 (cpu->RUU & RUU_RIGHT_INSTR) ? "п" : "л", message);
         }
@@ -1460,6 +1476,7 @@ ret:        return r;
     if (iintr > 1) {
         return STOP_DOUBLE_INTR;
     }
+
     /* Main instruction fetch/decode loop */
     for (;;) {
         if (sim_interval <= 0) {                /* check clock queue */
@@ -1477,8 +1494,9 @@ ret:        return r;
             return STOP_RUNOUT;                 /* stop simulation */
         }
 
-        if (sim_brk_summ & SWMASK('E') &&       /* breakpoint? */
-            sim_brk_test(cpu->PC, SWMASK('E'))) {
+        if ((sim_brk_summ & SWMASK('E')) &&     /* breakpoint? */
+            sim_brk_test(cpu->PC, SWMASK('E')) &&
+            ! (cpu->RUU & RUU_RIGHT_INSTR)) {
             return STOP_IBKPT;                  /* stop simulation */
         }
 
