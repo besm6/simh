@@ -161,7 +161,7 @@ MTAB cpu_mod[] = {
         0, NULL,    "NOTRACE",  &cpu_clr_trace,     NULL,               NULL,
                                 "Disables tracing" },
 
-    // TODO: Разрешить/запретить контроль числа.
+    //TODO: Разрешить/запретить контроль числа.
     //{ 2, 0, "NOCHECK", "NOCHECK" },
     //{ 2, 2, "CHECK",   "CHECK" },
     { 0 }
@@ -271,7 +271,7 @@ t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
  */
 t_stat cpu_reset(DEVICE *dptr)
 {
-    // TODO: initialize cpu_core[1..7]
+    //TODO: initialize cpu_core[1..7]
     CORE *cpu = &cpu_core[0];
     int i;
 
@@ -921,7 +921,7 @@ void cpu_one_inst()
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        // TODO
+        //TODO
         svs_debug("*** зпп %05o", cpu->Aex);
         delay = MEAN_TIME(3, 8);
         break;
@@ -929,7 +929,7 @@ void cpu_one_inst()
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        // TODO
+        //TODO
         svs_debug("*** счп %05o", cpu->Aex);
         delay = MEAN_TIME(3, 8);
         break;
@@ -1034,7 +1034,7 @@ transfer_modifier:
         cpu->Aex = addr;
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        // TODO
+        //TODO
         svs_debug("*** соп %05o", cpu->Aex);
         delay = 6;
         break;
@@ -1242,7 +1242,7 @@ branch_zero:
         cpu->RUU &= ~RUU_MOD_RK;
 
 #if 0
-    // TODO
+    //TODO
     /* Не находимся ли мы в цикле "ЖДУ" диспака? */
     if (cpu->RUU == 047 && cpu->PC == 04440 && cpu->RK == 067704440) {
         //check_initial_setup();
