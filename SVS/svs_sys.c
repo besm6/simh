@@ -490,16 +490,13 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
 {
     t_value cmd;
 
-    if (uptr && (uptr != &cpu_unit))                /* must be CPU */
-        return SCPE_ARG;
-
     cmd = val[0];
 
     if (sw & SWMASK('M')) {                         /* symbolic decode? */
         CORE *cpu = (sw & SIM_SW_STOP) ? cpu_at_address(addr) : 0;
 
         if ((sw & SIM_SW_STOP) && (cpu != 0) && !(cpu->RUU & RUU_RIGHT_INSTR))
-            fprintf(of, "(%d)-> ", cpu->index);
+            fprintf(of, "-> ");
 
         svs_fprint_cmd(of, (uint32)(cmd >> 24));
 
@@ -509,7 +506,7 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
             fprintf(of, ",\n\t");
 
         if ((sw & SIM_SW_STOP) && (cpu != 0) && (cpu->RUU & RUU_RIGHT_INSTR))
-            fprintf(of, "(%d)-> ", cpu->index);
+            fprintf(of, "-> ");
 
         svs_fprint_cmd(of, cmd & BITS(24));
 
@@ -558,8 +555,6 @@ t_stat parse_sym(CONST char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 
 {
     int32 i;
 
-    if (uptr && (uptr != &cpu_unit))                /* must be CPU */
-        return SCPE_ARG;
     if (! parse_instruction_word(cptr, val))        /* symbolic parse? */
         return SCPE_OK;
 

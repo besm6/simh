@@ -111,11 +111,10 @@ enum {
 #define CLK_TPS     250         /* Fast Clock Ticks Per Second (every 4ms) */
 #define CLK_DELAY   4000        /* Uncalibrated instructions per clock tick */
 
-extern UNIT cpu_unit;
 extern UNIT tty_unit[];
 extern UNIT clocks[];
 extern t_value memory[MEMSIZE];
-extern DEVICE cpu_dev;
+extern DEVICE cpu0_dev;
 extern DEVICE clock_dev;
 extern DEVICE tty_dev;
 

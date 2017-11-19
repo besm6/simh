@@ -72,17 +72,17 @@ t_stat cpu_clr_trace(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 /*
  * CPU data structures
  *
- * cpu_dev      CPU device descriptor
- * cpu_unit     CPU unit descriptor
- * cpu_reg      CPU register list
+ * cpu0_dev     CPU device descriptor
+ * cpu0_unit    CPU unit descriptor
+ * cpu0_reg     CPU register list
  * cpu_mod      CPU modifiers list
  */
 
-UNIT cpu_unit = { UDATA(NULL, UNIT_FIX, MEMSIZE) };
+UNIT cpu0_unit = { UDATA(NULL, UNIT_FIX, MEMSIZE) };
 
 #define ORDATAVM(nm,loc,wd) REGDATA(nm,(loc),8,wd,0,1,NULL,NULL,REG_VMIO,0,0)
 
-REG cpu_reg[] = {
+REG cpu0_reg[] = {
     { ORDATA   ( "PC",    cpu_core[0].PC,       15) },  /* program counter */
     { ORDATA   ( "RK",    cpu_core[0].RK,       24) },  /* instruction register */
     { ORDATA   ( "Aex",   cpu_core[0].Aex,      15) },  /* effective address */
@@ -167,12 +167,11 @@ MTAB cpu_mod[] = {
     { 0 }
 };
 
-DEVICE cpu_dev = {
-    "CPU", &cpu_unit, cpu_reg, cpu_mod,
+DEVICE cpu0_dev = {
+    "CPU0", &cpu0_unit, cpu0_reg, cpu_mod,
     1, 8, 17, 1, 8, 50,
     &cpu_examine, &cpu_deposit, &cpu_reset,
-    NULL, NULL, NULL, NULL,
-    DEV_DEBUG
+    NULL, NULL, NULL, (void*)&cpu_core[0], DEV_DEBUG
 };
 
 /*
@@ -188,12 +187,12 @@ DEVICE cpu_dev = {
 
 char sim_name[] = "СВС";
 
-REG *sim_PC = &cpu_reg[0];
+REG *sim_PC = &cpu0_reg[0];
 
 int32 sim_emax = 1;     /* max number of addressable units per instruction */
 
 DEVICE *sim_devices[] = {
-    &cpu_dev,
+    &cpu0_dev,
     &clock_dev,
     &tty_dev,           /* терминалы - телетайпы, видеотоны, "Консулы" */
     0
@@ -228,7 +227,13 @@ const char *sim_stop_messages[] = {
  */
 t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
 {
-    CORE *cpu = &cpu_core[0];
+    DEVICE *dptr = find_dev_from_unit(uptr);
+    if (! dptr)
+        return SCPE_IERR;
+
+    CORE *cpu = (CORE*) dptr->ctxt;
+    if (! cpu)
+        return SCPE_IERR;
 
     if (addr >= MEMSIZE)
         return SCPE_NXM;
@@ -252,7 +257,13 @@ t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
  */
 t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
 {
-    CORE *cpu = &cpu_core[0];
+    DEVICE *dptr = find_dev_from_unit(uptr);
+    if (! dptr)
+        return SCPE_IERR;
+
+    CORE *cpu = (CORE*) dptr->ctxt;
+    if (! cpu)
+        return SCPE_IERR;
 
     if (addr >= MEMSIZE)
         return SCPE_NXM;
@@ -271,14 +282,16 @@ t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
  */
 t_stat cpu_reset(DEVICE *dptr)
 {
-    //TODO: initialize cpu_core[1..7]
-    CORE *cpu = &cpu_core[0];
-    int i;
+    CORE *cpu = (CORE*) dptr->ctxt;
+    if (! cpu)
+        return SCPE_IERR;
 
     cpu->ACC = 0;
     cpu->RMR = 0;
     cpu->RAU = 0;
     cpu->RUU = RUU_EXTRACODE | RUU_AVOST_DISABLE;
+
+    int i;
     for (i=0; i<NREGS; ++i)
         cpu->M[i] = 0;
 
@@ -290,12 +303,13 @@ t_stat cpu_reset(DEVICE *dptr)
     cpu->M[SPSW] = SPSW_MMAP_DISABLE | SPSW_PROT_DISABLE | SPSW_EXTRACODE |
         SPSW_INTR_DISABLE;
 
-    cpu->GRP = cpu->MGRP = 0;
+    cpu->GRP = 0;
+    cpu->MGRP = 0;
+    cpu->MPRP = 0;
 
-    for (i = 0; i < 8; ++i) {
-        cpu->RP[i] = 0;
-    }
     cpu->RZ = 0;
+    for (i = 0; i < 8; ++i)
+        cpu->RP[i] = 0;
 
     // Disabled due to a conflict with loading
     // cpu->PC = 1;             /* "reset cpu; go" should start from 1  */
@@ -315,7 +329,13 @@ t_stat cpu_reset(DEVICE *dptr)
  */
 t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
-    CORE *cpu = &cpu_core[0];
+    DEVICE *dptr = find_dev_from_unit(u);
+    if (! dptr)
+        return SCPE_IERR;
+
+    CORE *cpu = (CORE*) dptr->ctxt;
+    if (! cpu)
+        return SCPE_IERR;
 
     cpu->GRP |= GRP_PANEL_REQ;
     return SCPE_OK;
@@ -326,9 +346,15 @@ t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
  */
 t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
-    CORE *cpu = &cpu_core[0];
-    int sw;
+    DEVICE *dptr = find_dev_from_unit(u);
+    if (! dptr)
+        return SCPE_IERR;
 
+    CORE *cpu = (CORE*) dptr->ctxt;
+    if (! cpu)
+        return SCPE_IERR;
+
+    int sw;
     if (cptr)
         sw = atoi(cptr);
     else
@@ -348,7 +374,13 @@ t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc)
 
 t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp)
 {
-    CORE *cpu = &cpu_core[0];
+    DEVICE *dptr = find_dev_from_unit(up);
+    if (! dptr)
+        return SCPE_IERR;
+
+    CORE *cpu = (CORE*) dptr->ctxt;
+    if (! cpu)
+        return SCPE_IERR;
 
     fprintf(st, "Pult packet switch position is %d", cpu->pult_switch);
     return SCPE_OK;
@@ -435,10 +467,8 @@ utf8_putc(unsigned ch, FILE *fout)
  * *call ОКНО - так называлась служебная подпрограмма в мониторной
  * системе "Дубна", которая печатала полное состояние всех регистров.
  */
-void svs_okno(const char *message)
+void svs_okno(CORE *cpu, const char *message)
 {
-    CORE *cpu = &cpu_core[0];
-
     svs_log_cont("_%%%%%% %s: ", message);
     if (sim_log)
         svs_fprint_cmd(sim_log, cpu->RK);
@@ -471,10 +501,8 @@ void svs_okno(const char *message)
 /*
  * Команда "рег"
  */
-static void cmd_002()
+static void cmd_002(CORE *cpu)
 {
-    CORE *cpu = &cpu_core[0];
-
     svs_debug("*** рег %03o", cpu->Aex & 0377);
 
     switch (cpu->Aex & 0377) {
@@ -583,9 +611,8 @@ static int is_extracode(int opcode)
  * When stopped, perform a longjmp to cpu->exception,
  * sending a stop code.
  */
-void cpu_one_inst()
+void cpu_one_instr(CORE *cpu)
 {
-    CORE *cpu = &cpu_core[0];
     int reg, opcode, addr, paddr, nextpc, next_mod;
     t_value word;
 
@@ -658,7 +685,7 @@ void cpu_one_inst()
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        cmd_002();
+        cmd_002(cpu);
         /* Режим АУ - логический, если операция была "чтение" */
         if (cpu->Aex & 0200)
             cpu->RAU = SET_LOGICAL(cpu->RAU);
@@ -1261,10 +1288,8 @@ branch_zero:
  * Операция прерывания 1: внутреннее прерывание.
  * Описана в 9-м томе технического описания БЭСМ-6, страница 119.
  */
-void op_int_1(const char *msg)
+void op_int_1(CORE *cpu, const char *msg)
 {
-    CORE *cpu = &cpu_core[0];
-
     /*svs_okno(msg);*/
     cpu->M[SPSW] = (cpu->M[PSW] & (PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
                                    PSW_PROT_DISABLE)) | IS_SUPERVISOR(cpu->RUU);
@@ -1285,10 +1310,8 @@ void op_int_1(const char *msg)
  * Операция прерывания 2: внешнее прерывание.
  * Описана в 9-м томе технического описания БЭСМ-6, страница 129.
  */
-void op_int_2()
+void op_int_2(CORE *cpu)
 {
-    CORE *cpu = &cpu_core[0];
-
     /*svs_okno("Внешнее прерывание");*/
     cpu->M[SPSW] = (cpu->M[PSW] & (PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
                                    PSW_PROT_DISABLE)) | IS_SUPERVISOR(cpu->RUU);
@@ -1308,6 +1331,7 @@ void op_int_2()
  */
 t_stat sim_instr(void)
 {
+    //TODO: process cpu1..9 as well
     CORE *cpu = &cpu_core[0];
     t_stat r;
     int iintr = 0;
@@ -1333,10 +1357,6 @@ t_stat sim_instr(void)
                 cpu->index, message);
         }
         cpu->M[017] += cpu->corr_stack;
-        if (cpu_dev.dctrl) {
-            svs_debug("/// %05o%s: %s", cpu->PC,
-                (cpu->RUU & RUU_RIGHT_INSTR) ? "п" : "л", message);
-        }
 
         /*
          * ПоП и ПоК вызывают останов при любом внутреннем прерывании
@@ -1360,14 +1380,14 @@ ret:        return r;
         case STOP_BADCMD:
             if (cpu->M[PSW] & PSW_INTR_HALT)        /* ПоП */
                 goto ret;
-            op_int_1(sim_stop_messages[r]);
+            op_int_1(cpu, sim_stop_messages[r]);
             // SPSW_NEXT_RK is not important for this interrupt
             cpu->GRP |= GRP_ILL_INSN;
             break;
         case STOP_INSN_CHECK:
             if (cpu->M[PSW] & PSW_CHECK_HALT)       /* ПоК */
                 goto ret;
-            op_int_1(sim_stop_messages[r]);
+            op_int_1(cpu, sim_stop_messages[r]);
             // SPSW_NEXT_RK must be 0 for this interrupt; it is already
             cpu->GRP |= GRP_INSN_CHECK;
             break;
@@ -1378,7 +1398,7 @@ ret:        return r;
                 ++cpu->PC;
             }
             cpu->RUU ^= RUU_RIGHT_INSTR;
-            op_int_1(sim_stop_messages[r]);
+            op_int_1(cpu, sim_stop_messages[r]);
             // SPSW_NEXT_RK must be 1 for this interrupt
             cpu->M[SPSW] |= SPSW_NEXT_RK;
             cpu->GRP |= GRP_INSN_PROT;
@@ -1394,7 +1414,7 @@ ret:        return r;
                 ++cpu->PC;
             }
             cpu->RUU ^= RUU_RIGHT_INSTR;
-            op_int_1(sim_stop_messages[r]);
+            op_int_1(cpu, sim_stop_messages[r]);
             cpu->M[SPSW] |= SPSW_NEXT_RK;
             // The offending virtual page is in bits 5-9
             cpu->GRP |= GRP_OPRND_PROT;
@@ -1403,7 +1423,7 @@ ret:        return r;
         case STOP_RAM_CHECK:
             if (cpu->M[PSW] & PSW_CHECK_HALT)       /* ПоК */
                 goto ret;
-            op_int_1(sim_stop_messages[r]);
+            op_int_1(cpu, sim_stop_messages[r]);
             // The offending interleaved block # is in bits 1-3.
             cpu->GRP |= GRP_CHECK | GRP_RAM_CHECK;
             cpu->GRP = GRP_SET_BLOCK(cpu->GRP, cpu->bad_addr);
@@ -1411,7 +1431,7 @@ ret:        return r;
         case STOP_CACHE_CHECK:
             if (cpu->M[PSW] & PSW_CHECK_HALT)       /* ПоК */
                 goto ret;
-            op_int_1(sim_stop_messages[r]);
+            op_int_1(cpu, sim_stop_messages[r]);
             // The offending BRZ # is in bits 1-3.
             cpu->GRP |= GRP_CHECK;
             cpu->GRP &= ~GRP_RAM_CHECK;
@@ -1424,7 +1444,7 @@ ret:        return r;
                 ++cpu->PC;
             }
             cpu->RUU ^= RUU_RIGHT_INSTR;
-            op_int_1(sim_stop_messages[r]);
+            op_int_1(cpu, sim_stop_messages[r]);
             cpu->M[SPSW] |= SPSW_NEXT_RK;
             cpu->GRP |= GRP_BREAKPOINT;
             break;
@@ -1435,7 +1455,7 @@ ret:        return r;
                 ++cpu->PC;
             }
             cpu->RUU ^= RUU_RIGHT_INSTR;
-            op_int_1(sim_stop_messages[r]);
+            op_int_1(cpu, sim_stop_messages[r]);
             cpu->M[SPSW] |= SPSW_NEXT_RK;
             cpu->GRP |= GRP_WATCHPT_R;
             break;
@@ -1446,7 +1466,7 @@ ret:        return r;
                 ++cpu->PC;
             }
             cpu->RUU ^= RUU_RIGHT_INSTR;
-            op_int_1(sim_stop_messages[r]);
+            op_int_1(cpu, sim_stop_messages[r]);
             cpu->M[SPSW] |= SPSW_NEXT_RK;
             cpu->GRP |= GRP_WATCHPT_W;
             break;
@@ -1458,7 +1478,7 @@ ret:        return r;
                 ((cpu->M[PSW] & PSW_INTR_HALT) ||   /* ПоП */
                  (cpu->M[PSW] & PSW_CHECK_HALT)))   /* ПоК */
                 goto ret;
-            op_int_1(sim_stop_messages[r]);
+            op_int_1(cpu, sim_stop_messages[r]);
             cpu->GRP |= GRP_OVERFLOW|GRP_RAM_CHECK;
             break;
         case STOP_DIVZERO:
@@ -1466,7 +1486,7 @@ ret:        return r;
                 ((cpu->M[PSW] & PSW_INTR_HALT) ||   /* ПоП */
                  (cpu->M[PSW] & PSW_CHECK_HALT)))   /* ПоК */
                 goto ret;
-            op_int_1(sim_stop_messages[r]);
+            op_int_1(cpu, sim_stop_messages[r]);
             cpu->GRP |= GRP_DIVZERO|GRP_RAM_CHECK;
             break;
         }
@@ -1510,9 +1530,9 @@ ret:        return r;
             ! (cpu->M[PSW] & PSW_INTR_DISABLE) &&
             (cpu->GRP & cpu->MGRP)) {
             /* external interrupt */
-            op_int_2();
+            op_int_2(cpu);
         }
-        cpu_one_inst();                         /* one instr */
+        cpu_one_instr(cpu);                     /* one instr */
         iintr = 0;
 
         sim_interval -= 1;                      /* count down instructions */
@@ -1525,11 +1545,18 @@ ret:        return r;
  * Some installations used 50 Hz with a modified OS
  * for a better user time/system time ratio.
  */
-t_stat fast_clk(UNIT * this)
+t_stat fast_clk(UNIT *this)
 {
-    CORE *cpu = &cpu_core[0];
     static unsigned counter;
     static unsigned tty_counter;
+
+    DEVICE *dptr = find_dev_from_unit(this);
+    if (! dptr)
+        return SCPE_IERR;
+
+    CORE *cpu = (CORE*) dptr->ctxt;
+    if (! cpu)
+        return SCPE_IERR;
 
     ++counter;
     ++tty_counter;
@@ -1562,7 +1589,7 @@ UNIT clocks[] = {
     { UDATA(fast_clk, UNIT_IDLE, 0), CLK_DELAY },   /* Bit 40 of the GRP, 250 Hz */
 };
 
-t_stat clk_reset(DEVICE * dev)
+t_stat clk_reset(DEVICE *dev)
 {
     sim_register_clock_unit(&clocks[0]);
 
