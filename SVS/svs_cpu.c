@@ -94,55 +94,55 @@ UNIT cpu_unit[10] = {
 #define ORDATAVM(nm,loc,wd) REGDATA(nm,(loc),8,wd,0,1,NULL,NULL,REG_VMIO,0,0)
 
 REG cpu0_reg[] = {
-    { ORDATA   ( "PC",    cpu_core[0].PC,       15) },  /* program counter */
-    { ORDATA   ( "RK",    cpu_core[0].RK,       24) },  /* instruction register */
-    { ORDATA   ( "Aex",   cpu_core[0].Aex,      15) },  /* effective address */
-    { ORDATAVM ( "ACC",   cpu_core[0].ACC,      48) },  /* accumulator */
-    { ORDATAVM ( "RMR",   cpu_core[0].RMR,      48) },  /* LSB register */
-    { BINRDATA ( "RAU",   cpu_core[0].RAU,       6) },  /* ALU modes */
-    { ORDATA   ( "M1",    cpu_core[0].M[1],     15) },  /* index (modifier) registers */
-    { ORDATA   ( "M2",    cpu_core[0].M[2],     15) },
-    { ORDATA   ( "M3",    cpu_core[0].M[3],     15) },
-    { ORDATA   ( "M4",    cpu_core[0].M[4],     15) },
-    { ORDATA   ( "M5",    cpu_core[0].M[5],     15) },
-    { ORDATA   ( "M6",    cpu_core[0].M[6],     15) },
-    { ORDATA   ( "M7",    cpu_core[0].M[7],     15) },
-    { ORDATA   ( "M10",   cpu_core[0].M[010],   15) },
-    { ORDATA   ( "M11",   cpu_core[0].M[011],   15) },
-    { ORDATA   ( "M12",   cpu_core[0].M[012],   15) },
-    { ORDATA   ( "M13",   cpu_core[0].M[013],   15) },
-    { ORDATA   ( "M14",   cpu_core[0].M[014],   15) },
-    { ORDATA   ( "M15",   cpu_core[0].M[015],   15) },
-    { ORDATA   ( "M16",   cpu_core[0].M[016],   15) },
-    { ORDATA   ( "M17",   cpu_core[0].M[017],   15) },  /* also the stack pointer */
-    { ORDATA   ( "M20",   cpu_core[0].M[020],   15) },  /* MOD - address modifier register */
-    { ORDATA   ( "M21",   cpu_core[0].M[021],   15) },  /* PSW - CU modes */
-    { ORDATA   ( "M27",   cpu_core[0].M[027],   15) },  /* SPSW - saved CU modes */
-    { ORDATA   ( "M32",   cpu_core[0].M[032],   15) },  /* ERET - extracode return address */
-    { ORDATA   ( "M33",   cpu_core[0].M[033],   15) },  /* IRET - interrupt return address */
-    { ORDATA   ( "M34",   cpu_core[0].M[034],   16) },  /* IBP - instruction bkpt address */
-    { ORDATA   ( "M35",   cpu_core[0].M[035],   16) },  /* DWP - watchpoint address */
-    { BINRDATA ( "RUU",   cpu_core[0].RUU,       9) },  /* execution modes  */
-    { ORDATAVM ( "GRP",   cpu_core[0].GRP,      48) },  /* main interrupt reg */
-    { ORDATAVM ( "MGRP",  cpu_core[0].MGRP,     48) },  /* mask of the above  */
-    { ORDATA   ( "PRP",   cpu_core[0].PRP,      24) },  /* peripheral interrupt reg */
-    { ORDATA   ( "MPRP",  cpu_core[0].MPRP,     24) },  /* mask of the above*/
-    { ORDATAVM ( "RP0",   cpu_core[0].RP[0],    48) },
-    { ORDATAVM ( "RP1",   cpu_core[0].RP[1],    48) },
-    { ORDATAVM ( "RP2",   cpu_core[0].RP[2],    48) },
-    { ORDATAVM ( "RP3",   cpu_core[0].RP[3],    48) },
-    { ORDATAVM ( "RP4",   cpu_core[0].RP[4],    48) },
-    { ORDATAVM ( "RP5",   cpu_core[0].RP[5],    48) },
-    { ORDATAVM ( "RP6",   cpu_core[0].RP[6],    48) },
-    { ORDATAVM ( "RP7",   cpu_core[0].RP[7],    48) },
-    { ORDATA   ( "RZ",    cpu_core[0].RZ,       32) },
-    { ORDATAVM ( "FP1",   cpu_core[0].pult[1],  50) },
-    { ORDATAVM ( "FP2",   cpu_core[0].pult[2],  50) },
-    { ORDATAVM ( "FP3",   cpu_core[0].pult[3],  50) },
-    { ORDATAVM ( "FP4",   cpu_core[0].pult[4],  50) },
-    { ORDATAVM ( "FP5",   cpu_core[0].pult[5],  50) },
-    { ORDATAVM ( "FP6",   cpu_core[0].pult[6],  50) },
-    { ORDATAVM ( "FP7",   cpu_core[0].pult[7],  50) },
+    { ORDATA   (PC,     cpu_core[0].PC,         15) },  /* program counter */
+    { ORDATA   (RK,     cpu_core[0].RK,         24) },  /* instruction register */
+    { ORDATA   (Aex,    cpu_core[0].Aex,        15) },  /* effective address */
+    { ORDATAVM (ACC,    cpu_core[0].ACC,        48) },  /* accumulator */
+    { ORDATAVM (RMR,    cpu_core[0].RMR,        48) },  /* LSB register */
+    { BINRDATA (RAU,    cpu_core[0].RAU,        6)  },  /* ALU modes */
+    { ORDATA   (M1,     cpu_core[0].M[1],       15) },  /* index (modifier) registers */
+    { ORDATA   (M2,     cpu_core[0].M[2],       15) },
+    { ORDATA   (M3,     cpu_core[0].M[3],       15) },
+    { ORDATA   (M4,     cpu_core[0].M[4],       15) },
+    { ORDATA   (M5,     cpu_core[0].M[5],       15) },
+    { ORDATA   (M6,     cpu_core[0].M[6],       15) },
+    { ORDATA   (M7,     cpu_core[0].M[7],       15) },
+    { ORDATA   (M10,    cpu_core[0].M[010],     15) },
+    { ORDATA   (M11,    cpu_core[0].M[011],     15) },
+    { ORDATA   (M12,    cpu_core[0].M[012],     15) },
+    { ORDATA   (M13,    cpu_core[0].M[013],     15) },
+    { ORDATA   (M14,    cpu_core[0].M[014],     15) },
+    { ORDATA   (M15,    cpu_core[0].M[015],     15) },
+    { ORDATA   (M16,    cpu_core[0].M[016],     15) },
+    { ORDATA   (M17,    cpu_core[0].M[017],     15) },  /* also the stack pointer */
+    { ORDATA   (M20,    cpu_core[0].M[020],     15) },  /* MOD - address modifier register */
+    { ORDATA   (M21,    cpu_core[0].M[021],     15) },  /* PSW - CU modes */
+    { ORDATA   (M27,    cpu_core[0].M[027],     15) },  /* SPSW - saved CU modes */
+    { ORDATA   (M32,    cpu_core[0].M[032],     15) },  /* ERET - extracode return address */
+    { ORDATA   (M33,    cpu_core[0].M[033],     15) },  /* IRET - interrupt return address */
+    { ORDATA   (M34,    cpu_core[0].M[034],     16) },  /* IBP - instruction bkpt address */
+    { ORDATA   (M35,    cpu_core[0].M[035],     16) },  /* DWP - watchpoint address */
+    { BINRDATA (RUU,    cpu_core[0].RUU,        9)  },  /* execution modes  */
+    { ORDATAVM (GRP,    cpu_core[0].GRP,        48) },  /* main interrupt reg */
+    { ORDATAVM (MGRP,   cpu_core[0].MGRP,       48) },  /* mask of the above  */
+    { ORDATA   (PRP,    cpu_core[0].PRP,        24) },  /* peripheral interrupt reg */
+    { ORDATA   (MPRP,   cpu_core[0].MPRP,       24) },  /* mask of the above*/
+    { ORDATAVM (RP0,    cpu_core[0].RP[0],      48) },
+    { ORDATAVM (RP1,    cpu_core[0].RP[1],      48) },
+    { ORDATAVM (RP2,    cpu_core[0].RP[2],      48) },
+    { ORDATAVM (RP3,    cpu_core[0].RP[3],      48) },
+    { ORDATAVM (RP4,    cpu_core[0].RP[4],      48) },
+    { ORDATAVM (RP5,    cpu_core[0].RP[5],      48) },
+    { ORDATAVM (RP6,    cpu_core[0].RP[6],      48) },
+    { ORDATAVM (RP7,    cpu_core[0].RP[7],      48) },
+    { ORDATA   (RZ,     cpu_core[0].RZ,         32) },
+    { ORDATAVM (FP1,    cpu_core[0].pult[1],    50) },
+    { ORDATAVM (FP2,    cpu_core[0].pult[2],    50) },
+    { ORDATAVM (FP3,    cpu_core[0].pult[3],    50) },
+    { ORDATAVM (FP4,    cpu_core[0].pult[4],    50) },
+    { ORDATAVM (FP5,    cpu_core[0].pult[5],    50) },
+    { ORDATAVM (FP6,    cpu_core[0].pult[6],    50) },
+    { ORDATAVM (FP7,    cpu_core[0].pult[7],    50) },
     { 0 }
 };
 

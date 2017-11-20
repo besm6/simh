@@ -63,9 +63,9 @@ char line[2][128];
 unsigned char FS[2];
 
 REG fs_reg[] = {
-    { REGDATA ( "Готов", READY, 2,  2, 14, 1, NULL, NULL, 0, 0, 0) },
-    { ORDATA  ( "ФС1500-1", FS[0], 8) },
-    { ORDATA  ( "ФС1500-2", FS[2], 8) },
+    { REGDATA (Готов,    READY, 2, 2, 14, 1, NULL, NULL, 0, 0, 0) },
+    { ORDATA  (ФС1500-1, FS[0], 8) },
+    { ORDATA  (ФС1500-2, FS[2], 8) },
     { 0 }
 };
 
