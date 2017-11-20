@@ -251,6 +251,10 @@ CONST char *skip_spaces(CONST char *p)
             ++p;
             continue;
         }
+        if (*p == '#') {
+            /* Comment. */
+            return p + strlen(p);
+        }
         return p;
     }
 }
@@ -515,7 +519,7 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *valp,
         svs_fprint_insn(of, value & BITS(24));
 
     } else if (sw & SWMASK('F')) {
-        fprintf(of, "%#.2g", svs_to_ieee(value));
+        fprintf(of, "%#.10g", svs_to_ieee(value));
 
     } else if (sw & SWMASK('B')) {
         fprintf(of, "%03o %03o %03o %03o %03o %03o",
