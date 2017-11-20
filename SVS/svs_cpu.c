@@ -1642,27 +1642,26 @@ t_stat fast_clk(UNIT *this)
     static unsigned counter;
     static unsigned tty_counter;
 
-    DEVICE *dev = find_dev_from_unit(this);
-    if (! dev)
-        return SCPE_IERR;
-
-    CORE *cpu = (CORE*) dev->ctxt;
-    if (! cpu)
-        return SCPE_IERR;
+    if (svs_trace >= TRACE_INSTRUCTIONS) {
+        fprintf(sim_log, "---- --- Timer\n");
+    }
 
     ++counter;
     ++tty_counter;
 
-    cpu->GRP |= GRP_TIMER;
+    CORE *cpu;
+    for (cpu = &cpu_core[0]; cpu < &cpu_core[NUM_CORES]; cpu++) {
+        cpu->GRP |= GRP_TIMER;
 
-    if ((counter & 3) == 0) {
-        /*
-         * The OS used the (undocumented, later addition)
-         * slow clock interrupt to initiate servicing
-         * terminal I/O. Its frequency was reportedly about 50-60 Hz;
-         * 16 ms is a good enough approximation.
-         */
-        cpu->GRP |= GRP_SLOW_CLK;
+        if ((counter & 3) == 0) {
+            /*
+             * The OS used the (undocumented, later addition)
+             * slow clock interrupt to initiate servicing
+             * terminal I/O. Its frequency was reportedly about 50-60 Hz;
+             * 16 ms is a good enough approximation.
+             */
+            cpu->GRP |= GRP_SLOW_CLK;
+        }
     }
 
     /* Baudot TTYs are synchronised to the main timer rather than the
