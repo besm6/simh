@@ -69,11 +69,11 @@ UNIT drum_unit [] = {
 };
 
 REG drum_reg[] = {
-    { ORDATA   ( "УС",     drum_op,       24) },
-    { ORDATA   ( "ЗОНА",   drum_zone,     10) },
-    { ORDATA   ( "СЕКТОР", drum_sector,    2) },
-    { ORDATA   ( "МОЗУ",   drum_memory,   15) },
-    { ORDATA   ( "СЧСЛОВ", drum_nwords,   11) },
+    { ORDATA   (УС,     drum_op,        24) },
+    { ORDATA   (ЗОНА,   drum_zone,      10) },
+    { ORDATA   (СЕКТОР, drum_sector,     2) },
+    { ORDATA   (МОЗУ,   drum_memory,    15) },
+    { ORDATA   (СЧСЛОВ, drum_nwords,    11) },
     { 0 }
 };
 
