@@ -192,7 +192,7 @@ t_stat tty_reset(DEVICE *dptr)
     /* In the READY2 register the ready flag for typewriters is inverted (0 means ready),
      * and the device is always ready. */
     /* Forcing a ready interrupt. */
-    cpu->PRP |= CONS_CAN_PRINT[0] | CONS_CAN_PRINT[1];
+    cpu->RVP |= CONS_CAN_PRINT[0] | CONS_CAN_PRINT[1];
     // Schedule the very first TTY interrupt to match the next clock interrupt.
     return sim_clock_coschedule(tty_unit, 0);
 }
@@ -1318,7 +1318,7 @@ void consul_print(CORE *cpu, int dev_num, uint32 cmd)
         svs_debug(">>> CONSUL%o: Native charset not implemented", line_num);
         break;
     }
-    cpu->PRP |= CONS_CAN_PRINT[dev_num];
+    cpu->RVP |= CONS_CAN_PRINT[dev_num];
     vt_idle = 0;
 }
 
@@ -1351,7 +1351,7 @@ void consul_receive(CORE *cpu)
                 (c == '\r' || c == '\n')) {
                 CONSUL_IN[dev_num] = 3;
             }
-            cpu->PRP |= CONS_HAS_INPUT[dev_num];
+            cpu->RVP |= CONS_HAS_INPUT[dev_num];
             vt_idle = 0;
         }
     }

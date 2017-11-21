@@ -126,7 +126,7 @@ typedef struct {
 
     uint32 PC, RK, Aex, M[NREGS], RAU, RUU;
     t_value ACC, RMR, GRP, MGRP;
-    uint32 PRP, MPRP;
+    uint32 RVP, MRVP;
 
     /*
      * 64-битные регистры RP0-RP7 - для отображения регистров приписки,
@@ -197,8 +197,8 @@ extern TRACEMODE svs_trace;
 /*
  * Искусственный регистр режимов УУ, в реальной машине отсутствует.
  */
-#define RUU_PARITY_RIGHT        000001  /* ПКП - признак контроля правой половины */
-#define RUU_PARITY_LEFT         000002  /* ПКЛ - признак контроля левой половины */
+#define RUU_CHECK_RIGHT         000001  /* ПКП - признак контроля правой половины */
+#define RUU_CHECK_LEFT          000002  /* ПКЛ - признак контроля левой половины */
 #define RUU_EXTRACODE           000004  /* РежЭ - режим экстракода */
 #define RUU_INTERRUPT           000010  /* РежПр - режим прерывания */
 #define RUU_MOD_RK              000020  /* ПрИК - модификация регистром М[16] */
@@ -429,20 +429,20 @@ t_value svs_unpack(t_value val, t_value mask);
 #define GRP_SET_PAGE(x,m)       (((x) & ~GRP_PAGE_MASK) | (((m)<<4) & GRP_PAGE_MASK))
 
 /*
- * Bits of the peripheral interrupt register ПРП (PRP)
+ * Bits of the external interrupt register РВП (RVP)
  */
-#define PRP_UVVK1_END     010000000             /* 22 */
-#define PRP_UVVK2_END     004000000             /* 21 */
-#define PRP_PCARD1_CHECK  002000000             /* 20 */
-#define PRP_PCARD2_CHECK  001000000             /* 19 */
-#define PRP_PCARD1_PUNCH  000400000             /* 18 */
-#define PRP_PCARD2_PUNCH  000200000             /* 17 */
-#define PRP_PTAPE1_PUNCH  000100000             /* 16 */
-#define PRP_PTAPE2_PUNCH  000040000             /* 15 */
+#define RVP_UVVK1_END     010000000             /* 22 */
+#define RVP_UVVK2_END     004000000             /* 21 */
+#define RVP_PCARD1_CHECK  002000000             /* 20 */
+#define RVP_PCARD2_CHECK  001000000             /* 19 */
+#define RVP_PCARD1_PUNCH  000400000             /* 18 */
+#define RVP_PCARD2_PUNCH  000200000             /* 17 */
+#define RVP_PTAPE1_PUNCH  000100000             /* 16 */
+#define RVP_PTAPE2_PUNCH  000040000             /* 15 */
                                                 /* 14-13 unused */
-#define PRP_CONS1_INPUT   000004000             /* 12 */
-#define PRP_CONS2_INPUT   000002000             /* 11 */
-#define PRP_CONS1_DONE    000001000             /* 10 */
-#define PRP_CONS2_DONE    000000400             /* 9 */
+#define RVP_CONS1_INPUT   000004000             /* 12 */
+#define RVP_CONS2_INPUT   000002000             /* 11 */
+#define RVP_CONS1_DONE    000001000             /* 10 */
+#define RVP_CONS2_DONE    000000400             /* 9 */
 
 #endif

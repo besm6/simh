@@ -82,14 +82,14 @@ void svs_trace_registers(CORE *cpu)
         fprint_sym(sim_log, 0, &cpu->MGRP, 0, 0);
         fprintf(sim_log, "\n");
     }
-    if (cpu->PRP != prev->PRP) {
-        fprintf(sim_log, "cpu%d       Write PRP = 0x%08x\n",
-            cpu->index, cpu->PRP);
+    if (cpu->RVP != prev->RVP) {
+        fprintf(sim_log, "cpu%d       Write RVP = 0x%08x\n",
+            cpu->index, cpu->RVP);
         fprintf(sim_log, "\n");
     }
-    if (cpu->MPRP != prev->MPRP) {
-        fprintf(sim_log, "cpu%d       Write MPRP = 0x%08x\n",
-            cpu->index, cpu->MPRP);
+    if (cpu->MRVP != prev->MRVP) {
+        fprintf(sim_log, "cpu%d       Write MRVP = 0x%08x\n",
+            cpu->index, cpu->MRVP);
         fprintf(sim_log, "\n");
     }
     for (i = 0; i < 8; i++) {
