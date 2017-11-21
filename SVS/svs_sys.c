@@ -157,7 +157,7 @@ void svs_log_cont(const char *fmt, ...)
 }
 
 /*
- * Выдача на консоль и в файл отладки: если включён режим "cpu debug".
+ * Выдача на консоль и в файл трассировки (если он есть).
  * Добавляет перевод строки.
  */
 void svs_debug(const char *fmt, ...)
@@ -168,11 +168,11 @@ void svs_debug(const char *fmt, ...)
     vprintf(fmt, args);
     printf("\r\n");
     va_end(args);
-    if (sim_deb && sim_deb != stdout) {
+    if (sim_log && sim_log != stdout) {
         va_start(args, fmt);
-        vfprintf(sim_deb, fmt, args);
-        fprintf(sim_deb, "\n");
-        fflush(sim_deb);
+        vfprintf(sim_log, fmt, args);
+        fprintf(sim_log, "\n");
+        fflush(sim_log);
         va_end(args);
     }
 }

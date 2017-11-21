@@ -217,7 +217,7 @@ t_stat vt_clk(UNIT * this)
     if (num > 0 && num <= LINES_MAX) {
         char buf[80];
         TMLN *t = &tty_line[num];
-        svs_debug("*** tty%d: a new connection from %s",
+        svs_debug("--- tty%d: a new connection from %s",
                      num, t->ipad);
         reset_line(num);
         t->rcve = 1;
@@ -367,7 +367,7 @@ t_stat tty_attach(UNIT *u, CONST char *cptr)
             vt_mask &= ~(1 << (TTY_MAX - num));
             tt_mask &= ~(1 << (TTY_MAX - num));
         }
-        svs_debug("*** turning off T%03o", num);
+        svs_debug("--- turning off T%03o", num);
         return SCPE_OK;
     }
     if (strcmp(gbuf, "CONSOLE")) {
@@ -390,7 +390,7 @@ t_stat tty_attach(UNIT *u, CONST char *cptr)
         tty_line[num].rcve = 0;
         if (num <= TTY_MAX)
             vt_mask |= 1 << (TTY_MAX - num);
-        svs_debug("*** console on T%03o", num);
+        svs_debug("--- console on T%03o", num);
         attached_console = 1;
         return SCPE_OK;
     }
@@ -507,7 +507,7 @@ DEVICE tty_dev = {
 
 void tty_send(uint32 mask)
 {
-    /* svs_debug("*** TTY: transmit %08o", mask); */
+    /* svs_debug("--- TTY: transmit %08o", mask); */
 
     TTY_OUT = mask;
 }
@@ -1061,7 +1061,7 @@ int vt_getc(int num)
     if (! t->conn) {
         /* Пользователь отключился. */
         if (t->ipad) {
-            svs_debug("*** tty%d: disconnecting %s",
+            svs_debug("--- tty%d: disconnecting %s",
                 num, t->ipad);
             t->ipad = NULL;
         }
@@ -1299,7 +1299,7 @@ int vt_is_idle()
 
 int tty_query()
 {
-    /*svs_debug ("*** TTY: query");*/
+    /*svs_debug ("--- TTY: query");*/
     return TTY_IN;
 }
 
