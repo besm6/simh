@@ -596,7 +596,7 @@ void svs_okno(CORE *cpu, const char *message)
  */
 static void cmd_002(CORE *cpu)
 {
-    svs_debug("*** рег %03o", cpu->Aex & 0377);
+    /*svs_debug("--- рег %03o", cpu->Aex & 0377);*/
 
     switch (cpu->Aex & 0377) {
     /* TODO: Регистры команды РЕГ
@@ -676,7 +676,7 @@ static void cmd_002(CORE *cpu)
         }
 #endif
         /* Неиспользуемые адреса */
-        svs_debug("*** %05o%s: РЕГ %o - неправильный адрес спец.регистра",
+        svs_debug("--- %05o%s: РЕГ %o - неизвестный спец.регистр",
             cpu->PC, (cpu->RUU & RUU_RIGHT_INSTR) ? "п" : "л", cpu->Aex);
         break;
     }
@@ -1042,7 +1042,7 @@ void cpu_one_instr(CORE *cpu)
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
         //TODO: команда ЗПП
-        svs_debug("*** зпп %05o", cpu->Aex);
+        svs_debug("--- зпп %05o", cpu->Aex);
         delay = MEAN_TIME(3, 8);
         break;
     case 033:                                       /* счп, считывание полноразрядное */
@@ -1050,7 +1050,7 @@ void cpu_one_instr(CORE *cpu)
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
         //TODO: команда СЧП
-        svs_debug("*** счп %05o", cpu->Aex);
+        svs_debug("--- счп %05o", cpu->Aex);
         delay = MEAN_TIME(3, 8);
         break;
     case 034:                                       /* слпа, e+n */
@@ -1155,7 +1155,7 @@ transfer_modifier:
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
         //TODO: команда 046
-        svs_debug("*** соп %05o", cpu->Aex);
+        svs_debug("--- соп %05o", cpu->Aex);
         delay = 6;
         break;
     case 047:                                       /* э47, x47 */
