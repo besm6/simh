@@ -42,20 +42,12 @@ TRACEMODE svs_trace;                    /* trace mode */
 
 extern const char *scp_errors[];
 
-/* Wired (non-registered) bits of interrupt registers (GRP and PRP)
+/* Wired (non-registered) bits of interrupt registers (GRP and RVP)
  * cannot be cleared by writing to the GRP and must be cleared by clearing
  * the registers generating the corresponding interrupts.
  */
-#define GRP_WIRED_BITS (GRP_DRUM1_FREE | GRP_DRUM2_FREE |\
-                        GRP_CHAN3_DONE | GRP_CHAN4_DONE |\
-                        GRP_CHAN5_DONE | GRP_CHAN6_DONE |\
-                        GRP_CHAN3_FREE | GRP_CHAN4_FREE |\
-                        GRP_CHAN5_FREE | GRP_CHAN6_FREE |\
-                        GRP_CHAN7_FREE )
-
-#define PRP_WIRED_BITS (PRP_UVVK1_END | PRP_UVVK2_END |\
-                        PRP_PCARD1_PUNCH | PRP_PCARD2_PUNCH |\
-                        PRP_PTAPE1_PUNCH | PRP_PTAPE2_PUNCH )
+#define GRP_WIRED_BITS (0)
+#define RVP_WIRED_BITS (0)
 
 t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
 t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw);
@@ -125,8 +117,8 @@ REG cpu0_reg[] = {
     { BINRDATA (RUU,    cpu_core[0].RUU,        9)  },  /* execution modes  */
     { ORDATAVM (GRP,    cpu_core[0].GRP,        48) },  /* main interrupt reg */
     { ORDATAVM (MGRP,   cpu_core[0].MGRP,       48) },  /* mask of the above  */
-    { ORDATA   (PRP,    cpu_core[0].PRP,        24) },  /* peripheral interrupt reg */
-    { ORDATA   (MPRP,   cpu_core[0].MPRP,       24) },  /* mask of the above*/
+    { ORDATA   (RVP,    cpu_core[0].RVP,        24) },  /* peripheral interrupt reg */
+    { ORDATA   (MRVP,   cpu_core[0].MRVP,       24) },  /* mask of the above*/
     { ORDATAVM (RP0,    cpu_core[0].RP[0],      48) },
     { ORDATAVM (RP1,    cpu_core[0].RP[1],      48) },
     { ORDATAVM (RP2,    cpu_core[0].RP[2],      48) },
@@ -382,7 +374,7 @@ t_stat cpu_reset(DEVICE *dev)
 
     cpu->GRP = 0;
     cpu->MGRP = 0;
-    cpu->MPRP = 0;
+    cpu->MRVP = 0;
 
     cpu->RZ = 0;
     for (i = 0; i < 8; ++i)
@@ -599,75 +591,269 @@ static void cmd_002(CORE *cpu)
     /*svs_debug("--- рег %03o", cpu->Aex & 0377);*/
 
     switch (cpu->Aex & 0377) {
-    /* TODO: Регистры команды РЕГ
-     * 36 МГРП
-     * 37 ГРП
-     * 46 маска РВП
-     * 47 РВП
-     * 44 тег (для ЗПП и СЧТ)
-     * 50 прерывания процессорам
-     * 51 ответы (другой тип прерывания) процессорам. (Ответ -> ПВВ вызывает reset ПВВ.)
-     * 52 прерывания от процессоров
-     * 53 ответы от процессоров
-     * 54 конфигурация процессоров (online)
-     * 55 конфигурация памяти
-     * 56 часы
-     * 57 таймер
-     */
-#if 0
-    case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7:
-        /* Запись в БРЗ */
-        //mmu_setcache(cpu, cpu->Aex & 7, cpu->ACC);
-        break;
+
     case 020: case 021: case 022: case 023:
     case 024: case 025: case 026: case 027:
-        /* Запись в регистры приписки */
+        /* Запись в регистры приписки режима пользователя */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Установка приписки пользователя\n", cpu->index);
         mmu_set_rp(cpu, cpu->Aex & 7, cpu->ACC);
         break;
+
     case 030: case 031: case 032: case 033:
         /* Запись в регистры защиты */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Запись в регистр защиты\n", cpu->index);
         mmu_set_protection(cpu, cpu->Aex & 3, cpu->ACC);
         break;
+
+    case 034:
+        /* Запись в регистр конфигурации оперативной памяти */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Запись конфигурации оперативной памяти\n", cpu->index);
+        /* игнорируем */
+        break;
+
+    case 035:
+        /* Запись в сигнал контроля оперативной памяти */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Запись в сигнал контроля оперативной памяти\n", cpu->index);
+        /* игнорируем */
+        break;
+
+    case 0235:
+        /* Чтение сигнала контроля от оперативной памяти */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение сигнала контроля оперативной памяти\n", cpu->index);
+        cpu->ACC = 0;
+        break;
+
     case 036:
-        /* Запись в маску главного регистра прерываний */
+        /* Запись маски главного регистра прерываний */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Установка маски ГРП\n", cpu->index);
         cpu->MGRP = cpu->ACC;
         break;
+
+    case 0236:
+        /* Чтение маски главного регистра прерываний */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение маски ГРП\n", cpu->index);
+        cpu->ACC = cpu->MGRP;
+        break;
+
     case 037:
         /* Clearing the main interrupt register: */
         /* it is impossible to clear wired (stateless) bits this way */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Запись в ГРП\n", cpu->index);
         cpu->GRP &= cpu->ACC | GRP_WIRED_BITS;
         break;
-    case 64: case 65: case 66: case 67: case 68: case 69: case 70: case 71:
-    case 72: case 73: case 74: case 75: case 76: case 77: case 78: case 79:
-    case 80: case 81: case 82: case 83: case 84: case 85: case 86: case 87:
-    case 88: case 89: case 90: case 91: case 92: case 93: case 94: case 95:
-        /* 0100 - 0137:
-         * Бит 1: управление блокировкой режима останова БРО.
-         * Биты 2 и 3 - признаки формирования контрольных
-         * разрядов (ПКП и ПКЛ). */
-        if (cpu->Aex & 1)
-            cpu->RUU |= RUU_AVOST_DISABLE;
-        else
-            cpu->RUU &= ~RUU_AVOST_DISABLE;
-        if (cpu->Aex & 2)
-            cpu->RUU |= RUU_PARITY_RIGHT;
-        else
-            cpu->RUU &= ~RUU_PARITY_RIGHT;
-        if (cpu->Aex & 4)
-            cpu->RUU |= RUU_PARITY_LEFT;
-        else
-            cpu->RUU &= ~RUU_PARITY_LEFT;
-        break;
-    case 0200: case 0201: case 0202: case 0203:
-    case 0204: case 0205: case 0206: case 0207:
-        /* Чтение БРЗ */
-        //cpu->ACC = mmu_getcache(cpu, cpu->Aex & 7);
-        break;
+
     case 0237:
         /* Чтение главного регистра прерываний */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение ГРП\n", cpu->index);
         cpu->ACC = cpu->GRP;
         break;
-#endif
+
+    case 044:
+        /* Запись в регистр тегов */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Установка тега\n", cpu->index);
+        /* игнорируем */
+        break;
+
+    case 0244:
+        /* Чтение регистра тегов */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение регистра тега\n", cpu->index);
+        cpu->ACC = 0; //TODO
+        break;
+
+    case 0245:
+        /* Чтение номера процессора */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение номера процессора\n", cpu->index);
+        cpu->ACC = cpu->index;
+        break;
+
+    case 046:
+        /* Запись маски регистра внешних прерываний */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Установка маски РВП\n", cpu->index);
+        cpu->MRVP = cpu->ACC;
+        break;
+
+    case 0246:
+        /* Чтение маски регистра внешних прерываний */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение маски РВП\n", cpu->index);
+        cpu->ACC = cpu->MRVP;
+        break;
+
+    case 047:
+        /* Clearing the external interrupt register: */
+        /* it is impossible to clear wired (stateless) bits this way */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Запись в РВП\n", cpu->index);
+        cpu->RVP &= cpu->ACC | RVP_WIRED_BITS;
+        break;
+
+    case 0247:
+        /* Чтение регистра внешних прерываний */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение РВП\n", cpu->index);
+        cpu->ACC = cpu->RVP;
+        break;
+
+    case 050:
+        /* Запись в регистр прерываний процессорам */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Запись в ПП\n", cpu->index);
+        //TODO
+        break;
+
+    case 0250:
+        /* Чтение регистра прерываний процессорам */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение ПП\n", cpu->index);
+        cpu->ACC = 0; //TODO
+        break;
+
+    case 051:
+        /* Запись в регистр ответов процессорам */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Запись в ОПП\n", cpu->index);
+        //TODO
+        break;
+
+    case 0251:
+        /* Чтение регистра ответов процессорам */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение ОПП\n", cpu->index);
+        cpu->ACC = 0; //TODO
+        break;
+
+    case 052:
+        /* Запись в регистр прерываний от процессоров */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Запись в ПОП\n", cpu->index);
+        //TODO
+        break;
+
+    case 0252:
+        /* Чтение регистра прерываний от процессоров */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение ПОП\n", cpu->index);
+        cpu->ACC = 0; //TODO
+        break;
+
+    case 053:
+        /* Запись в регистр ответов от процессоров */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Запись в ОПОП\n", cpu->index);
+        //TODO
+        break;
+
+    case 0253:
+        /* Чтение регистра ответов от процессоров */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение ОПОП\n", cpu->index);
+        cpu->ACC = 0; //TODO
+        break;
+
+    case 054:
+        /* Запись в регистр конфигурации процессора */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Установка конфигурации процессора\n", cpu->index);
+        /* игнорируем */
+        break;
+
+    case 0254:
+        /* Чтение регистра конфигурации процессора */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение регистра конфигурации процессора\n", cpu->index);
+        cpu->ACC = 0;
+        break;
+
+    case 055:
+        /* Запись в регистр аварии процессоров */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Запись в регистр аварии процессоров\n", cpu->index);
+        /* игнорируем */
+        break;
+
+    case 0255:
+        /* Чтение регистра аварии процессоров */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение регистра аварии процессоров\n", cpu->index);
+        cpu->ACC = 0;
+        break;
+
+    case 056:
+        /* Запись в регистр часов */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Установка часов\n", cpu->index);
+        //TODO
+        break;
+
+    case 0256:
+        /* Чтение регистра часов */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение регистра часов\n", cpu->index);
+        cpu->ACC = 0; //TODO
+        break;
+
+    case 057:
+        /* Запись в регистр таймера */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Установка таймера\n", cpu->index);
+        //TODO
+        break;
+
+    case 0257:
+        /* Чтение регистра таймера */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Чтение регистра таймера\n", cpu->index);
+        cpu->ACC = 0; //TODO
+        break;
+
+    case 060: case 061: case 062: case 063:
+    case 064: case 065: case 066: case 067:
+        /* Запись в регистры приписки супервизора */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Установка приписки супервизора\n", cpu->index);
+        //TODO: mmu_set_rp(cpu, cpu->Aex & 7, cpu->ACC);
+        break;
+
+    case 0100: case 0101: case 0102: case 0103:
+    case 0104: case 0105: case 0106: case 0107:
+        /*
+         * Бит 1: управление блокировкой режима останова БРО.
+         * Биты 2 и 3 - признаки формирования контрольных
+         * разрядов (ПКП и ПКЛ).
+         */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Установка режимов УУ\n", cpu->index);
+
+        if (cpu->Aex & 1) cpu->RUU |= RUU_AVOST_DISABLE;
+        else              cpu->RUU &= ~RUU_AVOST_DISABLE;
+
+        if (cpu->Aex & 2) cpu->RUU |= RUU_CHECK_RIGHT;
+        else              cpu->RUU &= ~RUU_CHECK_RIGHT;
+
+        if (cpu->Aex & 4) cpu->RUU |= RUU_CHECK_LEFT;
+        else              cpu->RUU &= ~RUU_CHECK_LEFT;
+        break;
+
+    case 0140:
+        /* Запись в СКП (статус контроллера прерываний?). */
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- Запись в СКП\n", cpu->index);
+        /* игнорируем */
+        break;
+
     default:
 #if 0
         if ((cpu->Aex & 0340) == 0140) {
@@ -1612,7 +1798,7 @@ ret:        return r;
             return STOP_IBKPT;                  /* stop simulation */
         }
 
-        if (cpu->PRP & cpu->MPRP) {
+        if (cpu->RVP & cpu->MRVP) {
             /* There are interrupts pending in the peripheral
              * interrupt register */
             cpu->GRP |= GRP_SLAVE;
