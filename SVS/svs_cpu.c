@@ -148,9 +148,6 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV,
         0, NULL,    "REQ",      &cpu_req,           NULL,               NULL,
                                 "Sends a request interrupt" },
-    { MTAB_XTD|MTAB_VDV|MTAB_VALO,
-        0, "PULT",  "PULT",     &cpu_set_pult,      &cpu_show_pult,     NULL,
-                                "Selects a hardwired program or switch reg." },
     { MTAB_XTD|MTAB_VDV,
         0, "TRACE", "TRACE",    &cpu_set_trace,     &cpu_show_trace,    NULL,
                                 "Enables full tracing of processor state" },
@@ -307,15 +304,11 @@ t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
         return SCPE_NXM;
     if (vptr) {
         if (addr < 010) {
-            if ((pult_tab[cpu->pult_switch][0] >> addr) & 1) {
-                /* hardwired */
-                *vptr = pult_tab[cpu->pult_switch][addr];
-            } else {
-                /* from switch regs */
-                *vptr = cpu->pult[addr];
-            }
-        } else
+            /* from switch regs */
+            *vptr = cpu->pult[addr];
+        } else {
             *vptr = memory[addr];
+        }
     }
     return SCPE_OK;
 }
@@ -423,51 +416,6 @@ t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
         return SCPE_IERR;
 
     cpu->GRP |= GRP_PANEL_REQ;
-    return SCPE_OK;
-}
-
-/*
- * Hardwired program selector validation
- */
-t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc)
-{
-    DEVICE *dev = find_dev_from_unit(u);
-    if (! dev)
-        return SCPE_IERR;
-
-    CORE *cpu = (CORE*) dev->ctxt;
-    if (! cpu)
-        return SCPE_IERR;
-
-    int sw;
-    if (cptr)
-        sw = atoi(cptr);
-    else
-        sw = 0;
-
-    if (sw >= 0 && sw <= 10) {
-        cpu->pult_switch = sw;
-        if (sw)
-            sim_printf("Pult switch set to hardwired program %d\n", sw);
-        else
-            sim_printf("Pult switch set to switch registers\n");
-        return SCPE_OK;
-    }
-    printf("Illegal value %s\n", cptr);
-    return SCPE_ARG;
-}
-
-t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp)
-{
-    DEVICE *dev = find_dev_from_unit(up);
-    if (! dev)
-        return SCPE_IERR;
-
-    CORE *cpu = (CORE*) dev->ctxt;
-    if (! cpu)
-        return SCPE_IERR;
-
-    fprintf(st, "Pult switch position = %d", cpu->pult_switch);
     return SCPE_OK;
 }
 

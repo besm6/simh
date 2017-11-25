@@ -139,7 +139,6 @@ typedef struct {
 
     uint32 RZ;              /* РЗ, регистр защиты */
 
-    unsigned pult_switch;   /* переключатель пультовых программ */
     t_value pult[8];        /* тубмлерные регистры */
 
     int corr_stack;         /* коррекция стека при прерывании */
@@ -157,11 +156,6 @@ typedef struct {
 #endif
 
 extern CORE cpu_core[];             /* state of processor 0 */
-
-/*
- * Таблица пультовых программ.
- */
-extern t_value pult_tab[11][8];
 
 /*
  * Четыре режима трассировки.
