@@ -340,8 +340,6 @@ int tty_query(void);
 void vt_print(void);
 void tt_print(void);
 void vt_receive(CORE *cpu);
-void consul_print(CORE *cpu, int num, uint32 cmd);
-uint32 consul_read(int num);
 int vt_is_idle(void);
 
 /*

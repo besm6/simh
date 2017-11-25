@@ -33,8 +33,8 @@
 #include "sim_tmxr.h"
 #include <time.h>
 
-#define TTY_MAX         24              /* Serial TTY lines */
-#define LINES_MAX       TTY_MAX + 2     /* Including parallel "Consul" typewriters */
+#define TTY_MAX         24          /* Serial TTY lines */
+#define LINES_MAX       TTY_MAX     /* Including parallel "Consul" typewriters */
 
 /*
  * According to a table in http://ru.wikipedia.org/wiki/МТК-2
@@ -90,7 +90,6 @@ uint32 tt_sending, tt_receiving;
 uint32 tt_mask = 0, vt_mask = 0;
 
 uint32 TTY_OUT = 0, TTY_IN = 0, vt_idle = 0;
-uint32 CONSUL_IN[2];
 
 uint32 CONS_CAN_PRINT[2] = { 01000, 00400 };
 uint32 CONS_HAS_INPUT[2] = { 04000, 02000 };
@@ -100,7 +99,6 @@ char vt_cbuf[CBUFSIZE][LINES_MAX+1];
 char *vt_cptr[LINES_MAX+1];
 
 void tt_print();
-void consul_receive(CORE *cpu);
 t_stat vt_clk(UNIT *);
 extern const char *get_sim_sw(const char *cptr);
 
@@ -185,7 +183,6 @@ t_stat tty_reset(DEVICE *dptr)
     memset(tty_instate, 0, sizeof(tty_instate));
     vt_sending = vt_receiving = 0;
     TTY_IN = TTY_OUT = 0;
-    CONSUL_IN[0] = CONSUL_IN[1] = 0;
     reg = rus;
     vt_idle = 1;
     tty_line[0].conn = 1;                   /* faked, always busy */
@@ -211,7 +208,6 @@ t_stat vt_clk(UNIT * this)
 
     vt_print();
     vt_receive(cpu);
-    consul_receive(cpu);
 
     /* Are there any new network connections? */
     num = tmxr_poll_conn(&tty_desc);
@@ -509,8 +505,50 @@ DEVICE tty_dev = {
 void tty_send(uint32 mask)
 {
     /* svs_debug("--- TTY: transmit %08o", mask); */
-
+    //TODO
     TTY_OUT = mask;
+#if 0
+void tty_send (t_value mask, int high_nibble)
+{
+    static int state = 0;
+    static uint32 syllable = 0;
+    int num;
+    // besm6_debug ("*** МПД: передача %016llo", mask);
+    mask >>= 34;
+    mask &= 0xf;
+    syllable = (syllable << 4) | mask;
+    switch (state) {
+    case 0: case 2:
+        if (high_nibble == 0)
+            besm6_debug ("*** МПД: РЕГ 51 out of order");
+        break;
+    case 3:
+        // besm6_debug("*** МПД: сформирован слог %4x", syllable);
+        if (syllable & 0x8000) {
+            if ((syllable & 0xff) == 0)
+                fresh = (syllable >> 8) & 0x7f;
+            else
+                besm6_debug("*** МПД: служебный слог %4x проигнорирован", syllable);
+        } else {
+            int sym = syllable & 0x7f;
+            num = syllable >> 8;
+            if (sym < ' ' && sym != '\r' && sym != '\n') {
+                vt_send(num, '^', 0);
+                vt_send(num, sym + '@', 0);
+            }
+            vt_send (num, syllable & 0x7f,
+                (tty_unit[num].flags & TTY_BSPACE_MASK) == TTY_DESTRUCTIVE_BSPACE);
+        }
+        state = -1;
+        syllable = 0;
+    case 1:
+        if (high_nibble == 1)
+            besm6_debug ("*** МПД: РЕГ 50  out of order");
+                break;
+
+    }
+    ++state;
+#endif
 }
 
 /*
@@ -1216,6 +1254,20 @@ int odd_parity(unsigned char c)
     return c & 1;
 }
 
+#if 0
+//TODO
+void tty_strobe()
+{
+    if (receive_state == 2) {
+        REQUEST = ((syllable >> 0) & 0xFLL) << 34;
+        RESPONSE = ((syllable >> 4) & 0xFLL) << 34;
+        REQUEST |= BIT(33)|BIT(34);
+        receive_state = 3;
+    } else if (receive_state == 3)
+        receive_state = 0;
+}
+#endif
+
 /*
  * Handling input from all connected terminals.
  */
@@ -1288,6 +1340,18 @@ void vt_receive(CORE *cpu)
         }
         workset &= ~mask;
     }
+#if 0
+    //TODO
+    switch (receive_state) {
+    case 1:
+        REQUEST = ((syllable >> 8) & 0xFLL) << 34;
+        RESPONSE = ((syllable >> 12) & 0xFLL) << 34;
+        REQUEST |= BIT(33)|BIT(34);
+        PRP |= PRP_REQUEST;
+        receive_state = 2;
+        break;
+    }
+#endif
     if (vt_receiving)
         vt_idle = 0;
 }
@@ -1305,65 +1369,4 @@ int tty_query()
 {
     /*svs_debug ("--- TTY: query");*/
     return TTY_IN;
-}
-
-void consul_print(CORE *cpu, int dev_num, uint32 cmd)
-{
-    int line_num = dev_num + TTY_MAX + 1;
-
-    if (tty_dev.dctrl)
-        svs_debug(">>> CONSUL%o: %03o", line_num, cmd & 0377);
-    cmd &= 0177;
-    switch (tty_unit[line_num].flags & TTY_STATE_MASK) {
-    case TTY_VT340_STATE:
-        vt_send(line_num, cmd);
-        break;
-    case TTY_CONSUL_STATE:
-        svs_debug(">>> CONSUL%o: Native charset not implemented", line_num);
-        break;
-    }
-    cpu->RVP |= CONS_CAN_PRINT[dev_num];
-    vt_idle = 0;
-}
-
-void consul_receive(CORE *cpu)
-{
-    int c, line_num, dev_num;
-
-    for (dev_num = 0; dev_num < 2; ++dev_num){
-        line_num = dev_num + TTY_MAX + 1;
-        if (! tty_line[line_num].conn)
-            continue;
-        switch (tty_unit[line_num].flags & TTY_CHARSET_MASK) {
-        case TTY_KOI7_JCUKEN_CHARSET:
-            c = vt_kbd_input_koi7(line_num);
-            break;
-        case TTY_RAW_CHARSET:
-        case TTY_KOI7_QWERTY_CHARSET:
-            c = vt_getc(line_num);
-            break;
-        case TTY_UNICODE_CHARSET:
-            c = vt_kbd_input_unicode(line_num);
-            break;
-        default:
-            c = '?';
-            break;
-        }
-        if (c >= 0 && c <= 0177) {
-            CONSUL_IN[dev_num] = odd_parity(c) ? c | 0200 : c;
-            if ((tty_unit[line_num].flags & TTY_CHARSET_MASK) != TTY_RAW_CHARSET &&
-                (c == '\r' || c == '\n')) {
-                CONSUL_IN[dev_num] = 3;
-            }
-            cpu->RVP |= CONS_HAS_INPUT[dev_num];
-            vt_idle = 0;
-        }
-    }
-}
-
-uint32 consul_read(int num)
-{
-    if (tty_dev.dctrl)
-        svs_debug("<<< CONSUL%o: %03o", num+TTY_MAX+1, CONSUL_IN[num]);
-    return CONSUL_IN[num];
 }
