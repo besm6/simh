@@ -80,14 +80,15 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
     int paddr = (vaddr >= 0100000) ? (vaddr - 0100000) :
         (vaddr & 01777) | (cpu->TLB[vaddr >> 10] << 10);
 
-    /* Вычисляем тег. */
-    val = SET_PARITY(val, cpu->RUU ^ PARITY_INSN);
+    /* Добавляем тег. */
+    val = SET_TAG(val, (cpu->RUU & (RUU_CHECK_RIGHT | RUU_CHECK_LEFT)) ?
+        TAG_INSN : TAG_NUMBER);
 
     /* Пишем в память. */
     memory[paddr] = val;
 
     if (svs_trace >= TRACE_ALL) {
-        fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %o:",
+        fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
             cpu->index, vaddr & BITS(15), paddr, (int)(val >> 48));
         fprint_sym(sim_log, 0, &val, 0, 0);
         fprintf(sim_log, "\n");
@@ -114,7 +115,7 @@ static t_value mmu_memaccess(CORE *cpu, int vaddr)
         if (paddr < 010)
             fprintf(sim_log, "cpu%d       Read  TR%o = ", cpu->index, paddr);
         else
-            fprintf(sim_log, "cpu%d       Memory Read [%05o %07o] = %o:",
+            fprintf(sim_log, "cpu%d       Memory Read [%05o %07o] = %02o:",
                 cpu->index, vaddr & BITS(15), paddr, (int)(val >> 48));
         fprint_sym(sim_log, 0, &val, 0, 0);
         fprintf(sim_log, "\n");

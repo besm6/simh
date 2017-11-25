@@ -202,9 +202,10 @@ t_stat vt_clk(UNIT * this)
 {
     CORE *cpu = &cpu_core[0];
     int num;
-
+#if 0
+    //TODO
     cpu->GRP |= cpu->MGRP & GRP_SERIAL;
-
+#endif
     /* Polling receiving from sockets */
     tmxr_poll_rx(&tty_desc);
 
@@ -265,7 +266,7 @@ t_stat vt_clk(UNIT * this)
      */
     if (!attached_console) {
         static int divider;
-        if (++divider == CLK_TPS/10) {
+        if (++divider == TICKS_PER_SEC/10) {
             divider = 0;
             if (SCPE_STOP == sim_poll_kbd())
                 stop_cpu = 1;
@@ -286,10 +287,10 @@ t_stat vt_clk(UNIT * this)
         return sim_clock_coschedule(this, 0);
     } else if (tty_turbo) {
         /* In "turbo" mode, the TTY works at the model speed */
-        return sim_activate(this, 1000*MSEC/tty_rate);
+        return sim_activate(this, 1000000/tty_rate);
     } else {
         /* In "non-turbo" mode, the TTY interrupts imitate the true feel of the speed */
-        return sim_activate_after(this, 1000*MSEC/tty_rate);
+        return sim_activate_after(this, 1000000/tty_rate);
     }
 }
 
@@ -1256,11 +1257,14 @@ void vt_receive(CORE *cpu)
                 }
                 tty_instate[num] = 1;
                 TTY_IN |= mask;         /* start bit */
+#if 0
+                //TODO
                 cpu->GRP |= GRP_TTY_START;   /* not used ? */
                 /* auto-enabling the interrupt just in case
                  * (seems to be unneeded as the interrupt is never disabled)
                  */
                 cpu->MGRP |= GRP_SERIAL;
+#endif
                 vt_receiving |= mask;
             }
             break;
