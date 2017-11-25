@@ -1,7 +1,7 @@
 /*
  * SVS simulator definitions
  *
- * Copyright (c) 2009, Serge Vakulenko
+ * Copyright (c) 2009-2017, Serge Vakulenko
  * Copyright (c) 2009-2017, Leonid Broukhis
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -30,40 +30,39 @@
 #ifndef _SVS_DEFS_H_
 #define _SVS_DEFS_H_    0
 
-#include "sim_defs.h"                           /* simulator defns */
-#include "scp.h"
+#include "sim_defs.h"
 #include <setjmp.h>
 
 /*
  * Memory.
  */
-#define NREGS           30                      /* number of registers-modifiers */
-#define MEMSIZE         (512 * 1024)            /* memory size, words */
+#define NREGS           30              /* number of registers-modifiers */
+#define MEMSIZE         (1024 * 1024)   /* memory size, words */
 
 /*
  * Simulator stop codes
  */
 enum {
-    STOP_STOP = 1,                          /* STOP */
-    STOP_IBKPT,                             /* SIMH breakpoint */
-    STOP_RWATCH,                            /* SIMH read watchpoint */
-    STOP_WWATCH,                            /* SIMH write watchpoint */
-    STOP_RUNOUT,                            /* run out end of memory limits */
-    STOP_BADCMD,                            /* invalid instruction */
-    STOP_INSN_CHECK,                        /* not an instruction */
-    STOP_INSN_PROT,                         /* fetch from blocked page */
-    STOP_OPERAND_PROT,                      /* load from blocked page */
-    STOP_RAM_CHECK,                         /* RAM parity error */
-    STOP_CACHE_CHECK,                       /* data cache parity error */
-    STOP_OVFL,                              /* arith. overflow */
-    STOP_DIVZERO,                           /* division by 0 or denorm */
-    STOP_DOUBLE_INTR,                       /* double internal interrupt */
-    STOP_DRUMINVDATA,                       /* reading unformatted drum */
-    STOP_DISKINVDATA,                       /* reading unformatted disk */
-    STOP_INSN_ADDR_MATCH,                   /* fetch address matched breakpt reg */
-    STOP_LOAD_ADDR_MATCH,                   /* load address matched watchpt reg */
-    STOP_STORE_ADDR_MATCH,                  /* store address matched watchpt reg */
-    STOP_UNIMPLEMENTED,                     /* unimplemented 033 or 002 insn feature */
+    STOP_STOP = 1,                      /* STOP */
+    STOP_IBKPT,                         /* SIMH breakpoint */
+    STOP_RWATCH,                        /* SIMH read watchpoint */
+    STOP_WWATCH,                        /* SIMH write watchpoint */
+    STOP_RUNOUT,                        /* run out end of memory limits */
+    STOP_BADCMD,                        /* invalid instruction */
+    STOP_INSN_CHECK,                    /* not an instruction */
+    STOP_INSN_PROT,                     /* fetch from blocked page */
+    STOP_OPERAND_PROT,                  /* load from blocked page */
+    STOP_RAM_CHECK,                     /* RAM parity error */
+    STOP_CACHE_CHECK,                   /* data cache parity error */
+    STOP_OVFL,                          /* arith. overflow */
+    STOP_DIVZERO,                       /* division by 0 or denorm */
+    STOP_DOUBLE_INTR,                   /* double internal interrupt */
+    STOP_DRUMINVDATA,                   /* reading unformatted drum */
+    STOP_DISKINVDATA,                   /* reading unformatted disk */
+    STOP_INSN_ADDR_MATCH,               /* fetch address matched breakpt reg */
+    STOP_LOAD_ADDR_MATCH,               /* load address matched watchpt reg */
+    STOP_STORE_ADDR_MATCH,              /* store address matched watchpt reg */
+    STOP_UNIMPLEMENTED,                 /* unimplemented 033 or 002 insn feature */
 };
 
 /*
@@ -84,32 +83,31 @@ enum {
 #define ADDR(x)         ((x) & BITS(15))        /* адрес слова */
 
 /*
- * Работа со сверткой. Значение разрядов свертки слова равно значению
- * регистров ПКЛ и ПКП при записи слова.
- * 00 - командная свертка
- * 01 или 10 - контроль числа
- * 11 - числовая свертка
- * В памяти биты свертки имитируют четность полуслов.
+ * Работа с тегами.
+ * Тег храним в старших битах 55:48 типа t_value.
  */
-#define PARITY_INSN             1
-#define PARITY_NUMBER           2
-#define SET_PARITY(x, c)        (((x) & BITS48) | (((c) & 3LL) << 48))
-#define IS_INSN(x)              (((x) >> 48) == PARITY_INSN)
-#define IS_NUMBER(x)            (((x) >> 48) == PARITY_INSN ||  \
-                                 ((x) >> 48) == PARITY_NUMBER)
+#define TAG_INSN        035
+#define TAG_NUMBER      036
+#define TAG_BITSET      020
+
+#define SET_TAG(x, c)   (((x) & BITS48) | (((c) & 0xffLL) << 48))
+
+#define IS_INSN(x)      (((x) >> 48) == TAG_INSN)
+
+#define IS_NUMBER(x)    (((x) >> 48) == TAG_INSN || \
+                         ((x) >> 48) == TAG_NUMBER)
 
 /*
- * An attempt to approximate instruction execution times.
- * The arguments number of clock ticks spent on an instruction
- * in the ALU and in the CU; the computed result assumes
- * a 50% overlap in execution.
+ * Вычисление правдоподобного времени выполнения команды,
+ * зная количество тактов в УУ и среднее в АУ.
+ * Предполагаем, что в 50% случаев происходит совмещение
+ * выполнения, поэтому суммируем большее и половину
+ * от меньшего значения.
  */
 #define MEAN_TIME(x,y)  (x>y ? x+y/2 : x/2+y)
 
-#define USEC        1           /* 1 microsecond */
-#define MSEC        (1000*USEC) /* 1 millisecond */
-#define CLK_TPS     250         /* Fast Clock Ticks Per Second (every 4ms) */
-#define CLK_DELAY   4000        /* Uncalibrated instructions per clock tick */
+#define TICKS_PER_SEC   500         /* Fast Clock Ticks Per Second (every 2ms) */
+#define INSN_PER_TICK   2000        /* Uncalibrated instructions per clock tick */
 
 extern UNIT tty_unit[];
 extern UNIT clocks[];
@@ -138,6 +136,7 @@ typedef struct {
     uint32 TLB[32];         /* они же постранично */
 
     uint32 RZ;              /* РЗ, регистр защиты */
+    uint8 tag;              /* регистр тега */
 
     t_value pult[8];        /* тубмлерные регистры */
 
@@ -374,69 +373,41 @@ t_value svs_pack(t_value val, t_value mask);
 t_value svs_unpack(t_value val, t_value mask);
 
 /*
- * Bits of the main interrupt register ГРП (GRP)
- * External:
+ * Разряды главного регистра прерываний (ГРП)
+ * Внешние:
  */
-#define GRP_PRN1_SYNC   04000000000000000LL     /* 48 */
-#define GRP_PRN2_SYNC   02000000000000000LL     /* 47 */
-#define GRP_DRUM1_FREE  01000000000000000LL     /* 46 */
-#define GRP_DRUM2_FREE  00400000000000000LL     /* 45 */
-#define GRP_UVVK1_SYNC  00200000000000000LL     /* 44 */
-#define GRP_UVVK2_SYNC  00100000000000000LL     /* 43 */
-#define GRP_FS1_SYNC    00040000000000000LL     /* 42 */
-#define GRP_FS2_SYNC    00020000000000000LL     /* 41 */
-#define GRP_TIMER       00010000000000000LL     /* 40 */
-#define GRP_PRN1_ZERO   00004000000000000LL     /* 39 */
-#define GRP_PRN2_ZERO   00002000000000000LL     /* 38 */
-#define GRP_SLAVE       00001000000000000LL     /* 37 */
-#define GRP_CHAN3_DONE  00000400000000000LL     /* 36 */
-#define GRP_CHAN4_DONE  00000200000000000LL     /* 35 */
-#define GRP_CHAN5_DONE  00000100000000000LL     /* 34 */
-#define GRP_CHAN6_DONE  00000040000000000LL     /* 33 */
-#define GRP_PANEL_REQ   00000020000000000LL     /* 32 */
-#define GRP_TTY_START   00000010000000000LL     /* 31 */
-#define GRP_IMITATION   00000004000000000LL     /* 30 */
-#define GRP_CHAN3_FREE  00000002000000000LL     /* 29 */
-#define GRP_CHAN4_FREE  00000001000000000LL     /* 28 */
-#define GRP_CHAN5_FREE  00000000400000000LL     /* 27 */
-#define GRP_CHAN6_FREE  00000000200000000LL     /* 26 */
-#define GRP_CHAN7_FREE  00000000100000000LL     /* 25 */
-#define GRP_SERIAL      00000000001000000LL     /* 19, nonstandard */
-#define GRP_WATCHDOG    00000000000002000LL     /* 11 */
-#define GRP_SLOW_CLK    00000000000001000LL     /* 10, nonstandard */
-/* Internal: */
-#define GRP_DIVZERO     00000000034000000LL     /* 23-21 */
-#define GRP_OVERFLOW    00000000014000000LL     /* 22-21 */
-#define GRP_CHECK       00000000004000000LL     /* 21 */
-#define GRP_OPRND_PROT  00000000002000000LL     /* 20 */
-#define GRP_WATCHPT_W   00000000000200000LL     /* 17 */
-#define GRP_WATCHPT_R   00000000000100000LL     /* 16 */
-#define GRP_INSN_CHECK  00000000000040000LL     /* 15 */
-#define GRP_INSN_PROT   00000000000020000LL     /* 14 */
-#define GRP_ILL_INSN    00000000000010000LL     /* 13 */
-#define GRP_BREAKPOINT  00000000000004000LL     /* 12 */
-#define GRP_PAGE_MASK   00000000000000760LL     /* 9-5 */
-#define GRP_RAM_CHECK   00000000000000010LL     /* 4 */
-#define GRP_BLOCK_MASK  00000000000000007LL     /* 3-1 */
+#define GRP_PANEL_REQ   00000020000000000LL /* 32 */
+#define GRP_WATCHDOG    00000000000002000LL /* 11 */
+#define GRP_TIMER       00000000000001000LL /* 10 */
+/* Внутренние: */
+#define GRP_DIVZERO     00000000034000000LL /* 23-21 */
+#define GRP_OVERFLOW    00000000014000000LL /* 22-21 */
+#define GRP_CHECK       00000000004000000LL /* 21 */
+#define GRP_OPRND_PROT  00000000002000000LL /* 20 */
+#define GRP_WATCHPT_W   00000000000200000LL /* 17 */
+#define GRP_WATCHPT_R   00000000000100000LL /* 16 */
+#define GRP_INSN_CHECK  00000000000040000LL /* 15 */
+#define GRP_INSN_PROT   00000000000020000LL /* 14 */
+#define GRP_ILL_INSN    00000000000010000LL /* 13 */
+#define GRP_BREAKPOINT  00000000000004000LL /* 12 */
+#define GRP_PAGE_MASK   00000000000000760LL /* 9-5 */
+#define GRP_RAM_CHECK   00000000000000010LL /* 4 */
+#define GRP_BLOCK_MASK  00000000000000007LL /* 3-1 */
 
-#define GRP_SET_BLOCK(x,m)      (((x) & ~GRP_BLOCK_MASK) | ((m) & GRP_BLOCK_MASK))
-#define GRP_SET_PAGE(x,m)       (((x) & ~GRP_PAGE_MASK) | (((m)<<4) & GRP_PAGE_MASK))
+#define GRP_SET_BLOCK(x,m)  (((x) & ~GRP_BLOCK_MASK) | ((m) & GRP_BLOCK_MASK))
+#define GRP_SET_PAGE(x,m)   (((x) & ~GRP_PAGE_MASK) | (((m)<<4) & GRP_PAGE_MASK))
 
 /*
- * Bits of the external interrupt register РВП (RVP)
+ * Разряды регистра внешних прерываний РВП
  */
-#define RVP_UVVK1_END     010000000             /* 22 */
-#define RVP_UVVK2_END     004000000             /* 21 */
-#define RVP_PCARD1_CHECK  002000000             /* 20 */
-#define RVP_PCARD2_CHECK  001000000             /* 19 */
-#define RVP_PCARD1_PUNCH  000400000             /* 18 */
-#define RVP_PCARD2_PUNCH  000200000             /* 17 */
-#define RVP_PTAPE1_PUNCH  000100000             /* 16 */
-#define RVP_PTAPE2_PUNCH  000040000             /* 15 */
-                                                /* 14-13 unused */
-#define RVP_CONS1_INPUT   000004000             /* 12 */
-#define RVP_CONS2_INPUT   000002000             /* 11 */
-#define RVP_CONS1_DONE    000001000             /* 10 */
-#define RVP_CONS2_DONE    000000400             /* 9 */
+#define RVP_PROGRAM     0400LL
+#define RVP_REQUEST     0200LL
+#define RVP_RESPONSE    0100LL
+#define RVP_PVV_FAIL    0040LL
+#define RVP_RAM_FAIL    0020LL
+#define RVP_TIMER       0010LL
+#define RVP_INTR_PVV    0004LL
+#define RVP_MULTI       0002LL
+#define RVP_PANEL_REQ   0001LL
 
 #endif

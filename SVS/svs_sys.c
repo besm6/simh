@@ -680,16 +680,16 @@ static t_stat svs_load(CORE *cpu, FILE *input)
             break;
         case '=':               /* word */
             if (addr < 010)
-                cpu->pult[addr] = SET_PARITY(word, PARITY_NUMBER);
+                cpu->pult[addr] = SET_TAG(word, TAG_NUMBER);
             else
-                memory[addr] = SET_PARITY(word, PARITY_NUMBER);
+                memory[addr] = SET_TAG(word, TAG_NUMBER);
             ++addr;
             break;
         case '*':               /* instruction */
             if (addr < 010)
-                cpu->pult[addr] = SET_PARITY(word, PARITY_INSN);
+                cpu->pult[addr] = SET_TAG(word, TAG_INSN);
             else
-                memory[addr] = SET_PARITY(word, PARITY_INSN);
+                memory[addr] = SET_TAG(word, TAG_INSN);
             ++addr;
             break;
         case '@':               /* start address */

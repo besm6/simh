@@ -36,7 +36,7 @@ t_value memory[MEMSIZE];                /* physical memory */
 
 CORE cpu_core[10];                      /* state of all processors */
 
-int32 tmr_poll = CLK_DELAY;             /* pgm timer poll */
+int32 tmr_poll = INSN_PER_TICK;         /* pgm timer poll */
 
 TRACEMODE svs_trace;                    /* trace mode */
 
@@ -332,9 +332,10 @@ t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
         /* Deposited values for the switch register address range
          * always go to switch registers.
          */
-        cpu->pult[addr] = SET_PARITY(val, PARITY_INSN);
-    } else
-        memory[addr] = SET_PARITY(val, PARITY_INSN);
+        cpu->pult[addr] = SET_TAG(val, TAG_INSN);
+    } else {
+        memory[addr] = SET_TAG(val, TAG_INSN);
+    }
     return SCPE_OK;
 }
 
@@ -606,17 +607,17 @@ static void cmd_002(CORE *cpu)
         break;
 
     case 044:
-        /* Запись в регистр тегов */
+        /* Запись в регистр тега */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Установка тега\n", cpu->index);
-        /* игнорируем */
+        cpu->tag = cpu->ACC;
         break;
 
     case 0244:
-        /* Чтение регистра тегов */
+        /* Чтение регистра тега */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Чтение регистра тега\n", cpu->index);
-        cpu->ACC = 0; //TODO
+        cpu->ACC = cpu->tag;
         break;
 
     case 0245:
@@ -1745,13 +1746,13 @@ ret:        return r;
             ! (cpu->RUU & RUU_RIGHT_INSTR)) {
             return STOP_IBKPT;                  /* stop simulation */
         }
-
+#if 0
         if (cpu->RVP & cpu->MRVP) {
             /* There are interrupts pending in the peripheral
              * interrupt register */
             cpu->GRP |= GRP_SLAVE;
         }
-
+#endif
         if (! iintr && ! (cpu->RUU & RUU_RIGHT_INSTR) &&
             ! (cpu->M[PSW] & PSW_INTR_DISABLE) &&
             (cpu->GRP & cpu->MGRP)) {
@@ -1786,32 +1787,22 @@ t_stat fast_clk(UNIT *this)
     CORE *cpu;
     for (cpu = &cpu_core[0]; cpu < &cpu_core[NUM_CORES]; cpu++) {
         cpu->GRP |= GRP_TIMER;
-
-        if ((counter & 3) == 0) {
-            /*
-             * The OS used the (undocumented, later addition)
-             * slow clock interrupt to initiate servicing
-             * terminal I/O. Its frequency was reportedly about 50-60 Hz;
-             * 16 ms is a good enough approximation.
-             */
-            cpu->GRP |= GRP_SLOW_CLK;
-        }
     }
 
     /* Baudot TTYs are synchronised to the main timer rather than the
      * serial line clock. Their baud rate is 50.
      */
-    if (tty_counter == CLK_TPS/50) {
+    if (tty_counter == TICKS_PER_SEC/50) {
         tt_print();
         tty_counter = 0;
     }
 
-    tmr_poll = sim_rtcn_calb(CLK_TPS, 0);               /* calibrate clock */
-    return sim_activate_after(this, 1000000/CLK_TPS);   /* reactivate unit */
+    tmr_poll = sim_rtcn_calb(TICKS_PER_SEC, 0);               /* calibrate clock */
+    return sim_activate_after(this, 1000000/TICKS_PER_SEC);   /* reactivate unit */
 }
 
 UNIT clocks[] = {
-    { UDATA(fast_clk, UNIT_IDLE, 0), CLK_DELAY },   /* Bit 40 of the GRP, 250 Hz */
+    { UDATA(fast_clk, UNIT_IDLE, 0), INSN_PER_TICK },   /* Bit 40 of the GRP, 250 Hz */
 };
 
 t_stat clk_reset(DEVICE *dev)
