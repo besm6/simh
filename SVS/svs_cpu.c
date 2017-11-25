@@ -797,10 +797,11 @@ static void cmd_002(CORE *cpu)
         break;
 
     case 0140:
-        /* Запись в СКП (статус контроллера прерываний?). */
+        /*  (СКП). */
         if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Запись в СКП\n", cpu->index);
-        /* игнорируем */
+            fprintf(sim_log, "cpu%d --- Сброс контрольных признаков\n",
+                cpu->index);
+        //TODO
         break;
 
     default:
