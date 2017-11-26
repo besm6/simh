@@ -48,7 +48,7 @@ extern const char *scp_errors[];
  */
 #define GRP_WIRED_BITS (0)
 
-#define PRP_WIRED_BITS (0)
+#define RVP_WIRED_BITS (0)
 
 t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
 t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw);

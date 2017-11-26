@@ -487,7 +487,7 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *valp,
 
         if (uptr && (sw & SIM_SW_STOP)) {
             /* must be CPU */
-            DEVICE *dev = find_dev_from_unit(u);
+            DEVICE *dev = find_dev_from_unit(uptr);
             if (! dev)
                 return SCPE_ARG;
 
