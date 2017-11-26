@@ -417,7 +417,10 @@ t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
     if (! cpu)
         return SCPE_IERR;
 
-    cpu->GRP |= GRP_PANEL_REQ;
+    if (svs_trace) {
+        fprintf(sim_log, "cpu%d --- Request from control panel\n", cpu->index);
+    }
+    cpu->RVP |= RVP_PANEL_REQ;
     return SCPE_OK;
 }
 
@@ -1756,10 +1759,24 @@ ret:        return r;
         }
 #endif
         if (! iintr && ! (cpu->RUU & RUU_RIGHT_INSTR) &&
-            ! (cpu->M[PSW] & PSW_INTR_DISABLE) &&
-            (cpu->GRP & cpu->MGRP)) {
-            /* external interrupt */
-            op_int_2(cpu);
+            ! (cpu->M[PSW] & PSW_INTR_DISABLE))
+        {
+            if (cpu->GRP & cpu->MGRP) {
+                /* internal interrupt */
+                if (svs_trace >= TRACE_INSTRUCTIONS) {
+                    fprintf(sim_log, "cpu%d --- Внутреннее прерывание\n",
+                        cpu->index);
+                }
+                op_int_2(cpu);
+            }
+            if (cpu->RVP & cpu->MRVP) {
+                /* external interrupt */
+                if (svs_trace >= TRACE_INSTRUCTIONS) {
+                    fprintf(sim_log, "cpu%d --- Внешнее прерывание\n",
+                        cpu->index);
+                }
+                op_int_2(cpu);
+            }
         }
         cpu_one_instr(cpu);                     /* one instr */
         iintr = 0;
@@ -1788,7 +1805,7 @@ t_stat fast_clk(UNIT *this)
 
     CORE *cpu;
     for (cpu = &cpu_core[0]; cpu < &cpu_core[NUM_CORES]; cpu++) {
-        cpu->GRP |= GRP_TIMER;
+        cpu->RVP |= RVP_TIMER;
     }
 
     /* Baudot TTYs are synchronised to the main timer rather than the
