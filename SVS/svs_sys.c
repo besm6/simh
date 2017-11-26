@@ -465,19 +465,6 @@ void svs_fprint_insn(FILE *of, uint32 insn)
 }
 
 /*
- * Find a processor at specified PC address.
- */
-static CORE *cpu_at_address(t_addr addr)
-{
-    CORE *cpu;
-
-    for (cpu = &cpu_core[0]; cpu < &cpu_core[NUM_CORES]; cpu++) {
-        if (cpu->PC == addr)
-            return cpu;
-    }
-}
-
-/*
  * Symbolic decode
  *
  * Inputs:
@@ -492,14 +479,24 @@ static CORE *cpu_at_address(t_addr addr)
 t_stat fprint_sym(FILE *of, t_addr addr, t_value *valp,
                    UNIT *uptr, int32 sw)
 {
-    t_value value;
+    t_value value = valp[0];
 
-    value = valp[0];
+    if (sw & SWMASK('M')) {
+        /* symbolic decode */
+        CORE *cpu = 0;
 
-    if (sw & SWMASK('M')) {                         /* symbolic decode? */
-        CORE *cpu = (sw & SIM_SW_STOP) ? cpu_at_address(addr) : 0;
+        if (uptr && (sw & SIM_SW_STOP)) {
+            /* must be CPU */
+            DEVICE *dev = find_dev_from_unit(u);
+            if (! dev)
+                return SCPE_ARG;
 
-        if ((sw & SIM_SW_STOP) && (cpu != 0) && !(cpu->RUU & RUU_RIGHT_INSTR))
+            cpu = (CORE*) dev->ctxt;
+            if (! cpu)
+                return SCPE_ARG;
+        }
+
+        if ((cpu != 0) && !(cpu->RUU & RUU_RIGHT_INSTR))
             fprintf(of, "-> ");
 
         svs_fprint_cmd(of, (uint32)(value >> 24));
@@ -509,7 +506,7 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *valp,
         else
             fprintf(of, ",\n\t");
 
-        if ((sw & SIM_SW_STOP) && (cpu != 0) && (cpu->RUU & RUU_RIGHT_INSTR))
+        if ((cpu != 0) && (cpu->RUU & RUU_RIGHT_INSTR))
             fprintf(of, "-> ");
 
         svs_fprint_cmd(of, value & BITS(24));
