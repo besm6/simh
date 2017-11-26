@@ -374,9 +374,7 @@ t_value svs_unpack(t_value val, t_value mask);
  * Разряды главного регистра прерываний (ГРП)
  * Внешние:
  */
-#define GRP_PANEL_REQ   00000020000000000LL /* 32 */
 #define GRP_WATCHDOG    00000000000002000LL /* 11 */
-#define GRP_TIMER       00000000000001000LL /* 10 */
 /* Внутренние: */
 #define GRP_DIVZERO     00000000034000000LL /* 23-21 */
 #define GRP_OVERFLOW    00000000014000000LL /* 22-21 */

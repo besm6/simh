@@ -82,7 +82,7 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
 
     /* Добавляем тег. */
     val = SET_TAG(val, (cpu->RUU & (RUU_CHECK_RIGHT | RUU_CHECK_LEFT)) ?
-        TAG_INSN : TAG_NUMBER);
+        TAG_NUMBER : TAG_INSN);
 
     /* Пишем в память. */
     memory[paddr] = val;
