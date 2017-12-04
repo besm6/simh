@@ -44,6 +44,17 @@ void svs_trace_opcode(CORE *cpu, int paddr)
 }
 
 /*
+ * Print 32-bit value as octal.
+ */
+static void fprint_32bits(FILE *of, t_value value)
+{
+    fprintf(of, "%03o %04o %04o",
+        (int) (value >> 24) & 0377,
+        (int) (value >> 12) & 07777,
+        (int) value & 07777);
+}
+
+/*
  * Печать регистров процессора, изменившихся с прошлого вызова.
  */
 void svs_trace_registers(CORE *cpu)
@@ -72,6 +83,52 @@ void svs_trace_registers(CORE *cpu)
     if ((cpu->RUU & ~RUU_RIGHT_INSTR) != (prev->RUU & ~RUU_RIGHT_INSTR))
         fprintf(sim_log, "cpu%d       Write RUU = %03o\n",
             cpu->index, cpu->RUU);
+    for (i = 0; i < 8; i++) {
+        if (cpu->RP[i] != prev->RP[i]) {
+            fprintf(sim_log, "cpu%d       Write RP%o = ",
+                cpu->index, i);
+            fprint_sym(sim_log, 0, &cpu->RP[i], 0, 0);
+            fprintf(sim_log, "\n");
+        }
+    }
+    if (cpu->RZ != prev->RZ) {
+        fprintf(sim_log, "cpu%d       Write RZ = ", cpu->index);
+        fprint_32bits(sim_log, cpu->RZ);
+        fprintf(sim_log, "\n");
+    }
+    if (cpu->bad_addr != prev->bad_addr) {
+        fprintf(sim_log, "cpu%d       Write EADDR = %03o\n",
+            cpu->index, cpu->bad_addr);
+    }
+    if (cpu->tag != prev->tag) {
+        fprintf(sim_log, "cpu%d       Write TAG = %03o\n",
+            cpu->index, cpu->tag);
+    }
+    if (cpu->PP != prev->PP) {
+        fprintf(sim_log, "cpu%d       Write PP = ", cpu->index);
+        fprint_sym(sim_log, 0, &cpu->PP, 0, 0);
+        fprintf(sim_log, "\n");
+    }
+    if (cpu->OPP != prev->OPP) {
+        fprintf(sim_log, "cpu%d       Write OPP = ", cpu->index);
+        fprint_sym(sim_log, 0, &cpu->OPP, 0, 0);
+        fprintf(sim_log, "\n");
+    }
+    if (cpu->POP != prev->POP) {
+        fprintf(sim_log, "cpu%d       Write POP = ", cpu->index);
+        fprint_sym(sim_log, 0, &cpu->POP, 0, 0);
+        fprintf(sim_log, "\n");
+    }
+    if (cpu->OPOP != prev->OPOP) {
+        fprintf(sim_log, "cpu%d       Write OPOP = ", cpu->index);
+        fprint_sym(sim_log, 0, &cpu->OPOP, 0, 0);
+        fprintf(sim_log, "\n");
+    }
+    if (cpu->RKP != prev->RKP) {
+        fprintf(sim_log, "cpu%d       Write RKP = ", cpu->index);
+        fprint_sym(sim_log, 0, &cpu->RKP, 0, 0);
+        fprintf(sim_log, "\n");
+    }
     if (cpu->GRP != prev->GRP) {
         fprintf(sim_log, "cpu%d       Write GRP = ", cpu->index);
         fprint_sym(sim_log, 0, &cpu->GRP, 0, 0);
@@ -83,29 +140,15 @@ void svs_trace_registers(CORE *cpu)
         fprintf(sim_log, "\n");
     }
     if (cpu->RVP != prev->RVP) {
-        fprintf(sim_log, "cpu%d       Write RVP = 0x%08x\n",
-            cpu->index, cpu->RVP);
+        fprintf(sim_log, "cpu%d       Write RVP = ", cpu->index);
+        fprint_32bits(sim_log, cpu->RVP);
         fprintf(sim_log, "\n");
     }
     if (cpu->MRVP != prev->MRVP) {
-        fprintf(sim_log, "cpu%d       Write MRVP = 0x%08x\n",
-            cpu->index, cpu->MRVP);
+        fprintf(sim_log, "cpu%d       Write MRVP = ", cpu->index);
+        fprint_32bits(sim_log, cpu->MRVP);
         fprintf(sim_log, "\n");
     }
-    for (i = 0; i < 8; i++) {
-        if (cpu->RP[i] != prev->RP[i]) {
-            fprintf(sim_log, "cpu%d       Write RP%o = ",
-                cpu->index, i);
-            fprint_sym(sim_log, 0, &cpu->RP[i], 0, 0);
-            fprintf(sim_log, "\n");
-        }
-    }
-    if (cpu->RZ != prev->RZ)
-        fprintf(sim_log, "cpu%d       Write RZ = 0x%08x\n",
-            cpu->index, cpu->RZ);
-    if (cpu->bad_addr != prev->bad_addr)
-        fprintf(sim_log, "cpu%d       Write EADDR = %03o\n",
-            cpu->index, cpu->bad_addr);
 
     *prev = *cpu;
 }

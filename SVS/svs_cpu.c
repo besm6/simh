@@ -367,13 +367,18 @@ t_stat cpu_reset(DEVICE *dev)
     cpu->M[SPSW] = SPSW_MMAP_DISABLE | SPSW_PROT_DISABLE | SPSW_EXTRACODE |
         SPSW_INTR_DISABLE;
 
-    cpu->GRP = 0;
-    cpu->MGRP = 0;
-    cpu->MRVP = 0;
-
     cpu->RZ = 0;
     for (i = 0; i < 8; ++i)
         cpu->RP[i] = 0;
+
+    cpu->GRP = 0;
+    cpu->MGRP = 0;
+    cpu->MRVP = 0;
+    cpu->PP = 0;
+    cpu->OPP = 0;
+    cpu->POP = 0;
+    cpu->OPOP = 0;
+    cpu->RKP = 0;
 
     // Disabled due to a conflict with loading
     // cpu->PC = 1;             /* "reset cpu; go" should start from 1  */
@@ -400,6 +405,7 @@ t_stat cpu_reset(DEVICE *dev)
     if (svs_trace) {
         fprintf(sim_log, "cpu%d --- Reset\n", cpu->index);
     }
+    mpd_reset(cpu);
 
     return SCPE_OK;
 }
@@ -537,6 +543,23 @@ void svs_okno(CORE *cpu, const char *message)
 }
 
 /*
+ * Обновляем регистр внешних прерываний РВП,
+ * обычно при изменении ПОП или РКП.
+ */
+static void cpu_update_interrupts(CORE *cpu)
+{
+    t_value pending_interrupts = cpu->POP & cpu->RKP;
+
+    if (pending_interrupts != 0) {
+        /* Есть внешние прерывания. */
+        cpu->RVP |= RVP_REQUEST;
+    } else {
+        /* Внешние прерывания отсутствуют. */
+        cpu->RVP &= ~RVP_REQUEST;
+    }
+}
+
+/*
  * Команда "рег"
  */
 static void cmd_002(CORE *cpu)
@@ -649,7 +672,7 @@ static void cmd_002(CORE *cpu)
         /* Clearing the external interrupt register: */
         /* it is impossible to clear wired (stateless) bits this way */
         if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Запись в РВП\n", cpu->index);
+            fprintf(sim_log, "cpu%d --- Гашение РВП\n", cpu->index);
         cpu->RVP &= cpu->ACC | RVP_WIRED_BITS;
         break;
 
@@ -664,42 +687,51 @@ static void cmd_002(CORE *cpu)
         /* Запись в регистр прерываний процессорам */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Запись в ПП\n", cpu->index);
-        //TODO
+        cpu->PP = cpu->ACC & (CONF_PVV_MASK | CONF_CPU_MASK | CONF_DATA_MASK);
+        if (cpu->ACC & CONF_MT) {
+            /* Передача младшей половины байта. */
+            mpd_send_low(cpu, CONF_GET_DATA(cpu->PP));
+        }
         break;
 
     case 0250:
         /* Чтение регистра прерываний процессорам */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Чтение ПП\n", cpu->index);
-        cpu->ACC = 0; //TODO
+        cpu->ACC = cpu->PP;
         break;
 
     case 051:
         /* Запись в регистр ответов процессорам */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Запись в ОПП\n", cpu->index);
-        //TODO
+        cpu->OPP = cpu->ACC & (CONF_PVV_MASK | CONF_CPU_MASK | CONF_DATA_MASK);
+        if (cpu->ACC & CONF_MT) {
+            /* Передача старшей половины байта. */
+            mpd_send_high(cpu, CONF_GET_DATA(cpu->OPP));
+        }
         break;
 
     case 0251:
         /* Чтение регистра ответов процессорам */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Чтение ОПП\n", cpu->index);
-        cpu->ACC = 0; //TODO
+        cpu->ACC = cpu->OPP;
         break;
 
     case 052:
-        /* Запись в регистр прерываний от процессоров */
+        /* Гашение регистра прерываний от процессоров */
         if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Запись в ПОП\n", cpu->index);
-        //TODO
+            fprintf(sim_log, "cpu%d --- Гашение ПОП\n", cpu->index);
+        cpu->POP &= cpu->ACC;
+        cpu_update_interrupts(cpu);
         break;
 
     case 0252:
         /* Чтение регистра прерываний от процессоров */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Чтение ПОП\n", cpu->index);
-        cpu->ACC = 0; //TODO
+        cpu->ACC = cpu->POP;
         break;
 
     case 053:
@@ -720,14 +752,15 @@ static void cmd_002(CORE *cpu)
         /* Запись в регистр конфигурации процессора */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Установка конфигурации процессора\n", cpu->index);
-        /* игнорируем */
+        cpu->RKP = cpu->ACC & (CONF_PVV_MASK | CONF_CPU_MASK | CONF_MR | CONF_MT);
+        cpu_update_interrupts(cpu);
         break;
 
     case 0254:
         /* Чтение регистра конфигурации процессора */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Чтение регистра конфигурации процессора\n", cpu->index);
-        cpu->ACC = 0;
+        cpu->ACC = cpu->RKP;
         break;
 
     case 055:
@@ -801,7 +834,7 @@ static void cmd_002(CORE *cpu)
         break;
 
     case 0140:
-        /*  (СКП). */
+        /* Сброс контрольных признаков (СКП). */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Сброс контрольных признаков\n",
                 cpu->index);
@@ -1751,13 +1784,7 @@ ret:        return r;
             ! (cpu->RUU & RUU_RIGHT_INSTR)) {
             return STOP_IBKPT;                  /* stop simulation */
         }
-#if 0
-        if (cpu->RVP & cpu->MRVP) {
-            /* There are interrupts pending in the peripheral
-             * interrupt register */
-            cpu->GRP |= GRP_SLAVE;
-        }
-#endif
+
         if (! iintr && ! (cpu->RUU & RUU_RIGHT_INSTR) &&
             ! (cpu->M[PSW] & PSW_INTR_DISABLE))
         {

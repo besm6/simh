@@ -43,26 +43,26 @@
  * Simulator stop codes
  */
 enum {
-    STOP_STOP = 1,                      /* STOP */
-    STOP_IBKPT,                         /* SIMH breakpoint */
-    STOP_RWATCH,                        /* SIMH read watchpoint */
-    STOP_WWATCH,                        /* SIMH write watchpoint */
-    STOP_RUNOUT,                        /* run out end of memory limits */
-    STOP_BADCMD,                        /* invalid instruction */
-    STOP_INSN_CHECK,                    /* not an instruction */
-    STOP_INSN_PROT,                     /* fetch from blocked page */
-    STOP_OPERAND_PROT,                  /* load from blocked page */
-    STOP_RAM_CHECK,                     /* RAM parity error */
-    STOP_CACHE_CHECK,                   /* data cache parity error */
-    STOP_OVFL,                          /* arith. overflow */
-    STOP_DIVZERO,                       /* division by 0 or denorm */
-    STOP_DOUBLE_INTR,                   /* double internal interrupt */
-    STOP_DRUMINVDATA,                   /* reading unformatted drum */
-    STOP_DISKINVDATA,                   /* reading unformatted disk */
-    STOP_INSN_ADDR_MATCH,               /* fetch address matched breakpt reg */
-    STOP_LOAD_ADDR_MATCH,               /* load address matched watchpt reg */
-    STOP_STORE_ADDR_MATCH,              /* store address matched watchpt reg */
-    STOP_UNIMPLEMENTED,                 /* unimplemented 033 or 002 insn feature */
+    STOP_STOP = 1,                      /* Останов */
+    STOP_IBKPT,                         /* Точка останова */
+    STOP_RWATCH,                        /* Точка останова по считыванию */
+    STOP_WWATCH,                        /* Точка останова по записи */
+    STOP_RUNOUT,                        /* Выход за пределы памяти */
+    STOP_BADCMD,                        /* Запрещенная команда */
+    STOP_INSN_CHECK,                    /* Контроль команды */
+    STOP_INSN_PROT,                     /* Команда в чужом листе */
+    STOP_OPERAND_PROT,                  /* Число в чужом листе */
+    STOP_RAM_CHECK,                     /* Контроль числа МОЗУ */
+    STOP_CACHE_CHECK,                   /* Контроль числа БРЗ */
+    STOP_OVFL,                          /* Переполнение АУ */
+    STOP_DIVZERO,                       /* Деление на нуль */
+    STOP_DOUBLE_INTR,                   /* Двойное внутреннее прерывание */
+    STOP_DRUMINVDATA,                   /* Чтение неформатированного барабана */
+    STOP_DISKINVDATA,                   /* Чтение неформатированного диска */
+    STOP_INSN_ADDR_MATCH,               /* Останов по КРА */
+    STOP_LOAD_ADDR_MATCH,               /* Останов по считыванию */
+    STOP_STORE_ADDR_MATCH,              /* Останов по записи */
+    STOP_UNIMPLEMENTED,                 /* Не реализовано */
 };
 
 /*
@@ -120,11 +120,13 @@ extern DEVICE tty_dev;
  * Состояние одного процессора.
  */
 typedef struct {
-    int index;              /* номер процессора 0...7 */
+    int index;              /* номер процессора 0...3 */
 
-    uint32 PC, RK, Aex, M[NREGS], RAU, RUU;
-    t_value ACC, RMR, GRP, MGRP;
-    uint32 RVP, MRVP;
+    uint32 PC;              /* счётчик команд СчАС */
+    uint32 RK, Aex;         /* регистр команд, исполнительный адрес */
+    uint32 RAU, RUU;        /* режим АУ, режим УУ */
+    t_value ACC, RMR;       /* аккумулятор, РМР */
+    uint32 M[NREGS];        /* регистры-модификаторы */
 
     /*
      * 64-битные регистры RP0-RP7 - для отображения регистров приписки,
@@ -136,21 +138,27 @@ typedef struct {
     uint32 TLB[32];         /* они же постранично */
 
     uint32 RZ;              /* РЗ, регистр защиты */
+
     uint8 tag;              /* регистр тега */
+    t_value GRP, MGRP;      /* ГРП, маска */
+    uint32 RVP, MRVP;       /* РВП, маска */
 
-    t_value pult[8];        /* тубмлерные регистры */
+    t_value PP, OPP;        /* ПП, ОПП */
+    t_value POP, OPOP;      /* ПОП, ОПОП */
+    t_value RKP;            /* РКП */
 
-    int corr_stack;         /* коррекция стека при прерывании */
+    t_value pult[8];        /* тумблерные регистры */
+
     jmp_buf exception;      /* прерывание */
-
     uint32 bad_addr;        /* адрес, вызвавший прерывание */
+    int corr_stack;         /* коррекция стека при прерывании */
 } CORE;
 
 #ifndef NUM_CORES
 #   define NUM_CORES 4              /* default 4 processors */
 #else
-#   if NUM_CORES > 10
-#      error "SVS can have up to 10 processors"
+#   if NUM_CORES > 4
+#      error "SVS can have up to 4 processors"
 #   endif
 #endif
 
@@ -333,7 +341,7 @@ extern void gost_putc(unsigned char, FILE *);
 extern int odd_parity(unsigned char);
 
 /*
- * Терминалы (телетайпы, видеотоны, "Консулы").
+ * Терминалы.
  */
 void tty_send(uint32 mask);
 int tty_query(void);
@@ -341,6 +349,13 @@ void vt_print(void);
 void tt_print(void);
 void vt_receive(CORE *cpu);
 int vt_is_idle(void);
+
+/*
+ * МПД.
+ */
+void mpd_reset(CORE *cpu);
+void mpd_send_low(CORE *cpu, int data);
+void mpd_send_high(CORE *cpu, int data);
 
 /*
  * Отладочная выдача.
@@ -405,5 +420,16 @@ t_value svs_unpack(t_value val, t_value mask);
 #define RVP_INTR_PVV    0004LL
 #define RVP_MULTI       0002LL
 #define RVP_PANEL_REQ   0001LL
+
+/*
+ * Разряды регистров РКП, ПП, ОПП, ПОП, ОПОП.
+ */
+#define CONF_PVV_MASK   (0xfLL << 42)       /* биты ПВВ */
+#define CONF_CPU_MASK   (0xfLL << 38)       /* биты процесоров СВС */
+#define CONF_DATA_MASK  (0xfLL << 34)       /* данные МПД */
+#define CONF_MR         (1LL << 33)         /* приём МПД */
+#define CONF_MT         (1LL << 32)         /* передача МПД */
+
+#define CONF_GET_DATA(x)    (((x) >> 34) & 0xf)
 
 #endif
