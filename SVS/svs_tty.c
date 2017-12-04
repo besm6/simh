@@ -91,9 +91,6 @@ uint32 tt_mask = 0, vt_mask = 0;
 
 uint32 TTY_OUT = 0, TTY_IN = 0, vt_idle = 0;
 
-uint32 CONS_CAN_PRINT[2] = { 01000, 00400 };
-uint32 CONS_HAS_INPUT[2] = { 04000, 02000 };
-
 /* Command line buffers for TELNET mode. */
 char vt_cbuf[CBUFSIZE][LINES_MAX+1];
 char *vt_cptr[LINES_MAX+1];
@@ -186,10 +183,7 @@ t_stat tty_reset(DEVICE *dptr)
     reg = rus;
     vt_idle = 1;
     tty_line[0].conn = 1;                   /* faked, always busy */
-    /* In the READY2 register the ready flag for typewriters is inverted (0 means ready),
-     * and the device is always ready. */
-    /* Forcing a ready interrupt. */
-    cpu->RVP |= CONS_CAN_PRINT[0] | CONS_CAN_PRINT[1];
+
     // Schedule the very first TTY interrupt to match the next clock interrupt.
     return sim_clock_coschedule(tty_unit, 0);
 }
