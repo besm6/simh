@@ -350,6 +350,15 @@ t_stat cpu_reset(DEVICE *dev)
     cpu->OPOP = 0;
     cpu->RKP = 0;
 
+    cpu->GRP = 0;
+    cpu->MGRP = 0;
+    cpu->MRVP = 0;
+    cpu->PP = 0;
+    cpu->OPP = 0;
+    cpu->POP = 0;
+    cpu->OPOP = 0;
+    cpu->RKP = 0;
+
     // Disabled due to a conflict with loading
     // cpu->PC = 1;             /* "reset cpu; go" should start from 1  */
 
@@ -510,6 +519,23 @@ void svs_okno(CORE *cpu, const char *message)
         (int) (cpu->RMR >> 36) & BITS(12), (int) (cpu->RMR >> 24) & BITS(12),
         (int) (cpu->RMR >> 12) & BITS(12), (int) cpu->RMR & BITS(12),
         cpu->RAU, cpu->RUU);
+}
+
+/*
+ * Обновляем регистр внешних прерываний РВП,
+ * обычно при изменении ПОП или РКП.
+ */
+static void cpu_update_interrupts(CORE *cpu)
+{
+    t_value pending_interrupts = cpu->POP & cpu->RKP;
+
+    if (pending_interrupts != 0) {
+        /* Есть внешние прерывания. */
+        cpu->RVP |= RVP_REQUEST;
+    } else {
+        /* Внешние прерывания отсутствуют. */
+        cpu->RVP &= ~RVP_REQUEST;
+    }
 }
 
 /*
