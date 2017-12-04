@@ -461,4 +461,15 @@ void iom_request(int index);
 #define CONF_GET_DATA(x)    (((x) >> 34) & 0xf)
 #define CONF_SET_DATA(r,x)  (((r) & ~CONF_DATA_MASK) | (((x) & 0xfLL) << 34))
 
+/*
+ * Разряды регистров РКП, ПП, ОПП, ПОП, ОПОП.
+ */
+#define CONF_PVV_MASK   (0xfLL << 42)       /* биты ПВВ */
+#define CONF_CPU_MASK   (0xfLL << 38)       /* биты процесоров СВС */
+#define CONF_DATA_MASK  (0xfLL << 34)       /* данные МПД */
+#define CONF_MR         (1LL << 33)         /* приём МПД */
+#define CONF_MT         (1LL << 32)         /* передача МПД */
+
+#define CONF_GET_DATA(x)    (((x) >> 34) & 0xf)
+
 #endif
