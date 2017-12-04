@@ -1370,3 +1370,34 @@ int tty_query()
     /*svs_debug ("--- TTY: query");*/
     return TTY_IN;
 }
+
+/*
+ * Сброс МПД в исходное состояние.
+ */
+void mpd_reset(CORE *cpu)
+{
+    /* Готов к передаче. */
+    cpu->POP |= CONF_MT;
+
+    //TODO
+}
+
+/*
+ * Отправка младшего полубайта.
+ */
+void mpd_send_low(CORE *cpu, int data)
+{
+    //TODO
+    if (svs_trace >= TRACE_INSTRUCTIONS)
+        fprintf(sim_log, "cpu%d --- МПД передача младшего полубайта\n", cpu->index);
+}
+
+/*
+ * Отправка старшего полубайта.
+ */
+void mpd_send_high(CORE *cpu, int data)
+{
+    //TODO
+    if (svs_trace >= TRACE_INSTRUCTIONS)
+        fprintf(sim_log, "cpu%d --- МПД передача старшего полубайта\n", cpu->index);
+}
