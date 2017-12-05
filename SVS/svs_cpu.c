@@ -690,7 +690,7 @@ static void cmd_002(CORE *cpu)
         cpu->PP = cpu->ACC & (CONF_PVV_MASK | CONF_CPU_MASK | CONF_DATA_MASK);
         if (cpu->ACC & CONF_MT) {
             /* Передача младшей половины байта. */
-            mpd_send_low(cpu, CONF_GET_DATA(cpu->PP));
+            mpd_send_nibble(cpu, CONF_GET_DATA(cpu->PP));
         }
         break;
 
@@ -708,7 +708,7 @@ static void cmd_002(CORE *cpu)
         cpu->OPP = cpu->ACC & (CONF_PVV_MASK | CONF_CPU_MASK | CONF_DATA_MASK);
         if (cpu->ACC & CONF_MT) {
             /* Передача старшей половины байта. */
-            mpd_send_high(cpu, CONF_GET_DATA(cpu->OPP));
+            mpd_send_nibble(cpu, CONF_GET_DATA(cpu->OPP));
         }
         break;
 
@@ -723,7 +723,8 @@ static void cmd_002(CORE *cpu)
         /* Гашение регистра прерываний от процессоров */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Гашение ПОП\n", cpu->index);
-        cpu->POP &= cpu->ACC;
+        /* Оставляем биты МПД. */
+        cpu->POP &= cpu->ACC | CONF_MR | CONF_MT;
         cpu_update_interrupts(cpu);
         break;
 

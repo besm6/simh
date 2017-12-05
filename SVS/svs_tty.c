@@ -1370,28 +1370,37 @@ int tty_query()
  */
 void mpd_reset(CORE *cpu)
 {
+    cpu->mpd_nbits = 0;
+    cpu->mpd_data = 0;
+
     /* Готов к передаче. */
     cpu->POP |= CONF_MT;
-
-    //TODO
 }
 
 /*
- * Отправка младшего полубайта.
+ * Отправка полубайта.
  */
-void mpd_send_low(CORE *cpu, int data)
+void mpd_send_nibble(CORE *cpu, int data)
 {
-    //TODO
     if (svs_trace >= TRACE_INSTRUCTIONS)
-        fprintf(sim_log, "cpu%d --- МПД передача младшего полубайта\n", cpu->index);
-}
+        fprintf(sim_log, "cpu%d --- МПД передача полубайта\n", cpu->index);
 
-/*
- * Отправка старшего полубайта.
- */
-void mpd_send_high(CORE *cpu, int data)
-{
-    //TODO
-    if (svs_trace >= TRACE_INSTRUCTIONS)
-        fprintf(sim_log, "cpu%d --- МПД передача старшего полубайта\n", cpu->index);
+    cpu->mpd_data <<= 4;
+    cpu->mpd_data |= data & 0xf;
+    cpu->mpd_nbits += 4;
+
+    /* Передатчик занят. */
+    cpu->POP &= ~CONF_MT;
+
+    if (cpu->mpd_nbits >= 16) {
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "cpu%d --- МПД передача слога 0x%04x\n",
+                cpu->index, cpu->mpd_data);
+        //TODO
+        cpu->mpd_nbits = 0;
+        cpu->mpd_data = 0;
+
+        /* Делаем вид, что передача закончилась. */
+        cpu->POP |= CONF_MT;
+    }
 }
