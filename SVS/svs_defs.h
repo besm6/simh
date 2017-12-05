@@ -152,6 +152,9 @@ typedef struct {
     jmp_buf exception;      /* прерывание */
     uint32 bad_addr;        /* адрес, вызвавший прерывание */
     int corr_stack;         /* коррекция стека при прерывании */
+
+    int mpd_data;           /* данные для передачи в МПД */
+    int mpd_nbits;          /* счётчик битов */
 } CORE;
 
 #ifndef NUM_CORES
@@ -354,8 +357,7 @@ int vt_is_idle(void);
  * МПД.
  */
 void mpd_reset(CORE *cpu);
-void mpd_send_low(CORE *cpu, int data);
-void mpd_send_high(CORE *cpu, int data);
+void mpd_send_nibble(CORE *cpu, int data);
 
 /*
  * Отладочная выдача.
