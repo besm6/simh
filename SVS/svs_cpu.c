@@ -522,23 +522,6 @@ void svs_okno(CORE *cpu, const char *message)
 }
 
 /*
- * Обновляем регистр внешних прерываний РВП,
- * обычно при изменении ПОП или РКП.
- */
-static void cpu_update_interrupts(CORE *cpu)
-{
-    t_value pending_interrupts = cpu->POP & cpu->RKP;
-
-    if (pending_interrupts != 0) {
-        /* Есть внешние прерывания. */
-        cpu->RVP |= RVP_REQUEST;
-    } else {
-        /* Внешние прерывания отсутствуют. */
-        cpu->RVP &= ~RVP_REQUEST;
-    }
-}
-
-/*
  * Команда "рег"
  */
 static void cmd_002(CORE *cpu)
