@@ -115,12 +115,8 @@ REG cpu0_reg[] = {
     { ORDATA   (M33,    cpu_core[0].M[033],     15) },  /* IRET - interrupt return address */
     { ORDATA   (M34,    cpu_core[0].M[034],     16) },  /* IBP - instruction bkpt address */
     { ORDATA   (M35,    cpu_core[0].M[035],     16) },  /* DWP - watchpoint address */
-    { BINRDATA (RUU,    cpu_core[0].RUU,        9)  },  /* execution modes  */
-    { ORDATAVM (GRP,    cpu_core[0].GRP,        48) },  /* main interrupt reg */
-    { ORDATAVM (MGRP,   cpu_core[0].MGRP,       48) },  /* mask of the above  */
-    { ORDATA   (RVP,    cpu_core[0].RVP,        24) },  /* peripheral interrupt reg */
-    { ORDATA   (MRVP,   cpu_core[0].MRVP,       24) },  /* mask of the above*/
-    { ORDATAVM (RP0,    cpu_core[0].RP[0],      48) },
+    { BINRDATA (RUU,    cpu_core[0].RUU,        9)  },  /* execution modes */
+    { ORDATAVM (RP0,    cpu_core[0].RP[0],      48) },  /* page mapping */
     { ORDATAVM (RP1,    cpu_core[0].RP[1],      48) },
     { ORDATAVM (RP2,    cpu_core[0].RP[2],      48) },
     { ORDATAVM (RP3,    cpu_core[0].RP[3],      48) },
@@ -128,14 +124,16 @@ REG cpu0_reg[] = {
     { ORDATAVM (RP5,    cpu_core[0].RP[5],      48) },
     { ORDATAVM (RP6,    cpu_core[0].RP[6],      48) },
     { ORDATAVM (RP7,    cpu_core[0].RP[7],      48) },
-    { ORDATA   (RZ,     cpu_core[0].RZ,         32) },
-    { ORDATAVM (FP1,    cpu_core[0].pult[1],    50) },
-    { ORDATAVM (FP2,    cpu_core[0].pult[2],    50) },
-    { ORDATAVM (FP3,    cpu_core[0].pult[3],    50) },
-    { ORDATAVM (FP4,    cpu_core[0].pult[4],    50) },
-    { ORDATAVM (FP5,    cpu_core[0].pult[5],    50) },
-    { ORDATAVM (FP6,    cpu_core[0].pult[6],    50) },
-    { ORDATAVM (FP7,    cpu_core[0].pult[7],    50) },
+    { ORDATA   (RZ,     cpu_core[0].RZ,         32) },  /* page protection */
+    { ORDATAVM (GRP,    cpu_core[0].GRP,        48) },  /* main interrupt reg */
+    { ORDATAVM (MGRP,   cpu_core[0].MGRP,       48) },  /* mask of the above  */
+    { ORDATA   (RVP,    cpu_core[0].RVP,        24) },  /* peripheral interrupt reg */
+    { ORDATA   (MRVP,   cpu_core[0].MRVP,       24) },  /* mask of the above*/
+    { ORDATAVM (PP,     cpu_core[0].PP,         48) },  /* requests to processors */
+    { ORDATAVM (OPP,    cpu_core[0].OPP,        48) },  /* responds to processors */
+    { ORDATAVM (POP,    cpu_core[0].POP,        48) },  /* interrupts from processors */
+    { ORDATAVM (OPOP,   cpu_core[0].OPOP,       48) },  /* responds from processors */
+    { ORDATAVM (RKP,    cpu_core[0].RKP,        48) },  /* configuration of processors */
     { 0 }
 };
 
@@ -168,7 +166,7 @@ MTAB cpu_mod[] = {
     { 0 }
 };
 
-DEVICE cpu_dev[10] = {
+DEVICE cpu_dev[4] = {
     { "CPU0", &cpu_unit[0], cpu0_reg, cpu_mod,
       1, 8, 17, 1, 8, 50,
       &cpu_examine, &cpu_deposit, &cpu_reset,
@@ -185,30 +183,6 @@ DEVICE cpu_dev[10] = {
       1, 8, 17, 1, 8, 50,
       &cpu_examine, &cpu_deposit, &cpu_reset,
       NULL, NULL, NULL, (void*)&cpu_core[3], DEV_DEBUG },
-    { "CPU4", &cpu_unit[4], NULL, cpu_mod,
-      1, 8, 17, 1, 8, 50,
-      &cpu_examine, &cpu_deposit, &cpu_reset,
-      NULL, NULL, NULL, (void*)&cpu_core[4], DEV_DEBUG },
-    { "CPU5", &cpu_unit[5], NULL, cpu_mod,
-      1, 8, 17, 1, 8, 50,
-      &cpu_examine, &cpu_deposit, &cpu_reset,
-      NULL, NULL, NULL, (void*)&cpu_core[5], DEV_DEBUG },
-    { "CPU6", &cpu_unit[6], NULL, cpu_mod,
-      1, 8, 17, 1, 8, 50,
-      &cpu_examine, &cpu_deposit, &cpu_reset,
-      NULL, NULL, NULL, (void*)&cpu_core[6], DEV_DEBUG },
-    { "CPU7", &cpu_unit[7], NULL, cpu_mod,
-      1, 8, 17, 1, 8, 50,
-      &cpu_examine, &cpu_deposit, &cpu_reset,
-      NULL, NULL, NULL, (void*)&cpu_core[7], DEV_DEBUG },
-    { "CPU8", &cpu_unit[8], NULL, cpu_mod,
-      1, 8, 17, 1, 8, 50,
-      &cpu_examine, &cpu_deposit, &cpu_reset,
-      NULL, NULL, NULL, (void*)&cpu_core[8], DEV_DEBUG },
-    { "CPU9", &cpu_unit[9], NULL, cpu_mod,
-      1, 8, 17, 1, 8, 50,
-      &cpu_examine, &cpu_deposit, &cpu_reset,
-      NULL, NULL, NULL, (void*)&cpu_core[9], DEV_DEBUG },
 };
 
 /*
@@ -238,24 +212,6 @@ DEVICE *sim_devices[] = {
 #endif
 #if NUM_CORES > 3
     &cpu_dev[3],
-#endif
-#if NUM_CORES > 4
-    &cpu_dev[4],
-#endif
-#if NUM_CORES > 5
-    &cpu_dev[5],
-#endif
-#if NUM_CORES > 6
-    &cpu_dev[6],
-#endif
-#if NUM_CORES > 7
-    &cpu_dev[7],
-#endif
-#if NUM_CORES > 8
-    &cpu_dev[8],
-#endif
-#if NUM_CORES > 9
-    &cpu_dev[9],
 #endif
 
     &clock_dev,         /* таймер */
@@ -543,23 +499,6 @@ void svs_okno(CORE *cpu, const char *message)
 }
 
 /*
- * Обновляем регистр внешних прерываний РВП,
- * обычно при изменении ПОП или РКП.
- */
-static void cpu_update_interrupts(CORE *cpu)
-{
-    t_value pending_interrupts = cpu->POP & cpu->RKP;
-
-    if (pending_interrupts != 0) {
-        /* Есть внешние прерывания. */
-        cpu->RVP |= RVP_REQUEST;
-    } else {
-        /* Внешние прерывания отсутствуют. */
-        cpu->RVP &= ~RVP_REQUEST;
-    }
-}
-
-/*
  * Команда "рег"
  */
 static void cmd_002(CORE *cpu)
@@ -692,6 +631,10 @@ static void cmd_002(CORE *cpu)
             /* Передача младшей половины байта. */
             mpd_send_nibble(cpu, CONF_GET_DATA(cpu->PP));
         }
+        if (cpu->ACC & CONF_MR) {
+            /* Подтверждение считывания принятого байта. */
+            mpd_receive_update(cpu);
+        }
         break;
 
     case 0250:
@@ -723,9 +666,8 @@ static void cmd_002(CORE *cpu)
         /* Гашение регистра прерываний от процессоров */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Гашение ПОП\n", cpu->index);
-        /* Оставляем биты МПД. */
-        cpu->POP &= cpu->ACC | CONF_MR | CONF_MT;
-        cpu_update_interrupts(cpu);
+        /* Оставляем бит передачи МПД. */
+        cpu->POP &= cpu->ACC | CONF_MT;
         break;
 
     case 0252:
@@ -736,17 +678,17 @@ static void cmd_002(CORE *cpu)
         break;
 
     case 053:
-        /* Запись в регистр ответов от процессоров */
+        /* Гашение регистра ответов от процессоров */
         if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Запись в ОПОП\n", cpu->index);
-        //TODO
+            fprintf(sim_log, "cpu%d --- Гашение ОПОП\n", cpu->index);
+        cpu->OPOP &= cpu->ACC;
         break;
 
     case 0253:
         /* Чтение регистра ответов от процессоров */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Чтение ОПОП\n", cpu->index);
-        cpu->ACC = 0; //TODO
+        cpu->ACC = cpu->OPOP;
         break;
 
     case 054:
@@ -754,7 +696,6 @@ static void cmd_002(CORE *cpu)
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Установка конфигурации процессора\n", cpu->index);
         cpu->RKP = cpu->ACC & (CONF_PVV_MASK | CONF_CPU_MASK | CONF_MR | CONF_MT);
-        cpu_update_interrupts(cpu);
         break;
 
     case 0254:
@@ -1533,8 +1474,18 @@ branch_zero:
         /* Модификация адреса следующей команды. */
         cpu->M[MOD] = next_mod;
         cpu->RUU |= RUU_MOD_RK;
-    } else
+    } else {
         cpu->RUU &= ~RUU_MOD_RK;
+    }
+
+    /* Обновляем регистр внешних прерываний РВП. */
+    if (cpu->POP & cpu->RKP) {
+        /* Есть внешние прерывания. */
+        cpu->RVP |= RVP_REQUEST;
+    } else {
+        /* Внешние прерывания отсутствуют. */
+        cpu->RVP &= ~RVP_REQUEST;
+    }
 
     /* Трассировка изменённых регистров. */
     if (svs_trace == TRACE_ALL) {
