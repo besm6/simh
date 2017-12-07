@@ -1411,8 +1411,8 @@ void mpd_send_nibble(CORE *cpu, int data)
 void mpd_receive_update(CORE *cpu)
 {
     //TODO
-#if 1
-    /* Делаем вид, что приняли очередной байт. */
+#if 0
+    /* Приняли очередной байт. */
     cpu->POP |= CONF_MR;
     cpu->POP = CONF_SET_DATA(cpu->POP, 0xe);
     cpu->OPOP = CONF_SET_DATA(cpu->OPOP, 0xd);
