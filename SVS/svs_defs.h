@@ -471,5 +471,6 @@ void iom_request(int index);
 #define CONF_MT         (1LL << 32)         /* передача МПД */
 
 #define CONF_GET_DATA(x)    (((x) >> 34) & 0xf)
+#define CONF_SET_DATA(r,x)  (((r) & ~CONF_DATA_MASK) | (((x) & 0xfLL) << 34))
 
 #endif
