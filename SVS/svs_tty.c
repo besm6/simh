@@ -1414,7 +1414,7 @@ void mpd_receive_update(CORE *cpu)
 #if 1
     /* Делаем вид, что приняли очередной байт. */
     cpu->POP |= CONF_MR;
-    cpu->POP = CONF_SET_DATA(cpu->POP, 0xbc);
-    cpu->OPOP = CONF_SET_DATA(cpu->OPOP, 0xde);
+    cpu->POP = CONF_SET_DATA(cpu->POP, 0xe);
+    cpu->OPOP = CONF_SET_DATA(cpu->OPOP, 0xd);
 #endif
 }
