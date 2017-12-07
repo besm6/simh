@@ -1404,3 +1404,17 @@ void mpd_send_nibble(CORE *cpu, int data)
         cpu->POP |= CONF_MT;
     }
 }
+
+/*
+ * Подтверждение считывания принятого байта.
+ */
+void mpd_receive_update(CORE *cpu)
+{
+    //TODO
+#if 1
+    /* Делаем вид, что приняли очередной байт. */
+    cpu->POP |= CONF_MR;
+    cpu->POP = CONF_SET_DATA(cpu->POP, 0xbc);
+    cpu->OPOP = CONF_SET_DATA(cpu->OPOP, 0xde);
+#endif
+}

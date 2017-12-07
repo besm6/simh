@@ -136,7 +136,6 @@ typedef struct {
      */
     t_value RP[8];          /* РП, регистры приписки страниц */
     uint32 TLB[32];         /* они же постранично */
-
     uint32 RZ;              /* РЗ, регистр защиты */
 
     uint8 tag;              /* регистр тега */
@@ -358,6 +357,7 @@ int vt_is_idle(void);
  */
 void mpd_reset(CORE *cpu);
 void mpd_send_nibble(CORE *cpu, int data);
+void mpd_receive_update(CORE *cpu);
 
 /*
  * Отладочная выдача.
@@ -433,5 +433,6 @@ t_value svs_unpack(t_value val, t_value mask);
 #define CONF_MT         (1LL << 32)         /* передача МПД */
 
 #define CONF_GET_DATA(x)    (((x) >> 34) & 0xf)
+#define CONF_SET_DATA(r,x)  (((r) & ~CONF_DATA_MASK) | (((x) & 0xfLL) << 34))
 
 #endif
