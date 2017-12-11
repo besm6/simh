@@ -1393,6 +1393,22 @@ void mpd_send_nibble(CORE *cpu, int data)
     cpu->POP &= ~CONF_MT;
 
     if (cpu->mpd_nbits >= 16) {
+        /* Имеем полный слог, 16 бит. */
+#if 1
+        /* Выдаем символы на stdout. */
+        if (cpu->mpd_data & 0x8000) {
+            /* Служебный слог */
+            printf("<Т%d-ЭВМ%d>", (cpu->mpd_data >> 8) & 0177, cpu->mpd_data & 3);
+        } else {
+            /* Игнорируем номер линии. */
+            int sym = cpu->mpd_data & 0177;
+            if (sym < 0x60)
+                putchar(sym);
+            else
+                fputs(koi7_rus_to_unicode[sym - 0x60], stdout);
+        }
+        fflush(stdout);
+#endif
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- МПД передача слога 0x%04x\n",
                 cpu->index, cpu->mpd_data);
