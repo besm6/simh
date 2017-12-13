@@ -84,18 +84,14 @@ enum {
 
 /*
  * Работа с тегами.
- * Тег храним в старших битах 55:48 типа t_value.
  */
 #define TAG_INSN        035
 #define TAG_NUMBER      036
 #define TAG_BITSET      020
 
-#define SET_TAG(x, c)   (((x) & BITS48) | (((c) & 0xffLL) << 48))
+#define IS_INSN(t)      ((t) == TAG_INSN)
 
-#define IS_INSN(x)      (((x) >> 48) == TAG_INSN)
-
-#define IS_NUMBER(x)    (((x) >> 48) == TAG_INSN || \
-                         ((x) >> 48) == TAG_NUMBER)
+#define IS_NUMBER(t)    ((t) == TAG_INSN || (t) == TAG_NUMBER)
 
 /*
  * Вычисление правдоподобного времени выполнения команды,
@@ -111,7 +107,8 @@ enum {
 
 extern UNIT tty_unit[];
 extern UNIT clocks[];
-extern t_value memory[MEMSIZE];
+extern t_value memory[MEMSIZE];     /* основная память (64-битная) */
+extern uint8 tag[MEMSIZE];          /* тег для каждого слова основной памяти */
 extern DEVICE cpu_dev[];
 extern DEVICE clock_dev;
 extern DEVICE tty_dev;
@@ -138,7 +135,7 @@ typedef struct {
     uint32 TLB[32];         /* они же постранично */
     uint32 RZ;              /* РЗ, регистр защиты */
 
-    uint8 tag;              /* регистр тега */
+    uint8 TagR;             /* регистр тега */
     t_value GRP, MGRP;      /* ГРП, маска */
     uint32 RVP, MRVP;       /* РВП, маска */
 
@@ -236,7 +233,6 @@ extern TRACEMODE svs_trace;
                                            операнда прии записи в память
                                            с содержанием регистра М29 */
 #define PSW_INTR_DISABLE        002000  /* БлПр - блокировка внешнего прерывания */
-#define PSW_AUT_B               004000  /* АвтБ - признак режима Автомат Б */
 
 /*
  * Регистр 027: сохранённые режимы УУ.
@@ -251,7 +247,6 @@ extern TRACEMODE svs_trace;
                                            модифицирована регистром М[16] */
 #define SPSW_MOD_RR             000040  /* ПрИК(РР) - на регистре РР находится
                                            команда, выполненная с модификацией */
-#define SPSW_UNKNOWN            000100  /* НОК? вписано карандашом в 9 томе */
 #define SPSW_RIGHT_INSTR        000400  /* ПрК - признак правой команды */
 #define SPSW_NEXT_RK            001000  /* ГД./ДК2 - на регистр РК принята
                                            команда, следующая после вызвавшей
@@ -331,6 +326,7 @@ extern TRACEMODE svs_trace;
  */
 extern void mmu_store(CORE *cpu, int addr, t_value word);
 extern t_value mmu_load(CORE *cpu, int addr);
+extern t_value mmu_load64(CORE *cpu, int addr);
 extern t_value mmu_fetch(CORE *cpu, int addr, int *paddrp);
 extern void mmu_set_rp(CORE *cpu, int idx, t_value word);
 extern void mmu_setup(CORE *cpu);

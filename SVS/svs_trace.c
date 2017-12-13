@@ -100,9 +100,9 @@ void svs_trace_registers(CORE *cpu)
         fprintf(sim_log, "cpu%d       Write EADDR = %03o\n",
             cpu->index, cpu->bad_addr);
     }
-    if (cpu->tag != prev->tag) {
+    if (cpu->TagR != prev->TagR) {
         fprintf(sim_log, "cpu%d       Write TAG = %03o\n",
-            cpu->index, cpu->tag);
+            cpu->index, cpu->TagR);
     }
     if (cpu->PP != prev->PP) {
         fprintf(sim_log, "cpu%d       Write PP = ", cpu->index);

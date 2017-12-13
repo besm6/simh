@@ -33,6 +33,7 @@
 #include <time.h>
 
 t_value memory[MEMSIZE];                /* physical memory */
+uint8 tag[MEMSIZE];                     /* tags */
 
 CORE cpu_core[10];                      /* state of all processors */
 
@@ -289,9 +290,10 @@ t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
         /* Deposited values for the switch register address range
          * always go to switch registers.
          */
-        cpu->pult[addr] = SET_TAG(val, TAG_INSN);
+        cpu->pult[addr] = val;
     } else {
-        memory[addr] = SET_TAG(val, TAG_INSN);
+        memory[addr] = val;
+        tag[addr] = TAG_INSN;
     }
     return SCPE_OK;
 }
@@ -576,14 +578,14 @@ static void cmd_002(CORE *cpu)
         /* Запись в регистр тега */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Установка тега\n", cpu->index);
-        cpu->tag = cpu->ACC;
+        cpu->TagR = cpu->ACC;
         break;
 
     case 0244:
         /* Чтение регистра тега */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Чтение регистра тега\n", cpu->index);
-        cpu->ACC = cpu->tag;
+        cpu->ACC = cpu->TagR;
         break;
 
     case 0245:
