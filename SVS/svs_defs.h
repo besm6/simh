@@ -325,6 +325,7 @@ extern TRACEMODE svs_trace;
  * Процедуры работы с памятью
  */
 extern void mmu_store(CORE *cpu, int addr, t_value word);
+extern void mmu_store64(CORE *cpu, int addr, t_value word);
 extern t_value mmu_load(CORE *cpu, int addr);
 extern t_value mmu_load64(CORE *cpu, int addr);
 extern t_value mmu_fetch(CORE *cpu, int addr, int *paddrp);
