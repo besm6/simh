@@ -1166,8 +1166,9 @@ void cpu_one_instr(CORE *cpu)
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        //TODO: команда СЧП
-        svs_debug("--- счп %05o", cpu->Aex);
+svs_debug("--- счп %05o", cpu->Aex);
+        cpu->ACC = mmu_load64(cpu, cpu->Aex);
+        cpu->RMR = (cpu->ACC & ~BITS48) >> 16;
         delay = MEAN_TIME(3, 8);
         break;
     case 034:                                       /* слпа, e+n */
@@ -1271,8 +1272,9 @@ transfer_modifier:
         cpu->Aex = addr;
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        //TODO: команда 046
-        svs_debug("--- соп %05o", cpu->Aex);
+svs_debug("--- соп %05o", cpu->Aex);
+        cpu->ACC = mmu_load64(cpu, cpu->Aex);
+        cpu->RMR = (cpu->ACC & ~BITS48) >> 16;
         delay = 6;
         break;
     case 047:                                       /* э47, x47 */
