@@ -45,7 +45,7 @@ static void mmu_protection_check(CORE *cpu, int vaddr)
 }
 
 /*
- * Запись 48-битного слова в память.
+ * Запись слова и тега в память по виртуальному адресу.
  * Возвращает физический адрес слова.
  */
 static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val, uint8 t)
@@ -99,7 +99,7 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
 
     int paddr = mmu_store_with_tag(cpu, vaddr, val, t);
 
-    if (svs_trace >= TRACE_ALL) {
+    if (paddr != 0 && svs_trace >= TRACE_ALL) {
         fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
             cpu->index, vaddr & BITS(15), paddr, t);
         fprint_sym(sim_log, 0, &val, 0, 0);
@@ -114,7 +114,7 @@ void mmu_store64(CORE *cpu, int vaddr, t_value val)
 {
     int paddr = mmu_store_with_tag(cpu, vaddr, val, cpu->TagR);
 
-    if (svs_trace >= TRACE_ALL) {
+    if (paddr != 0 && svs_trace >= TRACE_ALL) {
         fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
             cpu->index, vaddr & BITS(15), paddr, cpu->TagR);
         fprintf(sim_log, "%02o %04o:%04o %04o %04o %04o\n",
@@ -127,52 +127,18 @@ void mmu_store64(CORE *cpu, int vaddr, t_value val)
     }
 }
 
-static t_value mmu_memaccess(CORE *cpu, int vaddr)
-{
-    t_value val;
-    uint8 t;
-
-    /* Вычисляем физический адрес слова */
-    int paddr = (vaddr >= 0100000) ? (vaddr - 0100000) :
-        (vaddr & 01777) | (cpu->TLB[vaddr >> 10] << 10);
-
-    if (paddr >= 010) {
-        /* Из памяти */
-        val = memory[paddr];
-        t = tag[paddr];
-    } else {
-        /* С тумблерных регистров */
-        val = cpu->pult[paddr];
-        t = TAG_INSN;
-    }
-
-    if (svs_trace >= TRACE_ALL) {
-        if (paddr < 010)
-            fprintf(sim_log, "cpu%d       Read  TR%o = ", cpu->index, paddr);
-        else
-            fprintf(sim_log, "cpu%d       Memory Read [%05o %07o] = %02o:",
-                cpu->index, vaddr & BITS(15), paddr, t);
-        fprint_sym(sim_log, 0, &val, 0, 0);
-        fprintf(sim_log, "\n");
-    }
-
-    /* На тумблерных регистрах контроля числа не бывает */
-    if (paddr >= 010 && ! IS_NUMBER(t) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
-        cpu->bad_addr = paddr & 7;
-        svs_debug("--- (%05o) контроль числа", paddr);
-        longjmp(cpu->exception, STOP_RAM_CHECK);
-    }
-    return val;
-}
-
 /*
- * Чтение 64-битного операнда.
+ * Чтение операнда и тега из памяти по виртуальному адресу.
+ * Возвращает физический адрес слова.
  */
-t_value mmu_load64(CORE *cpu, int vaddr)
+static int mmu_load_with_tag(CORE *cpu, int vaddr, t_value *val, uint8 *t)
 {
     vaddr &= BITS(15);
-    if (vaddr == 0)
+    if (vaddr == 0) {
+        *val = 0;
+        *t = 0;
         return 0;
+    }
 
     mmu_protection_check(cpu, vaddr);
 
@@ -188,7 +154,57 @@ t_value mmu_load64(CORE *cpu, int vaddr)
         sim_brk_test(vaddr, SWMASK('R')))
         longjmp(cpu->exception, STOP_RWATCH);
 
-    return mmu_memaccess(cpu, vaddr);
+    /* Вычисляем физический адрес слова */
+    int paddr = (vaddr >= 0100000) ? (vaddr - 0100000) :
+        (vaddr & 01777) | (cpu->TLB[vaddr >> 10] << 10);
+
+    if (paddr >= 010) {
+        /* Из памяти */
+        *val = memory[paddr];
+        *t = tag[paddr];
+    } else {
+        /* С тумблерных регистров */
+        *val = cpu->pult[paddr];
+        *t = TAG_INSN;
+    }
+    return paddr;
+}
+
+/*
+ * Чтение 64-битного операнда.
+ * Тег попадает в регистр тега.
+ */
+t_value mmu_load64(CORE *cpu, int vaddr)
+{
+    t_value val;
+    uint8 t;
+    int paddr = mmu_load_with_tag(cpu, vaddr, &val, &t);
+
+    if (paddr != 0 && svs_trace >= TRACE_ALL) {
+        if (paddr < 010)
+            fprintf(sim_log, "cpu%d       Read  TR%o = ", cpu->index, paddr);
+        else
+            fprintf(sim_log, "cpu%d       Memory Read [%05o %07o] = %02o:",
+                cpu->index, vaddr & BITS(15), paddr, t);
+        fprintf(sim_log, "%02o %04o:%04o %04o %04o %04o\n",
+            (int) (val >> 60) & 017,
+            (int) (val >> 48) & 07777,
+            (int) (val >> 36) & 07777,
+            (int) (val >> 24) & 07777,
+            (int) (val >> 12) & 07777,
+            (int) val & 07777);
+    }
+#if 0
+    //TODO: Непонятно, какие значения тега должны вызывать контроль числа.
+    /* На тумблерных регистрах контроля числа не бывает */
+    if (paddr >= 010 && ! IS_NUMBER(t) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
+        cpu->bad_addr = paddr & 7;
+        svs_debug("--- (%05o) контроль числа", paddr);
+        longjmp(cpu->exception, STOP_RAM_CHECK);
+    }
+#endif
+    cpu->TagR = t;
+    return val;
 }
 
 /*
@@ -196,7 +212,29 @@ t_value mmu_load64(CORE *cpu, int vaddr)
  */
 t_value mmu_load(CORE *cpu, int vaddr)
 {
-    return mmu_load64(cpu, vaddr) & BITS48;
+    t_value val;
+    uint8 t;
+    int paddr = mmu_load_with_tag(cpu, vaddr, &val, &t);
+
+    if (paddr != 0 && svs_trace >= TRACE_ALL) {
+        if (paddr < 010)
+            fprintf(sim_log, "cpu%d       Read  TR%o = ", cpu->index, paddr);
+        else
+            fprintf(sim_log, "cpu%d       Memory Read [%05o %07o] = %02o:",
+                cpu->index, vaddr & BITS(15), paddr, t);
+        fprint_sym(sim_log, 0, &val, 0, 0);
+        fprintf(sim_log, "\n");
+    }
+
+    /* На тумблерных регистрах контроля числа не бывает */
+    if (paddr >= 010 && ! IS_NUMBER(t) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
+        cpu->bad_addr = paddr & 7;
+        svs_debug("--- (%05o) контроль числа", paddr);
+        longjmp(cpu->exception, STOP_RAM_CHECK);
+    }
+
+    /* Тег не запоминаем. */
+    return val & BITS48;
 }
 
 static void mmu_fetch_check(CORE *cpu, int vaddr)
