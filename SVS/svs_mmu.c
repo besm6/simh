@@ -1,5 +1,5 @@
 /*
- * SVS TLB registers.
+ * SVS memory management unit.
  *
  * Copyright (c) 2009, Leonid Broukhis
  * Copyright (c) 2017, Serge Vakulenko
