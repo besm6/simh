@@ -45,13 +45,14 @@ static void mmu_protection_check(CORE *cpu, int vaddr)
 }
 
 /*
- * Запись слова в память
+ * Запись 48-битного слова в память.
+ * Возвращает физический адрес слова.
  */
-void mmu_store(CORE *cpu, int vaddr, t_value val)
+static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val, uint8 t)
 {
     vaddr &= BITS(15);
     if (vaddr == 0)
-        return;
+        return 0;
 
     mmu_protection_check(cpu, vaddr);
 
@@ -73,26 +74,56 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
             fprintf(sim_log, "cpu%d --- Ignore write to pult register %d\n",
                 cpu->index, vaddr - 0100000);
         }
-        return;
+        return 0;
     }
 
     /* Вычисляем физический адрес. */
     int paddr = (vaddr >= 0100000) ? (vaddr - 0100000) :
         (vaddr & 01777) | (cpu->TLB[vaddr >> 10] << 10);
 
+    /* Пишем в память. */
+    memory[paddr] = val;
+    tag[paddr] = t;
+
+    return paddr;
+}
+
+/*
+ * Запись 48-битного слова в память.
+ */
+void mmu_store(CORE *cpu, int vaddr, t_value val)
+{
     /* Вычисляем тег. */
     uint8 t = (cpu->RUU & (RUU_CHECK_RIGHT | RUU_CHECK_LEFT)) ?
         TAG_NUMBER : TAG_INSN;
 
-    /* Пишем в память. */
-    memory[paddr] = val;
-    tag[paddr] = t;
+    int paddr = mmu_store_with_tag(cpu, vaddr, val, t);
 
     if (svs_trace >= TRACE_ALL) {
         fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
             cpu->index, vaddr & BITS(15), paddr, t);
         fprint_sym(sim_log, 0, &val, 0, 0);
         fprintf(sim_log, "\n");
+    }
+}
+
+/*
+ * Запись 64-битного слова в память.
+ */
+void mmu_store64(CORE *cpu, int vaddr, t_value val)
+{
+    int paddr = mmu_store_with_tag(cpu, vaddr, val, cpu->TagR);
+
+    if (svs_trace >= TRACE_ALL) {
+        fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
+            cpu->index, vaddr & BITS(15), paddr, cpu->TagR);
+        fprintf(sim_log, "%02o %04o:%04o %04o %04o %04o\n",
+            (int) (val >> 60) & 017,
+            (int) (val >> 48) & 07777,
+            (int) (val >> 36) & 07777,
+            (int) (val >> 24) & 07777,
+            (int) (val >> 12) & 07777,
+            (int) val & 07777);
     }
 }
 

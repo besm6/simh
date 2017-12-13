@@ -1158,8 +1158,8 @@ void cpu_one_instr(CORE *cpu)
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        //TODO: команда ЗПП
-        svs_debug("--- зпп %05o", cpu->Aex);
+        mmu_store64(cpu, cpu->Aex, (cpu->ACC & BITS48) |
+            ((cpu->RMR << 16) & ~BITS48));
         delay = MEAN_TIME(3, 8);
         break;
     case 033:                                       /* счп, считывание полноразрядное */
@@ -1455,6 +1455,7 @@ branch_zero:
         }
         break;
     case 0360:                                      /* э36, *36 */
+        /* Как ПИО, но с выталкиванием БРЗ. */
         goto branch_zero;
     case 0370:                                      /* цикл, vlm */
         cpu->Aex = addr;
