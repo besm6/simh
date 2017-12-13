@@ -80,16 +80,17 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
     int paddr = (vaddr >= 0100000) ? (vaddr - 0100000) :
         (vaddr & 01777) | (cpu->TLB[vaddr >> 10] << 10);
 
-    /* Добавляем тег. */
-    val = SET_TAG(val, (cpu->RUU & (RUU_CHECK_RIGHT | RUU_CHECK_LEFT)) ?
-        TAG_NUMBER : TAG_INSN);
+    /* Вычисляем тег. */
+    uint8 t = (cpu->RUU & (RUU_CHECK_RIGHT | RUU_CHECK_LEFT)) ?
+        TAG_NUMBER : TAG_INSN;
 
     /* Пишем в память. */
     memory[paddr] = val;
+    tag[paddr] = t;
 
     if (svs_trace >= TRACE_ALL) {
         fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
-            cpu->index, vaddr & BITS(15), paddr, (int)(val >> 48));
+            cpu->index, vaddr & BITS(15), paddr, t);
         fprint_sym(sim_log, 0, &val, 0, 0);
         fprintf(sim_log, "\n");
     }
@@ -98,6 +99,7 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
 static t_value mmu_memaccess(CORE *cpu, int vaddr)
 {
     t_value val;
+    uint8 t;
 
     /* Вычисляем физический адрес слова */
     int paddr = (vaddr >= 0100000) ? (vaddr - 0100000) :
@@ -106,9 +108,11 @@ static t_value mmu_memaccess(CORE *cpu, int vaddr)
     if (paddr >= 010) {
         /* Из памяти */
         val = memory[paddr];
+        t = tag[paddr];
     } else {
         /* С тумблерных регистров */
         val = cpu->pult[paddr];
+        t = TAG_INSN;
     }
 
     if (svs_trace >= TRACE_ALL) {
@@ -116,13 +120,13 @@ static t_value mmu_memaccess(CORE *cpu, int vaddr)
             fprintf(sim_log, "cpu%d       Read  TR%o = ", cpu->index, paddr);
         else
             fprintf(sim_log, "cpu%d       Memory Read [%05o %07o] = %02o:",
-                cpu->index, vaddr & BITS(15), paddr, (int)(val >> 48));
+                cpu->index, vaddr & BITS(15), paddr, t);
         fprint_sym(sim_log, 0, &val, 0, 0);
         fprintf(sim_log, "\n");
     }
 
     /* На тумблерных регистрах контроля числа не бывает */
-    if (paddr >= 010 && ! IS_NUMBER(val) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
+    if (paddr >= 010 && ! IS_NUMBER(t) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
         cpu->bad_addr = paddr & 7;
         svs_debug("--- (%05o) контроль числа", paddr);
         longjmp(cpu->exception, STOP_RAM_CHECK);
@@ -131,9 +135,9 @@ static t_value mmu_memaccess(CORE *cpu, int vaddr)
 }
 
 /*
- * Чтение операнда
+ * Чтение 64-битного операнда.
  */
-t_value mmu_load(CORE *cpu, int vaddr)
+t_value mmu_load64(CORE *cpu, int vaddr)
 {
     vaddr &= BITS(15);
     if (vaddr == 0)
@@ -153,7 +157,15 @@ t_value mmu_load(CORE *cpu, int vaddr)
         sim_brk_test(vaddr, SWMASK('R')))
         longjmp(cpu->exception, STOP_RWATCH);
 
-    return mmu_memaccess(cpu, vaddr) & BITS48;
+    return mmu_memaccess(cpu, vaddr);
+}
+
+/*
+ * Чтение 48-битного операнда.
+ */
+t_value mmu_load(CORE *cpu, int vaddr)
+{
+    return mmu_load64(cpu, vaddr) & BITS48;
 }
 
 static void mmu_fetch_check(CORE *cpu, int vaddr)
@@ -180,6 +192,7 @@ static void mmu_fetch_check(CORE *cpu, int vaddr)
 t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
 {
     t_value val;
+    uint8 t;
 
     if (vaddr == 0) {
         if (cpu_dev[0].dctrl)
@@ -204,9 +217,11 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
     if (paddr >= 010) {
         /* Из памяти */
         val = memory[paddr];
+        t = tag[paddr];
     } else {
         /* from switch regs */
         val = cpu->pult[paddr];
+        t = TAG_INSN;
     }
 
     if (svs_trace >= TRACE_INSTRUCTIONS && cpu_dev[0].dctrl &&
@@ -214,13 +229,13 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
         // When both trace and cpu debug enabled,
         // print the fetch information.
         fprintf(sim_log, "cpu%d       Fetch [%05o %07o] = %o:",
-            cpu->index, vaddr & BITS(15), paddr, (int)(val >> 48));
+            cpu->index, vaddr & BITS(15), paddr, t);
         fprint_sym(sim_log, 0, &val, 0, SWMASK('I'));
         fprintf(sim_log, "\n");
     }
 
     /* Тумблерные регистры пока только с командной сверткой */
-    if (paddr >= 010 && ! IS_INSN(val)) {
+    if (paddr >= 010 && ! IS_INSN(t)) {
         svs_debug("--- (%05o) контроль команды", vaddr);
         longjmp(cpu->exception, STOP_INSN_CHECK);
     }
