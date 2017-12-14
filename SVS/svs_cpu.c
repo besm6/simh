@@ -350,15 +350,6 @@ t_stat cpu_reset(DEVICE *dev)
     cpu->OPOP = 0;
     cpu->RKP = 0;
 
-    cpu->GRP = 0;
-    cpu->MGRP = 0;
-    cpu->MRVP = 0;
-    cpu->PP = 0;
-    cpu->OPP = 0;
-    cpu->POP = 0;
-    cpu->OPOP = 0;
-    cpu->RKP = 0;
-
     // Disabled due to a conflict with loading
     // cpu->PC = 1;             /* "reset cpu; go" should start from 1  */
 
