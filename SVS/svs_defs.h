@@ -131,8 +131,10 @@ typedef struct {
      * TLB0-TLB31 - постраничные регистры приписки, копии RPi.
      * Обращение к памяти должно вестись через TLBi.
      */
-    t_value RP[8];          /* РП, регистры приписки страниц */
-    uint32 TLB[32];         /* они же постранично */
+    t_value RP[8];          /* РП, регистры приписки страниц пользователя */
+    t_value RPS[8];         /* РПС, регистры приписки страниц супервизора */
+    uint32 UTLB[32];        /* они же постранично, пользователя */
+    uint32 STLB[32];        /* они же постранично, супервизора */
     uint32 RZ;              /* РЗ, регистр защиты */
 
     uint8 TagR;             /* регистр тега */
@@ -329,7 +331,7 @@ extern void mmu_store64(CORE *cpu, int addr, t_value word);
 extern t_value mmu_load(CORE *cpu, int addr);
 extern t_value mmu_load64(CORE *cpu, int addr);
 extern t_value mmu_fetch(CORE *cpu, int addr, int *paddrp);
-extern void mmu_set_rp(CORE *cpu, int idx, t_value word);
+extern void mmu_set_rp(CORE *cpu, int idx, t_value word, int supervisor);
 extern void mmu_setup(CORE *cpu);
 extern void mmu_set_protection(CORE *cpu, int idx, t_value word);
 

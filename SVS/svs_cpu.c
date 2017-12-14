@@ -117,7 +117,7 @@ REG cpu0_reg[] = {
     { ORDATA   (M34,    cpu_core[0].M[034],     16) },  /* IBP - instruction bkpt address */
     { ORDATA   (M35,    cpu_core[0].M[035],     16) },  /* DWP - watchpoint address */
     { BINRDATA (RUU,    cpu_core[0].RUU,        9)  },  /* execution modes */
-    { ORDATAVM (RP0,    cpu_core[0].RP[0],      48) },  /* page mapping */
+    { ORDATAVM (RP0,    cpu_core[0].RP[0],      48) },  /* user page mapping */
     { ORDATAVM (RP1,    cpu_core[0].RP[1],      48) },
     { ORDATAVM (RP2,    cpu_core[0].RP[2],      48) },
     { ORDATAVM (RP3,    cpu_core[0].RP[3],      48) },
@@ -125,6 +125,14 @@ REG cpu0_reg[] = {
     { ORDATAVM (RP5,    cpu_core[0].RP[5],      48) },
     { ORDATAVM (RP6,    cpu_core[0].RP[6],      48) },
     { ORDATAVM (RP7,    cpu_core[0].RP[7],      48) },
+    { ORDATAVM (RPS0,   cpu_core[0].RPS[0],     48) },  /* kernel page mapping */
+    { ORDATAVM (RPS1,   cpu_core[0].RPS[1],     48) },
+    { ORDATAVM (RPS2,   cpu_core[0].RPS[2],     48) },
+    { ORDATAVM (RPS3,   cpu_core[0].RPS[3],     48) },
+    { ORDATAVM (RPS4,   cpu_core[0].RPS[4],     48) },
+    { ORDATAVM (RPS5,   cpu_core[0].RPS[5],     48) },
+    { ORDATAVM (RPS6,   cpu_core[0].RPS[6],     48) },
+    { ORDATAVM (RPS7,   cpu_core[0].RPS[7],     48) },
     { ORDATA   (RZ,     cpu_core[0].RZ,         32) },  /* page protection */
     { ORDATAVM (GRP,    cpu_core[0].GRP,        48) },  /* main interrupt reg */
     { ORDATAVM (MGRP,   cpu_core[0].MGRP,       48) },  /* mask of the above  */
@@ -326,8 +334,10 @@ t_stat cpu_reset(DEVICE *dev)
         SPSW_INTR_DISABLE;
 
     cpu->RZ = 0;
-    for (i = 0; i < 8; ++i)
+    for (i = 0; i < 8; ++i) {
         cpu->RP[i] = 0;
+        cpu->RPS[i] = 0;
+    }
 
     cpu->GRP = 0;
     cpu->MGRP = 0;
@@ -514,7 +524,7 @@ static void cmd_002(CORE *cpu)
         /* Запись в регистры приписки режима пользователя */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Установка приписки пользователя\n", cpu->index);
-        mmu_set_rp(cpu, cpu->Aex & 7, cpu->ACC);
+        mmu_set_rp(cpu, cpu->Aex & 7, cpu->ACC, 0);
         break;
 
     case 030: case 031: case 032: case 033:
@@ -754,7 +764,7 @@ static void cmd_002(CORE *cpu)
         /* Запись в регистры приписки супервизора */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Установка приписки супервизора\n", cpu->index);
-        //TODO: mmu_set_rp(cpu, cpu->Aex & 7, cpu->ACC);
+        mmu_set_rp(cpu, cpu->Aex & 7, cpu->ACC, 1);
         break;
 
     case 0100: case 0101: case 0102: case 0103:

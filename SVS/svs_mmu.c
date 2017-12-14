@@ -45,6 +45,28 @@ static void mmu_protection_check(CORE *cpu, int vaddr)
 }
 
 /*
+ * Трансляция виртуального адреса в физический.
+ */
+static int va_to_pa(CORE *cpu, int vaddr)
+{
+    int paddr;
+
+    if (cpu->M[PSW] & PSW_MMAP_DISABLE) {
+        /* Приписка отключена. */
+        paddr = vaddr;
+    } else {
+        /* Приписка работает. */
+        int vpage    = vaddr >> 10;
+        int offset   = vaddr & BITS(10);
+        int physpage = IS_SUPERVISOR(cpu->RUU) ?
+                       cpu->STLB[vpage] : cpu->UTLB[vpage];
+
+        paddr = (physpage << 10) | offset;
+    }
+    return paddr;
+}
+
+/*
  * Запись слова и тега в память по виртуальному адресу.
  * Возвращает физический адрес слова.
  */
@@ -57,29 +79,29 @@ static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val, uint8 t)
     mmu_protection_check(cpu, vaddr);
 
     /* Различаем адреса с припиской и без */
-    if (cpu->M[PSW] & PSW_MMAP_DISABLE)
-        vaddr |= 0100000;
-
-    /* ЗПСЧ: ЗП */
-    if (cpu->M[DWP] == vaddr && (cpu->M[PSW] & PSW_WRITE_WATCH))
-        longjmp(cpu->exception, STOP_STORE_ADDR_MATCH);
-
-    if (sim_brk_summ & SWMASK('W') &&
-        sim_brk_test(vaddr, SWMASK('W')))
-        longjmp(cpu->exception, STOP_WWATCH);
-
-    if (vaddr >= 0100000 && vaddr < 0100010) {
-        /* Игнорируем запись в тумблерные регистры. */
-        if (svs_trace >= TRACE_INSTRUCTIONS) {
-            fprintf(sim_log, "cpu%d --- Ignore write to pult register %d\n",
-                cpu->index, vaddr - 0100000);
+    if (cpu->M[PSW] & PSW_MMAP_DISABLE) {
+        /* Приписка отключена. */
+        if (vaddr < 010) {
+            /* Игнорируем запись в тумблерные регистры. */
+            if (svs_trace >= TRACE_INSTRUCTIONS) {
+                fprintf(sim_log, "cpu%d --- Ignore write to pult register %d\n",
+                    cpu->index, vaddr);
+            }
+            return 0;
         }
-        return 0;
+    } else {
+        /* Приписка работает. */
+        /* ЗПСЧ: ЗП */
+        if (cpu->M[DWP] == vaddr && (cpu->M[PSW] & PSW_WRITE_WATCH))
+            longjmp(cpu->exception, STOP_STORE_ADDR_MATCH);
+
+        if (sim_brk_summ & SWMASK('W') &&
+            sim_brk_test(vaddr, SWMASK('W')))
+            longjmp(cpu->exception, STOP_WWATCH);
     }
 
     /* Вычисляем физический адрес. */
-    int paddr = (vaddr >= 0100000) ? (vaddr - 0100000) :
-        (vaddr & 01777) | (cpu->TLB[vaddr >> 10] << 10);
+    int paddr = va_to_pa(cpu, vaddr);
 
     /* Пишем в память. */
     memory[paddr] = val;
@@ -101,7 +123,7 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
 
     if (paddr != 0 && svs_trace >= TRACE_ALL) {
         fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
-            cpu->index, vaddr & BITS(15), paddr, t);
+            cpu->index, vaddr, paddr, t);
         fprint_sym(sim_log, 0, &val, 0, 0);
         fprintf(sim_log, "\n");
     }
@@ -116,7 +138,7 @@ void mmu_store64(CORE *cpu, int vaddr, t_value val)
 
     if (paddr != 0 && svs_trace >= TRACE_ALL) {
         fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
-            cpu->index, vaddr & BITS(15), paddr, cpu->TagR);
+            cpu->index, vaddr, paddr, cpu->TagR);
         fprintf(sim_log, "%02o %04o:%04o %04o %04o %04o\n",
             (int) (val >> 60) & 017,
             (int) (val >> 48) & 07777,
@@ -143,20 +165,21 @@ static int mmu_load_with_tag(CORE *cpu, int vaddr, t_value *val, uint8 *t)
     mmu_protection_check(cpu, vaddr);
 
     /* Различаем адреса с припиской и без */
-    if (cpu->M[PSW] & PSW_MMAP_DISABLE)
-        vaddr |= 0100000;
+    if (cpu->M[PSW] & PSW_MMAP_DISABLE) {
+        /* Приписка отключена. */
+    } else {
+        /* Приписка работает. */
+        /* ЗПСЧ: СЧ */
+        if (cpu->M[DWP] == vaddr && !(cpu->M[PSW] & PSW_WRITE_WATCH))
+            longjmp(cpu->exception, STOP_LOAD_ADDR_MATCH);
 
-    /* ЗПСЧ: СЧ */
-    if (cpu->M[DWP] == vaddr && !(cpu->M[PSW] & PSW_WRITE_WATCH))
-        longjmp(cpu->exception, STOP_LOAD_ADDR_MATCH);
-
-    if (sim_brk_summ & SWMASK('R') &&
-        sim_brk_test(vaddr, SWMASK('R')))
-        longjmp(cpu->exception, STOP_RWATCH);
+        if (sim_brk_summ & SWMASK('R') &&
+            sim_brk_test(vaddr, SWMASK('R')))
+            longjmp(cpu->exception, STOP_RWATCH);
+    }
 
     /* Вычисляем физический адрес слова */
-    int paddr = (vaddr >= 0100000) ? (vaddr - 0100000) :
-        (vaddr & 01777) | (cpu->TLB[vaddr >> 10] << 10);
+    int paddr = va_to_pa(cpu, vaddr);
 
     if (paddr >= 010) {
         /* Из памяти */
@@ -185,7 +208,7 @@ t_value mmu_load64(CORE *cpu, int vaddr)
             fprintf(sim_log, "cpu%d       Read  TR%o = ", cpu->index, paddr);
         else
             fprintf(sim_log, "cpu%d       Memory Read [%05o %07o] = %02o:",
-                cpu->index, vaddr & BITS(15), paddr, t);
+                cpu->index, vaddr, paddr, t);
         fprintf(sim_log, "%02o %04o:%04o %04o %04o %04o\n",
             (int) (val >> 60) & 017,
             (int) (val >> 48) & 07777,
@@ -221,7 +244,7 @@ t_value mmu_load(CORE *cpu, int vaddr)
             fprintf(sim_log, "cpu%d       Read  TR%o = ", cpu->index, paddr);
         else
             fprintf(sim_log, "cpu%d       Memory Read [%05o %07o] = %02o:",
-                cpu->index, vaddr & BITS(15), paddr, t);
+                cpu->index, vaddr, paddr, t);
         fprint_sym(sim_log, 0, &val, 0, 0);
         fprintf(sim_log, "\n");
     }
@@ -241,7 +264,7 @@ static void mmu_fetch_check(CORE *cpu, int vaddr)
 {
     /* В режиме супервизора защиты нет */
     if (! IS_SUPERVISOR(cpu->RUU)) {
-        int page = cpu->TLB[vaddr >> 10];
+        int page = cpu->UTLB[vaddr >> 10];
         /*
          * Для команд в режиме пользователя признак защиты -
          * 0 в регистре приписки.
@@ -271,17 +294,12 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
 
     mmu_fetch_check(cpu, vaddr);
 
-    /* Различаем адреса с припиской и без */
-    if (IS_SUPERVISOR(cpu->RUU))
-        vaddr |= 0100000;
-
     /* КРА */
-    if (cpu->M[IBP] == vaddr)
+    if (cpu->M[IBP] == vaddr && ! IS_SUPERVISOR(cpu->RUU))
         longjmp(cpu->exception, STOP_INSN_ADDR_MATCH);
 
     /* Вычисляем физический адрес слова */
-    int paddr = (vaddr >= 0100000) ? (vaddr - 0100000) :
-        (vaddr & 01777) | (cpu->TLB[vaddr >> 10] << 10);
+    int paddr = IS_SUPERVISOR(cpu->RUU) ? vaddr : va_to_pa(cpu, vaddr);
 
     if (paddr >= 010) {
         /* Из памяти */
@@ -298,7 +316,7 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
         // When both trace and cpu debug enabled,
         // print the fetch information.
         fprintf(sim_log, "cpu%d       Fetch [%05o %07o] = %o:",
-            cpu->index, vaddr & BITS(15), paddr, t);
+            cpu->index, vaddr, paddr, t);
         fprint_sym(sim_log, 0, &val, 0, SWMASK('I'));
         fprintf(sim_log, "\n");
     }
@@ -313,7 +331,7 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
     return val & BITS48;
 }
 
-void mmu_set_rp(CORE *cpu, int idx, t_value val)
+void mmu_set_rp(CORE *cpu, int idx, t_value val, int supervisor)
 {
     uint32 p0, p1, p2, p3;
     const uint32 mask = (MEMSIZE >> 10) - 1;
@@ -321,25 +339,29 @@ void mmu_set_rp(CORE *cpu, int idx, t_value val)
     /* Младшие 5 разрядов 4-х регистров приписки упакованы
      * по 5 в 1-20 рр, 6-е разряды - в 29-32 рр, 7-е разряды - в 33-36 рр и т.п.
      */
-    p0 = (val       & 037) | (((val>>28) & 1) << 5) | (((val>>32) & 1) << 6) |
-        (((val>>36) &  1) << 7) | (((val>>40) & 1) << 8) | (((val>>44) & 1) << 9);
-    p1 = ((val>>5)  & 037) | (((val>>29) & 1) << 5) | (((val>>33) & 1) << 6) |
-        (((val>>37) &  1) << 7) | (((val>>41) & 1) << 8) | (((val>>45) & 1) << 9);
-    p2 = ((val>>10) & 037) | (((val>>30) & 1) << 5) | (((val>>34) & 1) << 6) |
-        (((val>>38) &  1) << 7) | (((val>>42) & 1) << 8) | (((val>>46) & 1) << 9);
-    p3 = ((val>>15) & 037) | (((val>>31) & 1) << 5) | (((val>>35) & 1) << 6) |
-        (((val>>39) &  1) << 7) | (((val>>43) & 1) << 8) | (((val>>47) & 1) << 9);
+    p0 = (val       & 037) | (((val>>28) & 1) << 5) | (((val>>32) & 1) << 6) | (((val>>36) &  1) << 7) | (((val>>40) & 1) << 8) | (((val>>44) & 1) << 9);
+    p1 = ((val>>5)  & 037) | (((val>>29) & 1) << 5) | (((val>>33) & 1) << 6) | (((val>>37) &  1) << 7) | (((val>>41) & 1) << 8) | (((val>>45) & 1) << 9);
+    p2 = ((val>>10) & 037) | (((val>>30) & 1) << 5) | (((val>>34) & 1) << 6) | (((val>>38) &  1) << 7) | (((val>>42) & 1) << 8) | (((val>>46) & 1) << 9);
+    p3 = ((val>>15) & 037) | (((val>>31) & 1) << 5) | (((val>>35) & 1) << 6) | (((val>>39) &  1) << 7) | (((val>>43) & 1) << 8) | (((val>>47) & 1) << 9);
 
     p0 &= mask;
     p1 &= mask;
     p2 &= mask;
     p3 &= mask;
 
-    cpu->RP[idx] = p0 | p1 << 12 | p2 << 24 | (t_value) p3 << 36;
-    cpu->TLB[idx*4] = p0;
-    cpu->TLB[idx*4+1] = p1;
-    cpu->TLB[idx*4+2] = p2;
-    cpu->TLB[idx*4+3] = p3;
+    if (supervisor) {
+        cpu->RPS[idx] = p0 | p1 << 12 | (t_value)p2 << 24 | (t_value)p3 << 36;
+        cpu->STLB[idx*4] = p0;
+        cpu->STLB[idx*4+1] = p1;
+        cpu->STLB[idx*4+2] = p2;
+        cpu->STLB[idx*4+3] = p3;
+    } else {
+        cpu->RP[idx] = p0 | p1 << 12 | (t_value)p2 << 24 | (t_value)p3 << 36;
+        cpu->UTLB[idx*4] = p0;
+        cpu->UTLB[idx*4+1] = p1;
+        cpu->UTLB[idx*4+2] = p2;
+        cpu->UTLB[idx*4+3] = p3;
+    }
 }
 
 void mmu_setup(CORE *cpu)
@@ -349,10 +371,14 @@ void mmu_setup(CORE *cpu)
 
     /* Перепись РПi в TLBj. */
     for (i=0; i<8; ++i) {
-        cpu->TLB[i*4] = cpu->RP[i] & mask;
-        cpu->TLB[i*4+1] = cpu->RP[i] >> 12 & mask;
-        cpu->TLB[i*4+2] = cpu->RP[i] >> 24 & mask;
-        cpu->TLB[i*4+3] = cpu->RP[i] >> 36 & mask;
+        cpu->UTLB[i*4] = cpu->RP[i] & mask;
+        cpu->UTLB[i*4+1] = cpu->RP[i] >> 12 & mask;
+        cpu->UTLB[i*4+2] = cpu->RP[i] >> 24 & mask;
+        cpu->UTLB[i*4+3] = cpu->RP[i] >> 36 & mask;
+        cpu->STLB[i*4] = cpu->RPS[i] & mask;
+        cpu->STLB[i*4+1] = cpu->RPS[i] >> 12 & mask;
+        cpu->STLB[i*4+2] = cpu->RPS[i] >> 24 & mask;
+        cpu->STLB[i*4+3] = cpu->RPS[i] >> 36 & mask;
     }
 }
 
