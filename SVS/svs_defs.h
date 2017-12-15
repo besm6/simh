@@ -387,6 +387,11 @@ t_value svs_pack(t_value val, t_value mask);
 t_value svs_unpack(t_value val, t_value mask);
 
 /*
+ * Процессор ввода-вывода.
+ */
+void iom_request(CORE *cpu);
+
+/*
  * Разряды главного регистра прерываний (ГРП)
  * Внешние:
  */
@@ -415,17 +420,21 @@ t_value svs_unpack(t_value val, t_value mask);
 #define RVP_PROGRAM     0400LL
 #define RVP_REQUEST     0200LL
 #define RVP_RESPONSE    0100LL
-#define RVP_PVV_FAIL    0040LL
+#define RVP_IOM_FAIL    0040LL
 #define RVP_RAM_FAIL    0020LL
 #define RVP_TIMER       0010LL
-#define RVP_INTR_PVV    0004LL
+#define RVP_INTR_IOM    0004LL
 #define RVP_MULTI       0002LL
 #define RVP_PANEL_REQ   0001LL
 
 /*
  * Разряды регистров РКП, ПП, ОПП, ПОП, ОПОП.
  */
-#define CONF_PVV_MASK   (0xfLL << 42)       /* биты ПВВ */
+#define CONF_IOM1       (1LL << 45)         /* ПВВ 1 */
+#define CONF_IOM2       (1LL << 44)         /* ПВВ 2 */
+#define CONF_IOM3       (1LL << 43)         /* ПВВ 3 */
+#define CONF_IOM4       (1LL << 42)         /* ПВВ 4 */
+#define CONF_IOM_MASK   (0xfLL << 42)       /* биты ПВВ */
 #define CONF_CPU_MASK   (0xfLL << 38)       /* биты процесоров СВС */
 #define CONF_DATA_MASK  (0xfLL << 34)       /* данные МПД */
 #define CONF_MR         (1LL << 33)         /* приём МПД */
