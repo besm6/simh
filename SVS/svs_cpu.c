@@ -638,7 +638,7 @@ static void cmd_002(CORE *cpu)
         /* Запись в регистр прерываний процессорам */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Запись в ПП\n", cpu->index);
-        cpu->PP = cpu->ACC & (CONF_PVV_MASK | CONF_CPU_MASK | CONF_DATA_MASK);
+        cpu->PP = cpu->ACC & (CONF_IOM_MASK | CONF_CPU_MASK | CONF_DATA_MASK);
         if (cpu->ACC & CONF_MT) {
             /* Передача младшей половины байта. */
             mpd_send_nibble(cpu, CONF_GET_DATA(cpu->PP));
@@ -646,6 +646,11 @@ static void cmd_002(CORE *cpu)
         if (cpu->ACC & CONF_MR) {
             /* Подтверждение считывания принятого байта. */
             mpd_receive_update(cpu);
+        }
+        if (cpu->ACC & CONF_IOM1) {
+            /* Запрос к ПВВ. */
+            //TODO: ПВВ 2...4
+            iom_request(cpu);
         }
         break;
 
@@ -660,7 +665,7 @@ static void cmd_002(CORE *cpu)
         /* Запись в регистр ответов процессорам */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Запись в ОПП\n", cpu->index);
-        cpu->OPP = cpu->ACC & (CONF_PVV_MASK | CONF_CPU_MASK | CONF_DATA_MASK);
+        cpu->OPP = cpu->ACC & (CONF_IOM_MASK | CONF_CPU_MASK | CONF_DATA_MASK);
         if (cpu->ACC & CONF_MT) {
             /* Передача старшей половины байта. */
             mpd_send_nibble(cpu, CONF_GET_DATA(cpu->OPP));
@@ -707,7 +712,7 @@ static void cmd_002(CORE *cpu)
         /* Запись в регистр конфигурации процессора */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Установка конфигурации процессора\n", cpu->index);
-        cpu->RKP = cpu->ACC & (CONF_PVV_MASK | CONF_CPU_MASK | CONF_MR | CONF_MT);
+        cpu->RKP = cpu->ACC & (CONF_IOM_MASK | CONF_CPU_MASK | CONF_MR | CONF_MT);
         break;
 
     case 0254:
@@ -1285,7 +1290,8 @@ transfer_modifier:
             longjmp(cpu->exception, STOP_BADCMD);
 svs_debug("--- соп %05o", cpu->Aex);
         cpu->ACC = mmu_load64(cpu, cpu->Aex);
-        cpu->RMR = (cpu->ACC & ~BITS48) >> 16;
+        cpu->RMR = (cpu->ACC & BITS(16)) << 32;
+        cpu->ACC >>= 16;
         delay = 6;
         break;
     case 047:                                       /* э47, x47 */
