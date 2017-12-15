@@ -464,7 +464,11 @@ void iom_request(int index);
 /*
  * Разряды регистров РКП, ПП, ОПП, ПОП, ОПОП.
  */
-#define CONF_PVV_MASK   (0xfLL << 42)       /* биты ПВВ */
+#define CONF_IOM1       (1LL << 45)         /* ПВВ 1 */
+#define CONF_IOM2       (1LL << 44)         /* ПВВ 2 */
+#define CONF_IOM3       (1LL << 43)         /* ПВВ 3 */
+#define CONF_IOM4       (1LL << 42)         /* ПВВ 4 */
+#define CONF_IOM_MASK   (0xfLL << 42)       /* биты ПВВ */
 #define CONF_CPU_MASK   (0xfLL << 38)       /* биты процесоров СВС */
 #define CONF_DATA_MASK  (0xfLL << 34)       /* данные МПД */
 #define CONF_MR         (1LL << 33)         /* приём МПД */
