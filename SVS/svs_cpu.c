@@ -1168,8 +1168,8 @@ void cpu_one_instr(CORE *cpu)
         cpu->Aex = ADDR(addr + cpu->M[reg]);
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-        mmu_store64(cpu, cpu->Aex, (cpu->ACC & BITS48) |
-            ((cpu->RMR << 16) & ~BITS48));
+        mmu_store64(cpu, cpu->Aex, (cpu->ACC << 16) |
+            ((cpu->RMR >> 32) & BITS(16)));
         delay = MEAN_TIME(3, 8);
         break;
     case 033:                                       /* счп, считывание полноразрядное */
@@ -1178,7 +1178,8 @@ void cpu_one_instr(CORE *cpu)
             longjmp(cpu->exception, STOP_BADCMD);
 svs_debug("--- счп %05o", cpu->Aex);
         cpu->ACC = mmu_load64(cpu, cpu->Aex);
-        cpu->RMR = (cpu->ACC & ~BITS48) >> 16;
+        cpu->RMR = (cpu->ACC & BITS(16)) << 32;
+        cpu->ACC >>= 16;
         delay = MEAN_TIME(3, 8);
         break;
     case 034:                                       /* слпа, e+n */
