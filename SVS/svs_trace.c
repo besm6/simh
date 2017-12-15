@@ -90,6 +90,12 @@ void svs_trace_registers(CORE *cpu)
             fprint_sym(sim_log, 0, &cpu->RP[i], 0, 0);
             fprintf(sim_log, "\n");
         }
+        if (cpu->RPS[i] != prev->RPS[i]) {
+            fprintf(sim_log, "cpu%d       Write RPS%o = ",
+                cpu->index, i);
+            fprint_sym(sim_log, 0, &cpu->RPS[i], 0, 0);
+            fprintf(sim_log, "\n");
+        }
     }
     if (cpu->RZ != prev->RZ) {
         fprintf(sim_log, "cpu%d       Write RZ = ", cpu->index);
