@@ -301,7 +301,7 @@ t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
         cpu->pult[addr] = val;
     } else {
         memory[addr] = val;
-        tag[addr] = TAG_INSN;
+        tag[addr] = TAG_INSN48;
     }
     return SCPE_OK;
 }
@@ -669,6 +669,10 @@ static void cmd_002(CORE *cpu)
         if (cpu->ACC & CONF_MT) {
             /* Передача старшей половины байта. */
             mpd_send_nibble(cpu, CONF_GET_DATA(cpu->OPP));
+        }
+        if (cpu->ACC & CONF_IOM_RESET) {
+            /* Сброс ПВВ. */
+            iom_reset(cpu);
         }
         break;
 
@@ -1182,7 +1186,7 @@ void cpu_one_instr(CORE *cpu)
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
 svs_debug("--- счп %05o", cpu->Aex);
-        cpu->ACC = mmu_load64(cpu, cpu->Aex);
+        cpu->ACC = mmu_load64(cpu, cpu->Aex, 1);
         cpu->RMR = (cpu->ACC & BITS(16)) << 32;
         cpu->ACC >>= 16;
         delay = MEAN_TIME(3, 8);
@@ -1289,7 +1293,7 @@ transfer_modifier:
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
 svs_debug("--- соп %05o", cpu->Aex);
-        cpu->ACC = mmu_load64(cpu, cpu->Aex);
+        cpu->ACC = mmu_load64(cpu, cpu->Aex, 0);
         cpu->RMR = (cpu->ACC & BITS(16)) << 32;
         cpu->ACC >>= 16;
         delay = 6;

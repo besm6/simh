@@ -117,7 +117,7 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
 {
     /* Вычисляем тег. */
     uint8 t = (cpu->RUU & (RUU_CHECK_RIGHT | RUU_CHECK_LEFT)) ?
-        TAG_NUMBER : TAG_INSN;
+        TAG_NUMBER48 : TAG_INSN48;
 
     int paddr = mmu_store_with_tag(cpu, vaddr, val, t);
 
@@ -188,7 +188,7 @@ static int mmu_load_with_tag(CORE *cpu, int vaddr, t_value *val, uint8 *t)
     } else {
         /* С тумблерных регистров */
         *val = cpu->pult[paddr];
-        *t = TAG_INSN;
+        *t = TAG_INSN48;
     }
     return paddr;
 }
@@ -197,7 +197,7 @@ static int mmu_load_with_tag(CORE *cpu, int vaddr, t_value *val, uint8 *t)
  * Чтение 64-битного операнда.
  * Тег попадает в регистр тега.
  */
-t_value mmu_load64(CORE *cpu, int vaddr)
+t_value mmu_load64(CORE *cpu, int vaddr, int tag_check)
 {
     t_value val;
     uint8 t;
@@ -217,15 +217,14 @@ t_value mmu_load64(CORE *cpu, int vaddr)
             (int) (val >> 12) & 07777,
             (int) val & 07777);
     }
-#if 0
-    //TODO: Непонятно, какие значения тега должны вызывать контроль числа.
-    /* На тумблерных регистрах контроля числа не бывает */
-    if (paddr >= 010 && ! IS_NUMBER(t) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
+
+    /* Прерывание (контроль числа), если попалось 48-битное слово. */
+    if (tag_check && IS_48BIT(t) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
         cpu->bad_addr = paddr & 7;
         svs_debug("--- (%05o) контроль числа", paddr);
         longjmp(cpu->exception, STOP_RAM_CHECK);
     }
-#endif
+
     cpu->TagR = t;
     return val;
 }
@@ -249,8 +248,9 @@ t_value mmu_load(CORE *cpu, int vaddr)
         fprintf(sim_log, "\n");
     }
 
-    /* На тумблерных регистрах контроля числа не бывает */
-    if (paddr >= 010 && ! IS_NUMBER(t) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
+    /* Прерывание (контроль числа), если попалось 64-битное слово.
+     * На тумблерных регистрах контроля числа не бывает. */
+    if (paddr >= 010 && ! IS_48BIT(t) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
         cpu->bad_addr = paddr & 7;
         svs_debug("--- (%05o) контроль числа", paddr);
         longjmp(cpu->exception, STOP_RAM_CHECK);
@@ -308,7 +308,7 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
     } else {
         /* from switch regs */
         val = cpu->pult[paddr];
-        t = TAG_INSN;
+        t = TAG_INSN48;
     }
 
     if (svs_trace >= TRACE_INSTRUCTIONS && cpu_dev[0].dctrl &&
@@ -321,8 +321,9 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
         fprintf(sim_log, "\n");
     }
 
-    /* Тумблерные регистры пока только с командной сверткой */
-    if (paddr >= 010 && ! IS_INSN(t)) {
+    /* Прерывание (контроль команды), если попалась не 48-битная команда.
+     * Тумблерные регистры только с командной сверткой. */
+    if (paddr >= 010 && ! IS_INSN48(t)) {
         svs_debug("--- (%05o) контроль команды", vaddr);
         longjmp(cpu->exception, STOP_INSN_CHECK);
     }

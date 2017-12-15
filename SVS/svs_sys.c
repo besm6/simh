@@ -681,7 +681,7 @@ static t_stat svs_load(CORE *cpu, FILE *input)
                 cpu->pult[addr] = word;
             } else {
                 memory[addr] = word;
-                tag[addr] = (type == '*') ? TAG_INSN : TAG_NUMBER;
+                tag[addr] = (type == '*') ? TAG_INSN48 : TAG_NUMBER48;
             }
             ++addr;
             break;
@@ -708,7 +708,7 @@ static t_stat svs_dump(CORE *cpu, FILE *of, const char *fnam)
     for (addr=1; addr<MEMSIZE; ++addr) {
         if (addr < 010) {
             word = cpu->pult[addr];
-            t = TAG_INSN;
+            t = TAG_INSN48;
         } else {
             word = memory[addr];
             t = tag[addr];
@@ -721,7 +721,7 @@ static t_stat svs_dump(CORE *cpu, FILE *of, const char *fnam)
             fprintf(of, "\nв %05o\n", addr);
         }
         last_addr = addr;
-        if (IS_INSN(t)) {
+        if (IS_INSN48(t)) {
             fprintf(of, "к ");
             svs_fprint_cmd(of, (uint32)(word >> 24));
             fprintf(of, ", ");

@@ -32,6 +32,7 @@
 
 #include "sim_defs.h"
 #include <setjmp.h>
+#include <inttypes.h>
 
 /*
  * Memory.
@@ -85,13 +86,13 @@ enum {
 /*
  * Работа с тегами.
  */
-#define TAG_INSN        035
-#define TAG_NUMBER      036
+#define TAG_INSN48      035
+#define TAG_NUMBER48    036
 #define TAG_BITSET      020
 
-#define IS_INSN(t)      ((t) == TAG_INSN)
+#define IS_INSN48(t)    ((t) == TAG_INSN48)
 
-#define IS_NUMBER(t)    ((t) == TAG_INSN || (t) == TAG_NUMBER)
+#define IS_48BIT(t)     ((t) == TAG_INSN48 || (t) == TAG_NUMBER48)
 
 /*
  * Вычисление правдоподобного времени выполнения команды,
@@ -329,7 +330,7 @@ extern TRACEMODE svs_trace;
 extern void mmu_store(CORE *cpu, int addr, t_value word);
 extern void mmu_store64(CORE *cpu, int addr, t_value word);
 extern t_value mmu_load(CORE *cpu, int addr);
-extern t_value mmu_load64(CORE *cpu, int addr);
+extern t_value mmu_load64(CORE *cpu, int addr, int tag_check);
 extern t_value mmu_fetch(CORE *cpu, int addr, int *paddrp);
 extern void mmu_set_rp(CORE *cpu, int idx, t_value word, int supervisor);
 extern void mmu_setup(CORE *cpu);
@@ -389,6 +390,7 @@ t_value svs_unpack(t_value val, t_value mask);
 /*
  * Процессор ввода-вывода.
  */
+void iom_reset(CORE *cpu);
 void iom_request(CORE *cpu);
 
 /*
@@ -430,15 +432,16 @@ void iom_request(CORE *cpu);
 /*
  * Разряды регистров РКП, ПП, ОПП, ПОП, ОПОП.
  */
-#define CONF_IOM1       (1LL << 45)         /* ПВВ 1 */
-#define CONF_IOM2       (1LL << 44)         /* ПВВ 2 */
-#define CONF_IOM3       (1LL << 43)         /* ПВВ 3 */
-#define CONF_IOM4       (1LL << 42)         /* ПВВ 4 */
-#define CONF_IOM_MASK   (0xfLL << 42)       /* биты ПВВ */
-#define CONF_CPU_MASK   (0xfLL << 38)       /* биты процесоров СВС */
-#define CONF_DATA_MASK  (0xfLL << 34)       /* данные МПД */
-#define CONF_MR         (1LL << 33)         /* приём МПД */
-#define CONF_MT         (1LL << 32)         /* передача МПД */
+#define CONF_IOM_RESET  (1LL << 47)     /* бит 48: Сброс ПВВ */
+#define CONF_IOM1       (1LL << 45)     /* бит 46: ПВВ 1 */
+#define CONF_IOM2       (1LL << 44)     /* бит 45: ПВВ 2 */
+#define CONF_IOM3       (1LL << 43)     /* бит 44: ПВВ 3 */
+#define CONF_IOM4       (1LL << 42)     /* бит 43: ПВВ 4 */
+#define CONF_IOM_MASK   (0xfLL << 42)   /* биты 43-46: биты ПВВ */
+#define CONF_CPU_MASK   (0xfLL << 38)   /* биты 39-42: биты процесоров СВС */
+#define CONF_DATA_MASK  (0xfLL << 34)   /* биты 35-38: данные МПД */
+#define CONF_MR         (1LL << 33)     /* бит 34: приём МПД */
+#define CONF_MT         (1LL << 32)     /* бит 33: передача МПД */
 
 #define CONF_GET_DATA(x)    (((x) >> 34) & 0xf)
 #define CONF_SET_DATA(r,x)  (((r) & ~CONF_DATA_MASK) | (((x) & 0xfLL) << 34))

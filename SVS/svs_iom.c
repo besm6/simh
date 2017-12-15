@@ -27,7 +27,15 @@
  * authorization from Leonid Broukhis and Serge Vakulenko.
  */
 #include "svs_defs.h"
-#include <inttypes.h>
+
+/*
+ * Сброс ПВВ.
+ */
+void iom_reset(CORE *cpu)
+{
+    if (svs_trace >= TRACE_INSTRUCTIONS)
+        fprintf(sim_log, "cpu%d --- Сброс ПВВ\n", cpu->index);
+}
 
 /*
  * Запрос от процессора через регистр ПП.
