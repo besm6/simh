@@ -72,13 +72,7 @@ t_stat cpu_clr_trace(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
  * cpu_mod      CPU modifiers list
  */
 
-UNIT cpu_unit[10] = {
-    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
-    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
-    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
-    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
-    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
-    { UDATA(NULL, UNIT_FIX, MEMSIZE) },
+UNIT cpu_unit[4] = {
     { UDATA(NULL, UNIT_FIX, MEMSIZE) },
     { UDATA(NULL, UNIT_FIX, MEMSIZE) },
     { UDATA(NULL, UNIT_FIX, MEMSIZE) },
@@ -221,6 +215,16 @@ DEVICE *sim_devices[] = {
 #endif
 #if NUM_CORES > 3
     &cpu_dev[3],
+#endif
+    &iom_dev[0],        /* ПВВ */
+#if NUM_CORES > 1
+    &iom_dev[1],
+#endif
+#if NUM_CORES > 2
+    &iom_dev[2],
+#endif
+#if NUM_CORES > 3
+    &iom_dev[3],
 #endif
 
     &clock_dev,         /* таймер */
@@ -650,7 +654,7 @@ static void cmd_002(CORE *cpu)
         if (cpu->ACC & CONF_IOM1) {
             /* Запрос к ПВВ. */
             //TODO: ПВВ 2...4
-            iom_request(cpu);
+            iom_request(cpu->index);
         }
         break;
 
@@ -672,7 +676,7 @@ static void cmd_002(CORE *cpu)
         }
         if (cpu->ACC & CONF_IOM_RESET) {
             /* Сброс ПВВ. */
-            iom_reset(cpu);
+            iom_reset(cpu->index);
         }
         break;
 

@@ -111,6 +111,7 @@ extern UNIT clocks[];
 extern t_value memory[MEMSIZE];     /* основная память (64-битная) */
 extern uint8 tag[MEMSIZE];          /* тег для каждого слова основной памяти */
 extern DEVICE cpu_dev[];
+extern DEVICE iom_dev[];
 extern DEVICE clock_dev;
 extern DEVICE tty_dev;
 
@@ -165,6 +166,19 @@ typedef struct {
 #endif
 
 extern CORE cpu_core[];             /* state of processor 0 */
+
+/*
+ * Состояние одного ПВВ.
+ */
+typedef struct {
+    int index;              /* номер ПВВ 0...3 */
+    uint HA;                /* базовый адрес */
+    uint UTA;               /* адрес таблицы устройств */
+    uint IOQA;              /* адрес таблицы запросов */
+    uint SQA;               /* адрес таблицы ответов */
+} IOMDATA;
+
+extern IOMDATA iom_data[4];         /* состояние ПВВ */
 
 /*
  * Четыре режима трассировки.
@@ -390,8 +404,8 @@ t_value svs_unpack(t_value val, t_value mask);
 /*
  * Процессор ввода-вывода.
  */
-void iom_reset(CORE *cpu);
-void iom_request(CORE *cpu);
+void iom_reset(int index);
+void iom_request(int index);
 
 /*
  * Разряды главного регистра прерываний (ГРП)

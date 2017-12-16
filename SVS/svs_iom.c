@@ -29,26 +29,135 @@
 #include "svs_defs.h"
 
 /*
+ * Коды операций ПВВ.
+ */
+#define IOM_START_IO            001
+#define IOM_SET_CHANNEL_BUSY    002
+#define IOM_RESET_CHANNEL_BUSY  003
+#define IOM_LOAD_HOME_ADDRESS   004
+#define IOM_LOAD_UTAB_ADDRESS   005
+#define IOM_LOAD_IOQ_ADDRESS    006
+#define IOM_LOAD_SQ_ADDRESS     007
+#define IOM_SCAN_OUT            010
+#define IOM_SCAN_IN             011
+#define IOM_SYNC_IO             012
+#define IOM_GET_STATUS          013
+#define IOM_INHIBIT             014
+#define IOM_ACTIVATE            015
+#define IOM_LOAD_DFO_FLAGS      016
+
+IOMDATA iom_data[4];        /* состояние ПВВ */
+
+/*
+ * Событие.
+ */
+static t_stat iom_event(UNIT *u)
+{
+    //TODO
+    return SCPE_OK;
+}
+
+/*
+ * IOM data structures
+ *
+ * iom_dev     IOM device descriptor
+ * iom_unit    IOM unit descriptor
+ * iom_reg     IOM register list
+ */
+static UNIT iom_unit[4] = {
+    { UDATA (iom_event, UNIT_FIX+UNIT_ATTABLE, 0) },
+    { UDATA (iom_event, UNIT_FIX+UNIT_ATTABLE, 0) },
+    { UDATA (iom_event, UNIT_FIX+UNIT_ATTABLE, 0) },
+    { UDATA (iom_event, UNIT_FIX+UNIT_ATTABLE, 0) },
+};
+
+static REG iom0_reg[] = {
+    { ORDATA   (HA,     iom_data[0].HA,   20) },
+    { ORDATA   (UTA,    iom_data[0].UTA,  20) },
+    { ORDATA   (IOQA,   iom_data[0].IOQA, 20) },
+    { ORDATA   (SQA,    iom_data[0].SQA,  20) },
+    { 0 }
+};
+
+static MTAB iom_mod[] = {
+    { 0 }
+};
+
+/*
+ * Reset routine
+ */
+static t_stat iom_dev_reset(DEVICE *dptr)
+{
+    //TODO
+    //sim_cancel(u);
+    return SCPE_OK;
+}
+
+static t_stat iom_dev_attach(UNIT *u, CONST char *cptr)
+{
+    t_stat s;
+
+    s = attach_unit(u, cptr);
+    if (s != SCPE_OK)
+        return s;
+    //TODO: установить соответствующий бит в РКП
+    return SCPE_OK;
+}
+
+static t_stat iom_dev_detach(UNIT *u)
+{
+    //TODO: снять соответствующий бит в РКП
+    return detach_unit(u);
+}
+
+DEVICE iom_dev[4] = {
+    { "IOM0", &iom_unit[0], iom0_reg, iom_mod,
+      1, 8, 19, 1, 8, 50,
+      NULL, NULL, &iom_dev_reset,
+      NULL, &iom_dev_attach, &iom_dev_detach,
+      (void*)&iom_data[0], DEV_DISABLE | DEV_DEBUG },
+    { "IOM1", &iom_unit[1], iom0_reg, iom_mod,
+      1, 8, 19, 1, 8, 50,
+      NULL, NULL, &iom_dev_reset,
+      NULL, &iom_dev_attach, &iom_dev_detach,
+      (void*)&iom_data[1], DEV_DISABLE | DEV_DEBUG },
+    { "IOM2", &iom_unit[2], iom0_reg, iom_mod,
+      1, 8, 19, 1, 8, 50,
+      NULL, NULL, &iom_dev_reset,
+      NULL, &iom_dev_attach, &iom_dev_detach,
+      (void*)&iom_data[2], DEV_DISABLE | DEV_DEBUG },
+    { "IOM3", &iom_unit[3], iom0_reg, iom_mod,
+      1, 8, 19, 1, 8, 50,
+      NULL, NULL, &iom_dev_reset,
+      NULL, &iom_dev_attach, &iom_dev_detach,
+      (void*)&iom_data[3], DEV_DISABLE | DEV_DEBUG },
+};
+
+/*
  * Сброс ПВВ.
  */
-void iom_reset(CORE *cpu)
+void iom_reset(int index)
 {
+    IOMDATA *iom = &iom_data[index];
+
     if (svs_trace >= TRACE_INSTRUCTIONS)
-        fprintf(sim_log, "cpu%d --- Сброс ПВВ\n", cpu->index);
+        fprintf(sim_log, "iom%d --- Сброс ПВВ\n", iom->index);
 }
 
 /*
  * Запрос от процессора через регистр ПП.
  */
-void iom_request(CORE *cpu)
+void iom_request(int index)
 {
+    IOMDATA *iom = &iom_data[index];
+
     t_value request = memory[0100];
     if (request == 0)
         return;
 
     if (svs_trace >= TRACE_INSTRUCTIONS)
-        fprintf(sim_log, "cpu%d --- Запрос к ПВВ: %#jx\n",
-            cpu->index, (intmax_t)request);
+        fprintf(sim_log, "iom%d --- Запрос к ПВВ: %#jx\n",
+            iom->index, (intmax_t)request);
 
     /* Запрос выполнен. */
     memory[0100] = 0;
