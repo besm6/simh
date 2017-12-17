@@ -10,10 +10,10 @@
  * the rights to use, copy, modify, merge, publish, distribute, sublicense,
  * and/or sell copies of the Software, and to permit persons to whom the
  * Software is furnished to do so, subject to the following conditions:
-
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
-
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
@@ -21,11 +21,32 @@
  * OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
  * OR OTHER DEALINGS IN THE SOFTWARE.
-
+ *
  * Except as contained in this notice, the name of Leonid Broukhis or
  * Serge Vakulenko shall not be used in advertising or otherwise to promote
  * the sale, use or other dealings in this Software without prior written
  * authorization from Leonid Broukhis and Serge Vakulenko.
+ */
+
+/*
+ * У МПД было 7 процессорных каналов.
+ *
+ * Элементом состояния линии в МПД была принадлежность к одному из
+ * процессоров.
+ *
+ * Принадлежность к процессору №0 (такого не бывает) означает, что
+ * линия свободна.
+ *
+ * При поступлении данных с такой линии МПД отдаёт его случайному
+ * готовому процессору.
+ *
+ * Процессор может послать в МПД команду закрепления линии за
+ * любым готовым процессором, или команду освобождения линии, т.е.
+ * закрепления за №0.
+ *
+ * Если процессор посылает данные в линию, которая ему не
+ * принадлежит, то эти данные приходят процессору - хозяину этой
+ * линии, как если бы они приходили с самой линии.
  */
 
 #include "svs_defs.h"
@@ -490,7 +511,7 @@ MTAB tty_mod[] = {
 };
 
 DEVICE tty_dev = {
-    "TTY", tty_unit, tty_reg, tty_mod,
+    "MPD", tty_unit, tty_reg, tty_mod,
     27, 2, 1, 1, 2, 1,
     NULL, NULL, &tty_reset, NULL, &tty_attach, &tty_detach,
     NULL, DEV_NET|DEV_DEBUG
