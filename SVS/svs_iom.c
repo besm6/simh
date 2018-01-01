@@ -93,43 +93,26 @@ static t_stat iom_dev_reset(DEVICE *dptr)
     return SCPE_OK;
 }
 
-static t_stat iom_dev_attach(UNIT *u, CONST char *cptr)
-{
-    t_stat s;
-
-    s = attach_unit(u, cptr);
-    if (s != SCPE_OK)
-        return s;
-    //TODO: установить соответствующий бит в РКП
-    return SCPE_OK;
-}
-
-static t_stat iom_dev_detach(UNIT *u)
-{
-    //TODO: снять соответствующий бит в РКП
-    return detach_unit(u);
-}
-
 DEVICE iom_dev[4] = {
     { "IOM0", &iom_unit[0], iom0_reg, iom_mod,
       1, 8, 19, 1, 8, 50,
       NULL, NULL, &iom_dev_reset,
-      NULL, &iom_dev_attach, &iom_dev_detach,
+      NULL, NULL, NULL,
       (void*)&iom_data[0], DEV_DISABLE | DEV_DEBUG },
     { "IOM1", &iom_unit[1], iom0_reg, iom_mod,
       1, 8, 19, 1, 8, 50,
       NULL, NULL, &iom_dev_reset,
-      NULL, &iom_dev_attach, &iom_dev_detach,
+      NULL, NULL, NULL,
       (void*)&iom_data[1], DEV_DISABLE | DEV_DEBUG },
     { "IOM2", &iom_unit[2], iom0_reg, iom_mod,
       1, 8, 19, 1, 8, 50,
       NULL, NULL, &iom_dev_reset,
-      NULL, &iom_dev_attach, &iom_dev_detach,
+      NULL, NULL, NULL,
       (void*)&iom_data[2], DEV_DISABLE | DEV_DEBUG },
     { "IOM3", &iom_unit[3], iom0_reg, iom_mod,
       1, 8, 19, 1, 8, 50,
       NULL, NULL, &iom_dev_reset,
-      NULL, &iom_dev_attach, &iom_dev_detach,
+      NULL, NULL, NULL,
       (void*)&iom_data[3], DEV_DISABLE | DEV_DEBUG },
 };
 
@@ -140,6 +123,11 @@ void iom_reset(int index)
 {
     IOMDATA *iom = &iom_data[index];
 
+    iom->index = index;
+    iom->HA = 0100;
+    iom->UTA = 0;
+    iom->IOQA = 0;
+    iom->SQA = 0;
     if (svs_trace >= TRACE_INSTRUCTIONS)
         fprintf(sim_log, "iom%d --- Сброс ПВВ\n", iom->index);
 }
@@ -151,14 +139,36 @@ void iom_request(int index)
 {
     IOMDATA *iom = &iom_data[index];
 
-    t_value request = memory[0100];
+    t_value request = memory[iom->HA];
     if (request == 0)
         return;
 
-    if (svs_trace >= TRACE_INSTRUCTIONS)
-        fprintf(sim_log, "iom%d --- Запрос к ПВВ: %#jx\n",
-            iom->index, (intmax_t)request);
-
     /* Запрос выполнен. */
-    memory[0100] = 0;
+    memory[iom->HA] = 0;
+
+    switch (request >> 36) {
+    case IOM_START_IO:
+    case IOM_SET_CHANNEL_BUSY:
+    case IOM_RESET_CHANNEL_BUSY:
+    case IOM_LOAD_HOME_ADDRESS:
+        iom->HA = request & BITS(20);
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "iom%d --- Установка базового адреса ПВВ: %#o\n",
+                iom->index, iom->HA);
+        break;
+    case IOM_LOAD_UTAB_ADDRESS:
+    case IOM_LOAD_IOQ_ADDRESS:
+    case IOM_LOAD_SQ_ADDRESS:
+    case IOM_SCAN_OUT:
+    case IOM_SCAN_IN:
+    case IOM_SYNC_IO:
+    case IOM_GET_STATUS:
+    case IOM_INHIBIT:
+    case IOM_ACTIVATE:
+    case IOM_LOAD_DFO_FLAGS:
+    default:
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "iom%d --- Неизвестный запрос к ПВВ: %#jx\n",
+                iom->index, (intmax_t)request);
+    }
 }
