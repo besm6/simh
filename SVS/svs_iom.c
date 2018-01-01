@@ -146,7 +146,7 @@ void iom_request(int index)
     /* Запрос выполнен. */
     memory[iom->HA] = 0;
 
-    switch (request >> 36) {
+    switch (request >> 42) {
     case IOM_START_IO:
     case IOM_SET_CHANNEL_BUSY:
     case IOM_RESET_CHANNEL_BUSY:
