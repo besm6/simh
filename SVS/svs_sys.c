@@ -680,7 +680,7 @@ static t_stat svs_load(CORE *cpu, FILE *input)
             if (addr < 010) {
                 cpu->pult[addr] = word;
             } else {
-                memory[addr] = word;
+                memory[addr] = word << 16;
                 tag[addr] = (type == '*') ? TAG_INSN48 : TAG_NUMBER48;
             }
             ++addr;
@@ -710,7 +710,7 @@ static t_stat svs_dump(CORE *cpu, FILE *of, const char *fnam)
             word = cpu->pult[addr];
             t = TAG_INSN48;
         } else {
-            word = memory[addr];
+            word = memory[addr] >> 16;
             t = tag[addr];
         }
 

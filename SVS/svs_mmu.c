@@ -70,7 +70,7 @@ static int va_to_pa(CORE *cpu, int vaddr)
  * Запись слова и тега в память по виртуальному адресу.
  * Возвращает физический адрес слова.
  */
-static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val, uint8 t)
+static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val64, uint8 t)
 {
     vaddr &= BITS(15);
     if (vaddr == 0)
@@ -104,7 +104,7 @@ static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val, uint8 t)
     int paddr = va_to_pa(cpu, vaddr);
 
     /* Пишем в память. */
-    memory[paddr] = val;
+    memory[paddr] = val64;
     tag[paddr] = t;
 
     return paddr;
@@ -119,7 +119,7 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
     uint8 t = (cpu->RUU & (RUU_CHECK_RIGHT | RUU_CHECK_LEFT)) ?
         TAG_NUMBER48 : TAG_INSN48;
 
-    int paddr = mmu_store_with_tag(cpu, vaddr, val, t);
+    int paddr = mmu_store_with_tag(cpu, vaddr, val << 16, t);
 
     if (paddr != 0 && svs_trace >= TRACE_ALL) {
         fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
@@ -132,20 +132,20 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
 /*
  * Запись 64-битного слова в память.
  */
-void mmu_store64(CORE *cpu, int vaddr, t_value val)
+void mmu_store64(CORE *cpu, int vaddr, t_value val64)
 {
-    int paddr = mmu_store_with_tag(cpu, vaddr, val, cpu->TagR);
+    int paddr = mmu_store_with_tag(cpu, vaddr, val64, cpu->TagR);
 
     if (paddr != 0 && svs_trace >= TRACE_ALL) {
         fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
             cpu->index, vaddr, paddr, cpu->TagR);
-        fprintf(sim_log, "%02o %04o:%04o %04o %04o %04o\n",
-            (int) (val >> 60) & 017,
-            (int) (val >> 48) & 07777,
-            (int) (val >> 36) & 07777,
-            (int) (val >> 24) & 07777,
-            (int) (val >> 12) & 07777,
-            (int) val & 07777);
+        fprintf(sim_log, "%04o %04o %04o %04o:%02o %04o\n",
+            (int) (val64 >> 52) & 07777,
+            (int) (val64 >> 40) & 07777,
+            (int) (val64 >> 28) & 07777,
+            (int) (val64 >> 16) & 07777,
+            (int) (val64 >> 12) & 017,
+            (int) val64 & 07777);
     }
 }
 
@@ -153,11 +153,11 @@ void mmu_store64(CORE *cpu, int vaddr, t_value val)
  * Чтение операнда и тега из памяти по виртуальному адресу.
  * Возвращает физический адрес слова.
  */
-static int mmu_load_with_tag(CORE *cpu, int vaddr, t_value *val, uint8 *t)
+static int mmu_load_with_tag(CORE *cpu, int vaddr, t_value *val64, uint8 *t)
 {
     vaddr &= BITS(15);
     if (vaddr == 0) {
-        *val = 0;
+        *val64 = 0;
         *t = 0;
         return 0;
     }
@@ -183,11 +183,11 @@ static int mmu_load_with_tag(CORE *cpu, int vaddr, t_value *val, uint8 *t)
 
     if (paddr >= 010) {
         /* Из памяти */
-        *val = memory[paddr];
+        *val64 = memory[paddr];
         *t = tag[paddr];
     } else {
         /* С тумблерных регистров */
-        *val = cpu->pult[paddr];
+        *val64 = cpu->pult[paddr] << 16;
         *t = TAG_INSN48;
     }
     return paddr;
@@ -199,9 +199,9 @@ static int mmu_load_with_tag(CORE *cpu, int vaddr, t_value *val, uint8 *t)
  */
 t_value mmu_load64(CORE *cpu, int vaddr, int tag_check)
 {
-    t_value val;
+    t_value val64;
     uint8 t;
-    int paddr = mmu_load_with_tag(cpu, vaddr, &val, &t);
+    int paddr = mmu_load_with_tag(cpu, vaddr, &val64, &t);
 
     if (paddr != 0 && svs_trace >= TRACE_ALL) {
         if (paddr < 010)
@@ -209,13 +209,13 @@ t_value mmu_load64(CORE *cpu, int vaddr, int tag_check)
         else
             fprintf(sim_log, "cpu%d       Memory Read [%05o %07o] = %02o:",
                 cpu->index, vaddr, paddr, t);
-        fprintf(sim_log, "%02o %04o:%04o %04o %04o %04o\n",
-            (int) (val >> 60) & 017,
-            (int) (val >> 48) & 07777,
-            (int) (val >> 36) & 07777,
-            (int) (val >> 24) & 07777,
-            (int) (val >> 12) & 07777,
-            (int) val & 07777);
+        fprintf(sim_log, "%04o %04o %04o %04o:%02o %04o\n",
+            (int) (val64 >> 52) & 07777,
+            (int) (val64 >> 40) & 07777,
+            (int) (val64 >> 28) & 07777,
+            (int) (val64 >> 16) & 07777,
+            (int) (val64 >> 12) & 017,
+            (int) val64 & 07777);
     }
 
     /* Прерывание (контроль числа), если попалось 48-битное слово. */
@@ -226,7 +226,7 @@ t_value mmu_load64(CORE *cpu, int vaddr, int tag_check)
     }
 
     cpu->TagR = t;
-    return val;
+    return val64;
 }
 
 /*
@@ -238,6 +238,7 @@ t_value mmu_load(CORE *cpu, int vaddr)
     uint8 t;
     int paddr = mmu_load_with_tag(cpu, vaddr, &val, &t);
 
+    val >>= 16;
     if (paddr != 0 && svs_trace >= TRACE_ALL) {
         if (paddr < 010)
             fprintf(sim_log, "cpu%d       Read  TR%o = ", cpu->index, paddr);
@@ -303,7 +304,7 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
 
     if (paddr >= 010) {
         /* Из памяти */
-        val = memory[paddr];
+        val = memory[paddr] >> 16;
         t = tag[paddr];
     } else {
         /* from switch regs */

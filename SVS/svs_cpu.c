@@ -277,7 +277,7 @@ t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
             /* from switch regs */
             *vptr = cpu->pult[addr];
         } else {
-            *vptr = memory[addr];
+            *vptr = memory[addr] >> 16;
         }
     }
     return SCPE_OK;
@@ -304,7 +304,7 @@ t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
          */
         cpu->pult[addr] = val;
     } else {
-        memory[addr] = val;
+        memory[addr] = val << 16;
         tag[addr] = TAG_INSN48;
     }
     return SCPE_OK;
