@@ -140,8 +140,9 @@ typedef struct {
     uint32 RZ;              /* РЗ, регистр защиты */
 
     uint8 TagR;             /* регистр тега */
-    t_value GRP, MGRP;      /* ГРП, маска */
-    uint32 RVP, MRVP;       /* РВП, маска */
+    t_value RPR;            /* РПР: регистр внутренних прерываний */
+    uint32 GRVP;            /* ГРВП: главный регистр внешних прерываний */
+    uint32 GRM;             /* ГРМ: главный регистр маски */
 
     t_value PP, OPP;        /* ПП, ОПП */
     t_value POP, OPOP;      /* ПОП, ОПОП */
@@ -411,37 +412,37 @@ void iom_request(int index);
  * Разряды главного регистра прерываний (ГРП)
  * Внешние:
  */
-#define GRP_WATCHDOG    00000000000002000LL /* 11 */
+#define RPR_WATCHDOG    00000000000002000LL /* 11 */
 /* Внутренние: */
-#define GRP_DIVZERO     00000000034000000LL /* 23-21 */
-#define GRP_OVERFLOW    00000000014000000LL /* 22-21 */
-#define GRP_CHECK       00000000004000000LL /* 21 */
-#define GRP_OPRND_PROT  00000000002000000LL /* 20 */
-#define GRP_WATCHPT_W   00000000000200000LL /* 17 */
-#define GRP_WATCHPT_R   00000000000100000LL /* 16 */
-#define GRP_INSN_CHECK  00000000000040000LL /* 15 */
-#define GRP_INSN_PROT   00000000000020000LL /* 14 */
-#define GRP_ILL_INSN    00000000000010000LL /* 13 */
-#define GRP_BREAKPOINT  00000000000004000LL /* 12 */
-#define GRP_PAGE_MASK   00000000000000760LL /* 9-5 */
-#define GRP_RAM_CHECK   00000000000000010LL /* 4 */
-#define GRP_BLOCK_MASK  00000000000000007LL /* 3-1 */
+#define RPR_DIVZERO     00000000034000000LL /* 23-21 */
+#define RPR_OVERFLOW    00000000014000000LL /* 22-21 */
+#define RPR_CHECK       00000000004000000LL /* 21 */
+#define RPR_OPRND_PROT  00000000002000000LL /* 20 */
+#define RPR_WATCHPT_W   00000000000200000LL /* 17 */
+#define RPR_WATCHPT_R   00000000000100000LL /* 16 */
+#define RPR_INSN_CHECK  00000000000040000LL /* 15 */
+#define RPR_INSN_PROT   00000000000020000LL /* 14 */
+#define RPR_ILL_INSN    00000000000010000LL /* 13 */
+#define RPR_BREAKPOINT  00000000000004000LL /* 12 */
+#define RPR_PAGE_MASK   00000000000000760LL /* 9-5 */
+#define RPR_RAM_CHECK   00000000000000010LL /* 4 */
+#define RPR_BLOCK_MASK  00000000000000007LL /* 3-1 */
 
-#define GRP_SET_BLOCK(x,m)  (((x) & ~GRP_BLOCK_MASK) | ((m) & GRP_BLOCK_MASK))
-#define GRP_SET_PAGE(x,m)   (((x) & ~GRP_PAGE_MASK) | (((m)<<4) & GRP_PAGE_MASK))
+#define RPR_SET_BLOCK(x,m)  (((x) & ~RPR_BLOCK_MASK) | ((m) & RPR_BLOCK_MASK))
+#define RPR_SET_PAGE(x,m)   (((x) & ~RPR_PAGE_MASK) | (((m)<<4) & RPR_PAGE_MASK))
 
 /*
  * Разряды регистра внешних прерываний РВП
  */
-#define RVP_PROGRAM     0400LL
-#define RVP_REQUEST     0200LL
-#define RVP_RESPONSE    0100LL
-#define RVP_IOM_FAIL    0040LL
-#define RVP_RAM_FAIL    0020LL
-#define RVP_TIMER       0010LL
-#define RVP_INTR_IOM    0004LL
-#define RVP_MULTI       0002LL
-#define RVP_PANEL_REQ   0001LL
+#define GRVP_PROGRAM    0400LL
+#define GRVP_REQUEST    0200LL
+#define GRVP_RESPONSE   0100LL
+#define GRVP_IOM_FAIL   0040LL
+#define GRVP_RAM_FAIL   0020LL
+#define GRVP_TIMER      0010LL
+#define GRVP_INTR_IOM   0004LL
+#define GRVP_MULTI      0002LL
+#define GRVP_PANEL_REQ  0001LL
 
 /*
  * Разряды регистров РКП, ПП, ОПП, ПОП, ОПОП.

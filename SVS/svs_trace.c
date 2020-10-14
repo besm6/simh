@@ -135,24 +135,19 @@ void svs_trace_registers(CORE *cpu)
         fprint_sym(sim_log, 0, &cpu->RKP, 0, 0);
         fprintf(sim_log, "\n");
     }
-    if (cpu->GRP != prev->GRP) {
-        fprintf(sim_log, "cpu%d       Write GRP = ", cpu->index);
-        fprint_sym(sim_log, 0, &cpu->GRP, 0, 0);
+    if (cpu->RPR != prev->RPR) {
+        fprintf(sim_log, "cpu%d       Write RPR = ", cpu->index);
+        fprint_sym(sim_log, 0, &cpu->RPR, 0, 0);
         fprintf(sim_log, "\n");
     }
-    if (cpu->MGRP != prev->MGRP) {
-        fprintf(sim_log, "cpu%d       Write MGRP = ", cpu->index);
-        fprint_sym(sim_log, 0, &cpu->MGRP, 0, 0);
+    if (cpu->GRVP != prev->GRVP) {
+        fprintf(sim_log, "cpu%d       Write GRVP = ", cpu->index);
+        fprint_32bits(sim_log, cpu->GRVP);
         fprintf(sim_log, "\n");
     }
-    if (cpu->RVP != prev->RVP) {
-        fprintf(sim_log, "cpu%d       Write RVP = ", cpu->index);
-        fprint_32bits(sim_log, cpu->RVP);
-        fprintf(sim_log, "\n");
-    }
-    if (cpu->MRVP != prev->MRVP) {
-        fprintf(sim_log, "cpu%d       Write MRVP = ", cpu->index);
-        fprint_32bits(sim_log, cpu->MRVP);
+    if (cpu->GRM != prev->GRM) {
+        fprintf(sim_log, "cpu%d       Write GRM = ", cpu->index);
+        fprint_32bits(sim_log, cpu->GRM);
         fprintf(sim_log, "\n");
     }
 

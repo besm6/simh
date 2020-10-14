@@ -115,7 +115,9 @@ static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val64, uint8 t)
  */
 void mmu_store(CORE *cpu, int vaddr, t_value val)
 {
-    /* Вычисляем тег. */
+    /* Вычисляем тег.
+     * Если ПКП=0 и ПКЛ=0, то тег 35 (команда),
+     * иначе тег 36 (данные). */
     uint8 t = (cpu->RUU & (RUU_CHECK_RIGHT | RUU_CHECK_LEFT)) ?
         TAG_NUMBER48 : TAG_INSN48;
 

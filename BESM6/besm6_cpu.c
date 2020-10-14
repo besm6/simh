@@ -1613,7 +1613,7 @@ t_stat sim_instr (void)
          */
         switch (r) {
         default:
-        ret:                    besm6_draw_panel(1);
+ret:        besm6_draw_panel(1);
             return r;
         case STOP_RWATCH:
         case STOP_WWATCH:

@@ -209,14 +209,14 @@ t_stat tty_reset(DEVICE *dptr)
     return sim_clock_coschedule(tty_unit, 0);
 }
 
-/* Bit 19 of GRP, should be <tty_rate> Hz */
+/* Bit 19 of GRVP, should be <tty_rate> Hz */
 t_stat vt_clk(UNIT * this)
 {
     CORE *cpu = &cpu_core[0];
     int num;
 #if 0
     //TODO
-    cpu->GRP |= cpu->MGRP & GRP_SERIAL;
+    cpu->GRVP |= cpu->GRM & GRVP_SERIAL;
 #endif
     /* Polling receiving from sockets */
     tmxr_poll_rx(&tty_desc);
@@ -290,7 +290,7 @@ t_stat vt_clk(UNIT * this)
      * by instruction count using the target interrupt rate of 300 Hz;
      * otherwise we can wait for a roughly equivalent wallclock time period,
      * e.g. until the next 250 Hz wallclock interrupt, but making sure
-     * that the model time interval between GRP_SERIAL interrupts
+     * that the model time interval between GRVP_SERIAL interrupts
      * is never less than expected.
      */
     if (vt_is_idle()) {
@@ -1326,11 +1326,11 @@ void vt_receive(CORE *cpu)
                 TTY_IN |= mask;         /* start bit */
 #if 0
                 //TODO
-                cpu->GRP |= GRP_TTY_START;   /* not used ? */
+                cpu->GRVP |= GRVP_TTY_START;   /* not used ? */
                 /* auto-enabling the interrupt just in case
                  * (seems to be unneeded as the interrupt is never disabled)
                  */
-                cpu->MGRP |= GRP_SERIAL;
+                cpu->GRM |= GRVP_SERIAL;
 #endif
                 vt_receiving |= mask;
             }

@@ -43,13 +43,13 @@ TRACEMODE svs_trace;                    /* trace mode */
 
 extern const char *scp_errors[];
 
-/* Wired (non-registered) bits of interrupt registers (GRP and RVP)
- * cannot be cleared by writing to the GRP and must be cleared by clearing
+/* Wired (non-registered) bits of interrupt registers (RPR and GRVP)
+ * cannot be cleared by writing to the RPR and must be cleared by clearing
  * the registers generating the corresponding interrupts.
  */
-#define GRP_WIRED_BITS (0)
+#define RPR_WIRED_BITS (0)
 
-#define RVP_WIRED_BITS (0)
+#define GRVP_WIRED_BITS (0)
 
 t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
 t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw);
@@ -128,10 +128,9 @@ REG cpu0_reg[] = {
     { ORDATAVM (RPS6,   cpu_core[0].RPS[6],     48) },
     { ORDATAVM (RPS7,   cpu_core[0].RPS[7],     48) },
     { ORDATA   (RZ,     cpu_core[0].RZ,         32) },  /* page protection */
-    { ORDATAVM (GRP,    cpu_core[0].GRP,        48) },  /* main interrupt reg */
-    { ORDATAVM (MGRP,   cpu_core[0].MGRP,       48) },  /* mask of the above  */
-    { ORDATA   (RVP,    cpu_core[0].RVP,        24) },  /* peripheral interrupt reg */
-    { ORDATA   (MRVP,   cpu_core[0].MRVP,       24) },  /* mask of the above*/
+    { ORDATAVM (RPR,    cpu_core[0].RPR,        48) },  /* internal interrupt reg */
+    { ORDATA   (GRVP,   cpu_core[0].GRVP,       24) },  /* external interrupt reg */
+    { ORDATA   (GRM,    cpu_core[0].GRM,        24) },  /* mask of the above */
     { ORDATAVM (PP,     cpu_core[0].PP,         48) },  /* requests to processors */
     { ORDATAVM (OPP,    cpu_core[0].OPP,        48) },  /* responds to processors */
     { ORDATAVM (POP,    cpu_core[0].POP,        48) },  /* interrupts from processors */
@@ -343,9 +342,8 @@ t_stat cpu_reset(DEVICE *dev)
         cpu->RPS[i] = 0;
     }
 
-    cpu->GRP = 0;
-    cpu->MGRP = 0;
-    cpu->MRVP = 0;
+    cpu->RPR = 0;
+    cpu->GRM = 0;
     cpu->PP = 0;
     cpu->OPP = 0;
     cpu->POP = 0;
@@ -398,7 +396,7 @@ t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
     if (svs_trace) {
         fprintf(sim_log, "cpu%d --- Request from control panel\n", cpu->index);
     }
-    cpu->RVP |= RVP_PANEL_REQ;
+    cpu->GRVP |= GRVP_PANEL_REQ;
     return SCPE_OK;
 }
 
@@ -559,33 +557,25 @@ static void cmd_002(CORE *cpu)
         cpu->ACC = 0;
         break;
 
-    case 036:
-        /* Запись маски главного регистра прерываний */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Установка маски ГРП\n", cpu->index);
-        cpu->MGRP = cpu->ACC;
-        break;
-
     case 0236:
-        /* Чтение маски главного регистра прерываний */
+        /* Считывание сигналов запрета запроса в МОП от коммутаторов памяти */
         if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Чтение маски ГРП\n", cpu->index);
-        cpu->ACC = cpu->MGRP;
+            fprintf(sim_log, "cpu%d --- Чтение ЗЗ\n", cpu->index);
+        cpu->ACC = 0; /* не используем */
         break;
 
     case 037:
-        /* Clearing the main interrupt register: */
-        /* it is impossible to clear wired (stateless) bits this way */
+        /* Гашение регистра внутренних прерываний */
         if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Запись в ГРП\n", cpu->index);
-        cpu->GRP &= cpu->ACC | GRP_WIRED_BITS;
+            fprintf(sim_log, "cpu%d --- Гашение РПР\n", cpu->index);
+        cpu->RPR &= cpu->ACC | RPR_WIRED_BITS;
         break;
 
     case 0237:
         /* Чтение главного регистра прерываний */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Чтение ГРП\n", cpu->index);
-        cpu->ACC = cpu->GRP;
+        cpu->ACC = cpu->RPR;
         break;
 
     case 044:
@@ -603,24 +593,24 @@ static void cmd_002(CORE *cpu)
         break;
 
     case 0245:
-        /* Чтение номера процессора */
+        /* Чтение регистра ТЕГБРЧ */
         if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Чтение номера процессора\n", cpu->index);
-        cpu->ACC = cpu->index;
+            fprintf(sim_log, "cpu%d --- Чтение ТЕГБРЧ\n", cpu->index);
+        cpu->ACC = 0; //TODO
         break;
 
     case 046:
-        /* Запись маски регистра внешних прерываний */
+        /* Запись маски внешних прерываний */
         if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Установка маски РВП\n", cpu->index);
-        cpu->MRVP = cpu->ACC;
+            fprintf(sim_log, "cpu%d --- Установка ГРМ\n", cpu->index);
+        cpu->GRM = cpu->ACC;
         break;
 
     case 0246:
-        /* Чтение маски регистра внешних прерываний */
+        /* Чтение маски внешних прерываний */
         if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Чтение маски РВП\n", cpu->index);
-        cpu->ACC = cpu->MRVP;
+            fprintf(sim_log, "cpu%d --- Чтение ГРМ\n", cpu->index);
+        cpu->ACC = cpu->GRM;
         break;
 
     case 047:
@@ -628,14 +618,14 @@ static void cmd_002(CORE *cpu)
         /* it is impossible to clear wired (stateless) bits this way */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Гашение РВП\n", cpu->index);
-        cpu->RVP &= cpu->ACC | RVP_WIRED_BITS;
+        cpu->GRVP &= cpu->ACC | GRVP_WIRED_BITS;
         break;
 
     case 0247:
         /* Чтение регистра внешних прерываний */
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- Чтение РВП\n", cpu->index);
-        cpu->ACC = cpu->RVP;
+        cpu->ACC = cpu->GRVP;
         break;
 
     case 050:
@@ -659,10 +649,10 @@ static void cmd_002(CORE *cpu)
         break;
 
     case 0250:
-        /* Чтение регистра прерываний процессорам */
+        /* Чтение номера процессора */
         if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Чтение ПП\n", cpu->index);
-        cpu->ACC = cpu->PP;
+            fprintf(sim_log, "cpu%d --- Чтение номера процессора\n", cpu->index);
+        cpu->ACC = cpu->index;
         break;
 
     case 051:
@@ -678,13 +668,6 @@ static void cmd_002(CORE *cpu)
             /* Сброс ПВВ. */
             iom_reset(cpu->index);
         }
-        break;
-
-    case 0251:
-        /* Чтение регистра ответов процессорам */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Чтение ОПП\n", cpu->index);
-        cpu->ACC = cpu->OPP;
         break;
 
     case 052:
@@ -1511,10 +1494,10 @@ branch_zero:
     /* Обновляем регистр внешних прерываний РВП. */
     if (cpu->POP & cpu->RKP) {
         /* Есть внешние прерывания. */
-        cpu->RVP |= RVP_REQUEST;
+        cpu->GRVP |= GRVP_REQUEST;
     } else {
         /* Внешние прерывания отсутствуют. */
-        cpu->RVP &= ~RVP_REQUEST;
+        cpu->GRVP &= ~GRVP_REQUEST;
     }
 
     /* Трассировка изменённых регистров. */
@@ -1629,14 +1612,14 @@ ret:        return r;
                 goto ret;
             op_int_1(cpu, sim_stop_messages[r]);
             // SPSW_NEXT_RK is not important for this interrupt
-            cpu->GRP |= GRP_ILL_INSN;
+            cpu->RPR |= RPR_ILL_INSN;
             break;
         case STOP_INSN_CHECK:
             if (cpu->M[PSW] & PSW_CHECK_HALT)       /* ПоК */
                 goto ret;
             op_int_1(cpu, sim_stop_messages[r]);
             // SPSW_NEXT_RK must be 0 for this interrupt; it is already
-            cpu->GRP |= GRP_INSN_CHECK;
+            cpu->RPR |= RPR_INSN_CHECK;
             break;
         case STOP_INSN_PROT:
             if (cpu->M[PSW] & PSW_INTR_HALT)        /* ПоП */
@@ -1648,7 +1631,7 @@ ret:        return r;
             op_int_1(cpu, sim_stop_messages[r]);
             // SPSW_NEXT_RK must be 1 for this interrupt
             cpu->M[SPSW] |= SPSW_NEXT_RK;
-            cpu->GRP |= GRP_INSN_PROT;
+            cpu->RPR |= RPR_INSN_PROT;
             break;
         case STOP_OPERAND_PROT:
 #if 0
@@ -1664,25 +1647,25 @@ ret:        return r;
             op_int_1(cpu, sim_stop_messages[r]);
             cpu->M[SPSW] |= SPSW_NEXT_RK;
             // The offending virtual page is in bits 5-9
-            cpu->GRP |= GRP_OPRND_PROT;
-            cpu->GRP = GRP_SET_PAGE(cpu->GRP, cpu->bad_addr);
+            cpu->RPR |= RPR_OPRND_PROT;
+            cpu->RPR = RPR_SET_PAGE(cpu->RPR, cpu->bad_addr);
             break;
         case STOP_RAM_CHECK:
             if (cpu->M[PSW] & PSW_CHECK_HALT)       /* ПоК */
                 goto ret;
             op_int_1(cpu, sim_stop_messages[r]);
             // The offending interleaved block # is in bits 1-3.
-            cpu->GRP |= GRP_CHECK | GRP_RAM_CHECK;
-            cpu->GRP = GRP_SET_BLOCK(cpu->GRP, cpu->bad_addr);
+            cpu->RPR |= RPR_CHECK | RPR_RAM_CHECK;
+            cpu->RPR = RPR_SET_BLOCK(cpu->RPR, cpu->bad_addr);
             break;
         case STOP_CACHE_CHECK:
             if (cpu->M[PSW] & PSW_CHECK_HALT)       /* ПоК */
                 goto ret;
             op_int_1(cpu, sim_stop_messages[r]);
             // The offending BRZ # is in bits 1-3.
-            cpu->GRP |= GRP_CHECK;
-            cpu->GRP &= ~GRP_RAM_CHECK;
-            cpu->GRP = GRP_SET_BLOCK(cpu->GRP, cpu->bad_addr);
+            cpu->RPR |= RPR_CHECK;
+            cpu->RPR &= ~RPR_RAM_CHECK;
+            cpu->RPR = RPR_SET_BLOCK(cpu->RPR, cpu->bad_addr);
             break;
         case STOP_INSN_ADDR_MATCH:
             if (cpu->M[PSW] & PSW_INTR_HALT)        /* ПоП */
@@ -1693,7 +1676,7 @@ ret:        return r;
             cpu->RUU ^= RUU_RIGHT_INSTR;
             op_int_1(cpu, sim_stop_messages[r]);
             cpu->M[SPSW] |= SPSW_NEXT_RK;
-            cpu->GRP |= GRP_BREAKPOINT;
+            cpu->RPR |= RPR_BREAKPOINT;
             break;
         case STOP_LOAD_ADDR_MATCH:
             if (cpu->M[PSW] & PSW_INTR_HALT)        /* ПоП */
@@ -1704,7 +1687,7 @@ ret:        return r;
             cpu->RUU ^= RUU_RIGHT_INSTR;
             op_int_1(cpu, sim_stop_messages[r]);
             cpu->M[SPSW] |= SPSW_NEXT_RK;
-            cpu->GRP |= GRP_WATCHPT_R;
+            cpu->RPR |= RPR_WATCHPT_R;
             break;
         case STOP_STORE_ADDR_MATCH:
             if (cpu->M[PSW] & PSW_INTR_HALT)        /* ПоП */
@@ -1715,7 +1698,7 @@ ret:        return r;
             cpu->RUU ^= RUU_RIGHT_INSTR;
             op_int_1(cpu, sim_stop_messages[r]);
             cpu->M[SPSW] |= SPSW_NEXT_RK;
-            cpu->GRP |= GRP_WATCHPT_W;
+            cpu->RPR |= RPR_WATCHPT_W;
             break;
         case STOP_OVFL:
             /* Прерывание по АУ вызывает останов, если БРО=0
@@ -1726,7 +1709,7 @@ ret:        return r;
                  (cpu->M[PSW] & PSW_CHECK_HALT)))   /* ПоК */
                 goto ret;
             op_int_1(cpu, sim_stop_messages[r]);
-            cpu->GRP |= GRP_OVERFLOW|GRP_RAM_CHECK;
+            cpu->RPR |= RPR_OVERFLOW|RPR_RAM_CHECK;
             break;
         case STOP_DIVZERO:
             if (! (cpu->RUU & RUU_AVOST_DISABLE) && /* ! БРО */
@@ -1734,7 +1717,7 @@ ret:        return r;
                  (cpu->M[PSW] & PSW_CHECK_HALT)))   /* ПоК */
                 goto ret;
             op_int_1(cpu, sim_stop_messages[r]);
-            cpu->GRP |= GRP_DIVZERO|GRP_RAM_CHECK;
+            cpu->RPR |= RPR_DIVZERO|RPR_RAM_CHECK;
             break;
         }
         ++iintr;
@@ -1770,7 +1753,7 @@ ret:        return r;
         if (! iintr && ! (cpu->RUU & RUU_RIGHT_INSTR) &&
             ! (cpu->M[PSW] & PSW_INTR_DISABLE))
         {
-            if (cpu->GRP & cpu->MGRP) {
+            if (cpu->RPR) {
                 /* internal interrupt */
                 if (svs_trace >= TRACE_INSTRUCTIONS) {
                     fprintf(sim_log, "cpu%d --- Внутреннее прерывание\n",
@@ -1778,7 +1761,7 @@ ret:        return r;
                 }
                 op_int_2(cpu);
             }
-            if (cpu->RVP & cpu->MRVP) {
+            if (cpu->GRVP & cpu->GRM) {
                 /* external interrupt */
                 if (svs_trace >= TRACE_INSTRUCTIONS) {
                     fprintf(sim_log, "cpu%d --- Внешнее прерывание\n",
@@ -1814,7 +1797,7 @@ t_stat fast_clk(UNIT *this)
 
     CORE *cpu;
     for (cpu = &cpu_core[0]; cpu < &cpu_core[NUM_CORES]; cpu++) {
-        cpu->RVP |= RVP_TIMER;
+        cpu->GRVP |= GRVP_TIMER;
     }
 
     /* Baudot TTYs are synchronised to the main timer rather than the
@@ -1830,7 +1813,7 @@ t_stat fast_clk(UNIT *this)
 }
 
 UNIT clocks[] = {
-    { UDATA(fast_clk, UNIT_IDLE, 0), INSN_PER_TICK },   /* Bit 40 of the GRP, 250 Hz */
+    { UDATA(fast_clk, UNIT_IDLE, 0), INSN_PER_TICK },   /* Bit 40 of the RPR, 250 Hz */
 };
 
 t_stat clk_reset(DEVICE *dev)
