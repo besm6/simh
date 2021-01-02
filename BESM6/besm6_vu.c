@@ -80,7 +80,7 @@ t_stat vu_set_coldly (UNIT *u, int32 val, CONST char *cptr, void *desc)
     if (cptr && atoi(cptr) > 0) {
         vu_col_dly = atoi(cptr);
         return SCPE_OK;
-    } else 
+    } else
         sim_printf("Integer value required\n");
     return SCPE_ARG;
 }
@@ -90,7 +90,7 @@ t_stat vu_set_enddly (UNIT *u, int32 val, CONST char *cptr, void *desc)
     if (cptr && atoi(cptr) > 0) {
         vu_end_dly = atoi(cptr);
         return SCPE_OK;
-    } else 
+    } else
         sim_printf("Integer value required\n");
     return SCPE_ARG;
 }
@@ -100,7 +100,7 @@ t_stat vu_set_carddly (UNIT *u, int32 val, CONST char *cptr, void *desc)
     if (cptr && atoi(cptr) > 0) {
         vu_card_dly = atoi(cptr);
         return SCPE_OK;
-    } else 
+    } else
         sim_printf("Integer value required\n");
     return SCPE_ARG;
 }
@@ -198,7 +198,7 @@ VU_state vu_state[2], vu_next[2];
 int vu_isfifo[2];
 
 // Each card can hold up to 120 bytes; potentially valid GOST chars, expressible in UPDK, are 0-0177.
-// True spaces are 017; bytes past the end of line (empty columns) are 0377. 
+// True spaces are 017; bytes past the end of line (empty columns) are 0377.
 
 unsigned char vu_gost[2][120];
 unsigned short vu_image[2][80];
@@ -328,7 +328,7 @@ static int punch(const char * s) {
     return r;
 }
 
-/* 
+/*
  * The UPDK code is a modified
  * [GOST 10859-CARD](https://ub.fnwi.uva.nl/computermuseum//DWcodes.html#A056)
  * for better distinctiveness wrt other column codes.
@@ -473,7 +473,7 @@ t_stat vu_event (UNIT *u)
     if (vu_state[num] == VU_STARTING) {
         // Reading a line and forming the GOST array.
         int ch;
-        do 
+        do
             ch = utf8_getc(u->fileref);
         while (ch == '\r');
         if (ch == EOF) {
@@ -497,8 +497,8 @@ t_stat vu_event (UNIT *u)
                         gost = unicode_to_gost(ch);
                     }
                     vu_gost[num][i] = gost;
-                    if (!endline && i != 119) 
-                        do 
+                    if (!endline && i != 119)
+                        do
                             ch = utf8_getc(u->fileref);
                         while (ch == '\r');
                 }
@@ -508,7 +508,7 @@ t_stat vu_event (UNIT *u)
                 do
                     ch = utf8_getc(u->fileref);
                 while (ch == '\n' || ch == EOF);
-                
+
             }
             if (0 == strncmp(vu_gost[num], DISP_END, 7)) {
                 // The "dispatcher's end" card, end of card image mode.
@@ -528,7 +528,7 @@ t_stat vu_event (UNIT *u)
             } else {
                 reverse_card(num, 0); /* add parity */
             }
-            
+
             if (vu_dev.dctrl) {
                 display_card(num);
                 besm6_debug("<<< VU-%d: card start", num);
@@ -560,12 +560,12 @@ t_stat vu_event (UNIT *u)
         if (vu_next[num] == VU_STARTING) {
             sim_activate (u, vu_card_dly);
         }
-        vu_state[num] = vu_next[num];        
+        vu_state[num] = vu_next[num];
         if (vu_dev.dctrl) {
             besm6_debug("<<< VU-%d: ======", num);
         }
     } else {
-        besm6_debug("<<< VU-%d: spurious event", num);        
+        besm6_debug("<<< VU-%d: spurious event", num);
     }
 
     return SCPE_OK;
