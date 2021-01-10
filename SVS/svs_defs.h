@@ -173,10 +173,10 @@ extern CORE cpu_core[];             /* state of processor 0 */
  */
 typedef struct {
     int index;              /* номер ПВВ 0...3 */
-    uint HA;                /* базовый адрес */
-    uint UTA;               /* адрес таблицы устройств */
-    uint IOQA;              /* адрес таблицы запросов */
-    uint SQA;               /* адрес таблицы ответов */
+    uint32 HA;              /* базовый адрес */
+    uint32 UTA;             /* адрес таблицы устройств */
+    uint32 IOQA;            /* адрес таблицы запросов */
+    uint32 SQA;             /* адрес таблицы ответов */
 } IOMDATA;
 
 extern IOMDATA iom_data[4];         /* состояние ПВВ */
@@ -443,23 +443,6 @@ void iom_request(int index);
 #define GRVP_INTR_IOM   0004LL
 #define GRVP_MULTI      0002LL
 #define GRVP_PANEL_REQ  0001LL
-
-/*
- * Разряды регистров РКП, ПП, ОПП, ПОП, ОПОП.
- */
-#define CONF_IOM_RESET  (1LL << 47)     /* бит 48: Сброс ПВВ */
-#define CONF_IOM1       (1LL << 45)     /* бит 46: ПВВ 1 */
-#define CONF_IOM2       (1LL << 44)     /* бит 45: ПВВ 2 */
-#define CONF_IOM3       (1LL << 43)     /* бит 44: ПВВ 3 */
-#define CONF_IOM4       (1LL << 42)     /* бит 43: ПВВ 4 */
-#define CONF_IOM_MASK   (0xfLL << 42)   /* биты 43-46: биты ПВВ */
-#define CONF_CPU_MASK   (0xfLL << 38)   /* биты 39-42: биты процесоров СВС */
-#define CONF_DATA_MASK  (0xfLL << 34)   /* биты 35-38: данные МПД */
-#define CONF_MR         (1LL << 33)     /* бит 34: приём МПД */
-#define CONF_MT         (1LL << 32)     /* бит 33: передача МПД */
-
-#define CONF_GET_DATA(x)    (((x) >> 34) & 0xf)
-#define CONF_SET_DATA(r,x)  (((r) & ~CONF_DATA_MASK) | (((x) & 0xfLL) << 34))
 
 /*
  * Разряды регистров РКП, ПП, ОПП, ПОП, ОПОП.
