@@ -199,7 +199,7 @@ t_stat tty_reset (DEVICE *dptr)
 /* Bit 19 of GRP, should be <tty_rate> Hz */
 t_stat vt_clk (UNIT * this)
 {
-    int num;
+    int num, old;
 
     GRP |= MGRP & GRP_SERIAL;
 
@@ -222,6 +222,7 @@ t_stat vt_clk (UNIT * this)
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_VT340_STATE;
         if (num <= TTY_MAX) {
+            old = vt_mask & (1 << (TTY_MAX - num));
             vt_mask |= 1 << (TTY_MAX - num);
         }
         switch (tty_unit[num].flags & TTY_CHARSET_MASK) {
@@ -256,6 +257,7 @@ t_stat vt_clk (UNIT * this)
         /* Entering ^C (ETX) to get a prompt. */
         t->rxb [t->rxbpi++] = '\3';
         if (num <= TTY_MAX) {
+            old = vt_mask & (1 << (TTY_MAX - num));
             vt_mask |= 1 << (TTY_MAX - num);
         }
     }
