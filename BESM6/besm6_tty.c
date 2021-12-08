@@ -172,6 +172,8 @@ static void reset_line(int num)
 {
     /* Reset to a sensible default */
     tty_unit[num].flags &= ~(TTY_CHARSET_MASK|TTY_BSPACE_MASK|TTY_CMDLINE_MASK);
+    tty_typed[num] = -1;
+    tty_instate[num] = 0;
 }
 
 t_stat tty_reset (DEVICE *dptr)
@@ -197,7 +199,7 @@ t_stat tty_reset (DEVICE *dptr)
 /* Bit 19 of GRP, should be <tty_rate> Hz */
 t_stat vt_clk (UNIT * this)
 {
-    int num;
+    int num, old;
 
     GRP |= MGRP & GRP_SERIAL;
 
@@ -219,9 +221,10 @@ t_stat vt_clk (UNIT * this)
         t->rcve = 1;
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_VT340_STATE;
-        if (num <= TTY_MAX)
+        if (num <= TTY_MAX) {
+            old = vt_mask & (1 << (TTY_MAX - num));
             vt_mask |= 1 << (TTY_MAX - num);
-
+	      }
         switch (tty_unit[num].flags & TTY_CHARSET_MASK) {
         case TTY_KOI7_JCUKEN_CHARSET:
             tmxr_linemsg (t, "Encoding is KOI-7 (jcuken)\r\n");
@@ -253,6 +256,10 @@ t_stat vt_clk (UNIT * this)
 
         /* Entering ^C (ETX) to get a prompt. */
         t->rxb [t->rxbpi++] = '\3';
+        if (num <= TTY_MAX) {
+            old = vt_mask & (1 << (TTY_MAX - num));
+            vt_mask |= 1 << (TTY_MAX - num);
+        }
     }
 
     /*
@@ -1061,7 +1068,7 @@ int vt_getc (int num)
         }
         tty_setmode (tty_unit+num, TTY_OFFLINE_STATE, 0, 0);
         tty_unit[num].flags &= ~TTY_STATE_MASK;
-        return -1;
+        return -2;
     }
     if (t->rcve) {
         /* A telnet line. */
@@ -1220,6 +1227,11 @@ void vt_receive()
         uint32 mask = 1 << (TTY_MAX - num);
         switch (tty_instate[num]) {
         case 0:
+            if (tty_typed[num] <= -2) {
+                /* A disconnected line */
+    		        TTY_IN |= mask;		/* "long start" */
+                break;
+            }
             switch (tty_unit[num].flags & TTY_CHARSET_MASK) {
             case TTY_KOI7_JCUKEN_CHARSET:
                 tty_typed[num] = vt_kbd_input_koi7 (num);
