@@ -118,7 +118,7 @@ static const char *key_names[] =
      "KP_INSERT", "KP_DELETE", "KP_5", "KP_ENTER", "KP_MULTIPLY", "KP_DIVIDE"
      };
 
-const char *vid_key_name (int32 key)
+const char *vid_key_name (uint32 key)
 {
 static char tmp_key_name[40];
 
@@ -370,6 +370,9 @@ t_bool vid_cursor_visible;                              /* cursor visibility sta
 DEVICE *vid_dev;
 t_bool vid_key_state[SDL_NUM_SCANCODES];
 VID_DISPLAY *next;
+t_bool vid_blending;
+SDL_Rect *vid_dst_last;
+uint32 *vid_data_last;
 };
 
 SDL_Thread *vid_thread_handle = NULL;                   /* event thread handle */
@@ -379,11 +382,16 @@ static VID_DISPLAY vid_first;
 KEY_EVENT_QUEUE vid_key_events;                         /* keyboard events */
 MOUSE_EVENT_QUEUE vid_mouse_events;                     /* mouse events */
 
-static VID_DISPLAY *vid_window_from_id (Uint32 windowID)
+static VID_DISPLAY *vid_get_event_window (SDL_Event *ev, Uint32 windowID)
 {
 static Uint32 lastID = 0xffffffff;
 static VID_DISPLAY *last_display = NULL;
 VID_DISPLAY *vptr;
+SDL_KeyboardEvent *kev;
+SDL_MouseButtonEvent *bev;
+SDL_MouseMotionEvent *mev;
+SDL_WindowEvent *wev;
+SDL_UserEvent *uev;
 
 if (windowID == lastID)
     return last_display;
@@ -394,6 +402,76 @@ for (vptr = &vid_first; vptr != NULL; vptr = vptr->next) {
         return last_display = vptr;
         }
     }
+
+switch (ev->type) {
+    case SDL_KEYDOWN:
+    case SDL_KEYUP:
+        kev = (SDL_KeyboardEvent *)ev;
+        sim_messagef (SCPE_OK, "Unrecognized key event.\n");
+        sim_messagef (SCPE_OK, "  type = %u\n", kev->type);
+        sim_messagef (SCPE_OK, "  timestamp = %u\n", kev->timestamp);
+        sim_messagef (SCPE_OK, "  windowID = %u\n", kev->windowID);
+        sim_messagef (SCPE_OK, "  state = %u\n", kev->state);
+        sim_messagef (SCPE_OK, "  repeat = %u\n", kev->repeat);
+        sim_messagef (SCPE_OK, "  scancode = %d\n", kev->keysym.scancode);
+        sim_messagef (SCPE_OK, "  sym = %d\n", kev->keysym.sym);
+        sim_messagef (SCPE_OK, "  mod = %u\n", kev->keysym.mod);
+        break;
+    case SDL_MOUSEBUTTONDOWN:
+    case SDL_MOUSEBUTTONUP:
+        bev = (SDL_MouseButtonEvent *)ev;
+        sim_messagef (SCPE_OK, "Unrecognized mouse button event.\n");
+        sim_messagef (SCPE_OK, "  type = %u\n", bev->type);
+        sim_messagef (SCPE_OK, "  timestamp = %u\n", bev->timestamp);
+        sim_messagef (SCPE_OK, "  windowID = %u\n", bev->windowID);
+        sim_messagef (SCPE_OK, "  which = %u\n", bev->which);
+        sim_messagef (SCPE_OK, "  button = %u\n", bev->button);
+        sim_messagef (SCPE_OK, "  state = %u\n", bev->state);
+        sim_messagef (SCPE_OK, "  clicks = %u\n", bev->clicks);
+        sim_messagef (SCPE_OK, "  x = %d\n", bev->x);
+        sim_messagef (SCPE_OK, "  y = %d\n", bev->y);
+        break;
+    case SDL_MOUSEMOTION:
+        mev = (SDL_MouseMotionEvent *)ev;
+        sim_messagef (SCPE_OK, "Unrecognized mouse motion event.\n");
+        sim_messagef (SCPE_OK, "  type = %u\n", mev->type);
+        sim_messagef (SCPE_OK, "  timestamp = %u\n", mev->timestamp);
+        sim_messagef (SCPE_OK, "  windowID = %u\n", mev->windowID);
+        sim_messagef (SCPE_OK, "  which = %u\n", mev->which);
+        sim_messagef (SCPE_OK, "  state = %u\n", mev->state);
+        sim_messagef (SCPE_OK, "  x = %d\n", mev->x);
+        sim_messagef (SCPE_OK, "  y = %d\n", mev->y);
+        sim_messagef (SCPE_OK, "  xrel = %d\n", mev->xrel);
+        sim_messagef (SCPE_OK, "  yrel = %d\n", mev->yrel);
+        break;
+    case SDL_WINDOWEVENT:
+        wev = (SDL_WindowEvent *)ev;
+        sim_messagef (SCPE_OK, "Unrecognized window event.\n");
+        sim_messagef (SCPE_OK, "  type = %u\n", wev->type);
+        sim_messagef (SCPE_OK, "  timestamp = %u\n", wev->timestamp);
+        sim_messagef (SCPE_OK, "  windowID = %u\n", wev->windowID);
+        sim_messagef (SCPE_OK, "  event = %u\n", wev->event);
+        sim_messagef (SCPE_OK, "  data1 = %d\n", wev->data1);
+        sim_messagef (SCPE_OK, "  data2 = %d\n", wev->data2);
+        break;
+    case SDL_USEREVENT:
+        uev = (SDL_UserEvent *)ev;
+        sim_messagef (SCPE_OK, "Unrecognized user event.\n");
+        sim_messagef (SCPE_OK, "  type = %u\n", uev->type);
+        sim_messagef (SCPE_OK, "  timestamp = %u\n", uev->timestamp);
+        sim_messagef (SCPE_OK, "  windowID = %u\n", uev->windowID);
+        sim_messagef (SCPE_OK, "  code = %d\n", uev->code);
+        sim_messagef (SCPE_OK, "  data1 = %p\n", uev->data1);
+        sim_messagef (SCPE_OK, "  data2 = %p\n", uev->data2);
+        break;
+    default:
+        sim_messagef (SCPE_OK, "Unrecognized event type %u\n", ev->type);
+        break;
+    }
+
+sim_messagef (SCPE_OK,
+"\nSIMH has encountered a bug in SDL2.  An upgrade to SDL2\n"
+"version 2.0.14 should fix this problem.\n");
 
 return NULL;
 }
@@ -447,6 +525,8 @@ if (vid_main_thread_handle == NULL) {
     }
 
 vid_beep_setup (400, 660);
+
+memset (&event, 0, sizeof (event));
 
 while (1) {
     int status = SDL_WaitEvent (&event);
@@ -623,6 +703,7 @@ vptr->vid_width = width;
 vptr->vid_height = height;
 vptr->vid_mouse_captured = FALSE;
 vptr->vid_cursor_visible = (vptr->vid_flags & SIM_VID_INPUTCAPTURED);
+vptr->vid_blending = FALSE;
 
 if (!vid_active) {
     vid_key_events.head = 0;
@@ -784,22 +865,25 @@ uint32 vid_map_rgb (uint8 r, uint8 g, uint8 b)
 return vid_map_rgb_window (&vid_first, r, g, b);
 }
 
-static SDL_Rect *vid_dst_last;
-static uint32 *vid_data_last;
+uint32 vid_map_rgba_window (VID_DISPLAY *vptr, uint8 r, uint8 g, uint8 b, uint8 a)
+{
+return SDL_MapRGBA (vptr->vid_format, r, g, b, a);
+}
 
 void vid_draw_window (VID_DISPLAY *vptr, int32 x, int32 y, int32 w, int32 h, uint32 *buf)
 {
 SDL_Event user_event;
-SDL_Rect *vid_dst;
+SDL_Rect *vid_dst, *last;
 uint32 *vid_data;
 
 sim_debug (SIM_VID_DBG_VIDEO, vptr->vid_dev, "vid_draw(%d, %d, %d, %d)\n", x, y, w, h);
 
 SDL_LockMutex (vptr->vid_draw_mutex);                         /* Synchronize to check region dimensions */
-if (vid_dst_last                                     && /* As yet unprocessed draw rectangle? */
-    (vid_dst_last->x == x) && (vid_dst_last->y == y) && /* AND identical position? */
-    (vid_dst_last->w == w) && (vid_dst_last->h == h)) { /* AND identical dimensions? */
-    memcpy (vid_data_last, buf, w*h*sizeof(*buf));      /* Replace region contents */
+last = vptr->vid_dst_last;
+if (last                               &&               /* As yet unprocessed draw rectangle? */
+    (last->x == x) && (last->y == y) &&                 /* AND identical position? */
+    (last->w == w) && (last->h == h)) {                 /* AND identical dimensions? */
+    memcpy (vptr->vid_data_last, buf, w*h*sizeof(*buf));/* Replace region contents */
     SDL_UnlockMutex (vptr->vid_draw_mutex);                   /* Done */
     return;
     }
@@ -827,8 +911,8 @@ user_event.user.code = EVENT_DRAW;
 user_event.user.data1 = (void *)vid_dst;
 user_event.user.data2 = (void *)vid_data;
 SDL_LockMutex (vptr->vid_draw_mutex);         /* protect vid_dst_last & vid_data_last */
-vid_dst_last = vid_dst;
-vid_data_last = vid_data;
+vptr->vid_dst_last = vid_dst;
+vptr->vid_data_last = vid_data;
 SDL_UnlockMutex (vptr->vid_draw_mutex);       /* done protection */
 if (SDL_PushEvent (&user_event) < 0) {
     sim_printf ("%s: vid_draw() SDL_PushEvent error: %s\n", vid_dname(vptr->vid_dev), SDL_GetError());
@@ -858,7 +942,7 @@ if (sim_deb) {
             int bit = 7 - ((j + i*width) & 0x7);
             static char mode[] = "TWIB";
 
-            sim_debug (SIM_VID_DBG_CURSOR, vptr->vid_dev, "%c", mode[(((data[byte]>>bit)&1)<<1)|(mask[byte]>>bit)&1]);
+            sim_debug (SIM_VID_DBG_CURSOR, vptr->vid_dev, "%c", mode[(((data[byte]>>bit)&1)<<1)|((mask[byte]>>bit)&1)]);
             }
         sim_debug (SIM_VID_DBG_CURSOR, vptr->vid_dev, "\n");
         }
@@ -1336,7 +1420,9 @@ void vid_controller_button (SDL_ControllerButtonEvent *event)
 void vid_key (SDL_KeyboardEvent *event)
 {
 SIM_KEY_EVENT ev;
-VID_DISPLAY *vptr = vid_window_from_id (event->windowID);
+VID_DISPLAY *vptr = vid_get_event_window ((SDL_Event *)event, event->windowID);
+if (vptr == NULL)
+   return;
 
 if (vptr->vid_mouse_captured) {
     static const Uint8 *KeyStates = NULL;
@@ -1393,7 +1479,9 @@ void vid_mouse_move (SDL_MouseMotionEvent *event)
 SDL_Event dummy_event;
 SDL_MouseMotionEvent *dev = (SDL_MouseMotionEvent *)&dummy_event;
 SIM_MOUSE_EVENT ev;
-VID_DISPLAY *vptr = vid_window_from_id (event->windowID);
+VID_DISPLAY *vptr = vid_get_event_window ((SDL_Event *)event, event->windowID);
+if (vptr == NULL)
+   return;
 
 if ((!vptr->vid_mouse_captured) && (vptr->vid_flags & SIM_VID_INPUTCAPTURED))
     return;
@@ -1466,7 +1554,9 @@ void vid_mouse_button (SDL_MouseButtonEvent *event)
 SDL_Event dummy_event;
 SIM_MOUSE_EVENT ev;
 t_bool state;
-VID_DISPLAY *vptr = vid_window_from_id (event->windowID);
+VID_DISPLAY *vptr = vid_get_event_window ((SDL_Event *)event, event->windowID);
+if (vptr == NULL)
+   return;
 
 if ((!vptr->vid_mouse_captured) && (vptr->vid_flags & SIM_VID_INPUTCAPTURED)) {
     if ((event->state == SDL_PRESSED) &&
@@ -1572,11 +1662,15 @@ vid_stretch(vptr, &vid_dst);
 sim_debug (SIM_VID_DBG_VIDEO, vptr->vid_dev, "Video Update Event: \n");
 if (sim_deb)
     fflush (sim_deb);
-if (SDL_RenderClear (vptr->vid_renderer))
-    sim_printf ("%s: Video Update Event: SDL_RenderClear error: %s\n", vid_dname(vptr->vid_dev), SDL_GetError());
-if (SDL_RenderCopy (vptr->vid_renderer, vptr->vid_texture, NULL, &vid_dst))
-    sim_printf ("%s: Video Update Event: SDL_RenderCopy error: %s\n", vid_dname(vptr->vid_dev), SDL_GetError());
-SDL_RenderPresent (vptr->vid_renderer);
+if (vptr->vid_blending)
+    SDL_RenderPresent (vptr->vid_renderer);
+else {
+    if (SDL_RenderClear (vptr->vid_renderer))
+        sim_printf ("%s: Video Update Event: SDL_RenderClear error: %s\n", vid_dname(vptr->vid_dev), SDL_GetError());
+    if (SDL_RenderCopy (vptr->vid_renderer, vptr->vid_texture, NULL, &vid_dst))
+        sim_printf ("%s: Video Update Event: SDL_RenderCopy error: %s\n", vid_dname(vptr->vid_dev), SDL_GetError());
+    SDL_RenderPresent (vptr->vid_renderer);
+    }
 }
 
 void vid_update_cursor (VID_DISPLAY *vptr, SDL_Cursor *cursor, t_bool visible)
@@ -1612,14 +1706,19 @@ uint32 *buf = (uint32 *)event->data2;
 sim_debug (SIM_VID_DBG_VIDEO, vptr->vid_dev, "Draw Region Event: (%d,%d,%d,%d)\n", vid_dst->x, vid_dst->x, vid_dst->w, vid_dst->h);
 
 SDL_LockMutex (vptr->vid_draw_mutex);
-if (vid_dst == vid_dst_last) {
-    vid_dst_last = NULL;
-    vid_data_last = NULL;
+if (vid_dst == vptr->vid_dst_last) {
+    vptr->vid_dst_last = NULL;
+    vptr->vid_data_last = NULL;
     }
 SDL_UnlockMutex (vptr->vid_draw_mutex);
 
-if (SDL_UpdateTexture(vptr->vid_texture, vid_dst, buf, vid_dst->w*sizeof(*buf)))
-    sim_printf ("%s: vid_draw_region() - SDL_UpdateTexture error: %s\n", vid_dname(vptr->vid_dev), SDL_GetError());
+if (vptr->vid_blending) {
+    SDL_UpdateTexture(vptr->vid_texture, vid_dst, buf, vid_dst->w*sizeof(*buf));
+    SDL_RenderCopy (vptr->vid_renderer, vptr->vid_texture, vid_dst, vid_dst); 
+    }
+else
+    if (SDL_UpdateTexture(vptr->vid_texture, vid_dst, buf, vid_dst->w*sizeof(*buf)))
+        sim_printf ("%s: vid_draw_region() - SDL_UpdateTexture error: %s\n", vid_dname(vptr->vid_dev), SDL_GetError());
 
 free (vid_dst);
 free (buf);
@@ -1681,9 +1780,41 @@ else
     SDL_SetWindowTitle (vptr->vid_window, vptr->vid_title);
 
 memset (&vptr->vid_key_state, 0, sizeof(vptr->vid_key_state));
+vptr->vid_dst_last = NULL;
+vptr->vid_data_last = NULL;
 
 vid_active++;
 return 1;
+}
+
+t_stat vid_set_alpha_mode (VID_DISPLAY *vptr, int mode)
+{
+SDL_BlendMode x;
+switch (mode) {
+    case SIM_ALPHA_NONE:
+        vptr->vid_blending = FALSE;
+        x = SDL_BLENDMODE_NONE;
+        break;
+    case SIM_ALPHA_BLEND:
+        vptr->vid_blending = TRUE;
+        x = SDL_BLENDMODE_BLEND;
+        break;
+    case SIM_ALPHA_ADD:
+        vptr->vid_blending = TRUE;
+        x = SDL_BLENDMODE_ADD;
+        break;
+    case SIM_ALPHA_MOD:
+        vptr->vid_blending = TRUE;
+        x = SDL_BLENDMODE_MOD;
+        break;
+    default:
+        return SCPE_ARG;
+    }
+if (SDL_SetTextureBlendMode (vptr->vid_texture, x))
+    return SCPE_IERR;
+if (SDL_SetRenderDrawBlendMode (vptr->vid_renderer, x))
+    return SCPE_IERR;
+return SCPE_OK;
 }
 
 static void vid_destroy (VID_DISPLAY *vptr)
@@ -1885,7 +2016,7 @@ while (vid_active) {
                 break;
 
             case SDL_WINDOWEVENT:
-                vptr = vid_window_from_id (event.window.windowID);
+                vptr = vid_get_event_window (&event, event.window.windowID);
                 if (vptr != NULL) {
                     sim_debug (SIM_VID_DBG_VIDEO|SIM_VID_DBG_KEY|SIM_VID_DBG_MOUSE|SIM_VID_DBG_CURSOR, vptr->vid_dev, "vid_thread() - Window Event: %d - %s\n", event.window.event, windoweventtypes[event.window.event]);
                     switch (event.window.event) {
@@ -1913,13 +2044,25 @@ while (vid_active) {
                 /* EVENT_SCREENSHOT to take a screenshot */
                 /* EVENT_BEEP   to emit a beep sound */
                 while (vid_active && event.user.code) {
-                    vptr = vid_window_from_id (event.user.windowID);
+                    /* Handle Beep first since it isn't a window oriented event */
+                    if (event.user.code == EVENT_BEEP) {
+                        vid_beep_event ();
+                        event.user.code = 0;    /* Mark as done */
+                        continue;
+                        }
+                    vptr = vid_get_event_window (&event, event.user.windowID);
+                    if (vptr == NULL) {
+                        sim_debug (SIM_VID_DBG_VIDEO, vptr->vid_dev, "vid_thread() - Ignored event not bound to a window\n");
+                        event.user.code = 0;    /* Mark as done */
+                        break;
+                        }
                     if (event.user.code == EVENT_REDRAW) {
                         vid_update (vptr);
                         event.user.code = 0;    /* Mark as done */
-if (0)                        while (SDL_PeepEvents (&event, 1, SDL_GETEVENT, SDL_USEREVENT, SDL_USEREVENT)) {
-                            if (event.user.code == EVENT_REDRAW) {
-                                /* Only do a single video update between waiting for events */
+                        while (SDL_PeepEvents (&event, 1, SDL_GETEVENT, SDL_USEREVENT, SDL_USEREVENT)) {
+                            if ((event.user.code == EVENT_REDRAW) &&
+                                (vptr == vid_get_event_window (&event, event.user.windowID))) {
+                                /* Only do a single video update to the same window between waiting for events */
                                 sim_debug (SIM_VID_DBG_VIDEO, vptr->vid_dev, "vid_thread() - Ignored extra REDRAW Event\n");
                                 event.user.code = 0;    /* Mark as done */
                                 continue;
@@ -1968,7 +2111,7 @@ if (0)                        while (SDL_PeepEvents (&event, 1, SDL_GETEVENT, SD
                     }
                 break;
             case SDL_QUIT:
-                sim_debug (SIM_VID_DBG_VIDEO|SIM_VID_DBG_KEY|SIM_VID_DBG_MOUSE|SIM_VID_DBG_CURSOR, vptr->vid_dev, "vid_thread() - QUIT Event - %s\n", vid_quit_callback ? "Signaled" : "Ignored");
+                sim_debug (SIM_VID_DBG_VIDEO|SIM_VID_DBG_KEY|SIM_VID_DBG_MOUSE|SIM_VID_DBG_CURSOR, vptr0->vid_dev, "vid_thread() - QUIT Event - %s\n", vid_quit_callback ? "Signaled" : "Ignored");
                 if (vid_quit_callback)
                     vid_quit_callback ();
                 break;
@@ -2663,7 +2806,7 @@ void vid_set_cursor_position_window (VID_DISPLAY *vptr, int32 x, int32 y)
 return;
 }
 
-const char *vid_key_name (int32 key)
+const char *vid_key_name (uint32 key)
 {
 return "";
 }

@@ -28,8 +28,12 @@
    from the author.
 */
 
-#include "3b2_defs.h"
 #include "3b2_ctc.h"
+
+#include "sim_disk.h"
+
+#include "3b2_io.h"
+#include "3b2_mem.h"
 
 #define CTQRESIZE     20
 #define CTQCESIZE     16
@@ -50,14 +54,12 @@
 
 #define CTC_DIAG_CRC1 0xa4a5752f
 #define CTC_DIAG_CRC2 0xd3d20eb3
+#define CTC_DIAG_CRC3 0x0f387ce3  /* Used by SVR 2.0.5 */
 
 #define TAPE_DEV      0    /* CTAPE device */
 #define XMF_DEV       1    /* XM Floppy device */
 
 #define VTOC_BLOCK    0
-
-#define ATOW(arr,i)  ((uint32)arr[i+3] + ((uint32)arr[i+2] << 8) +      \
-                      ((uint32)arr[i+1] << 16) + ((uint32)arr[i] << 24))
 
 /* Static function declarations */
 static t_stat ctc_show_cqueue(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
@@ -99,10 +101,10 @@ UNIT ctc_unit = {
 };
 
 MTAB ctc_mod[] = {
-    { UNIT_WLK,         0, "write enabled", "WRITEENABLED",
-      NULL, NULL, NULL, "Write enabled tape drive" },
-    { UNIT_WLK,  UNIT_WLK, "write locked", "LOCKED",
-      NULL, NULL, NULL, "Write lock tape drive" },
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write enable tape drive" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "Write lock tape drive" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, "RQUEUE=n", NULL,
       NULL, &ctc_show_rqueue, NULL, "Display Request Queue for card n" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, "CQUEUE=n", NULL,
@@ -307,7 +309,8 @@ static void ctc_cmd(uint8 cid,
          * we are expected to write results into memory at address
          * 0x200f000 */
         if (ctc_crc == CTC_DIAG_CRC1 ||
-            ctc_crc == CTC_DIAG_CRC2) {
+            ctc_crc == CTC_DIAG_CRC2 ||
+            ctc_crc == CTC_DIAG_CRC3) {
             pwrite_h(0x200f000, 0x1);   /* Test success */
             pwrite_h(0x200f002, 0x0);   /* Test Number */
             pwrite_h(0x200f004, 0x0);   /* Actual */
@@ -365,7 +368,7 @@ static void ctc_cmd(uint8 cid,
             break;
         }
 
-        if (ctc_unit.flags & UNIT_WLK) {
+        if (ctc_unit.flags & UNIT_WPRT) {
             cqe->opcode = CTC_RDONLY;
             break;
         }
@@ -489,7 +492,7 @@ static void ctc_cmd(uint8 cid,
             break;
         }
 
-        if (ctc_unit.flags & UNIT_WLK) {
+        if (ctc_unit.flags & UNIT_WPRT) {
             cqe->opcode = CTC_RDONLY;
             break;
         }
@@ -760,7 +763,7 @@ t_stat ctc_svc(UNIT *uptr)
         sim_debug(TRACE_DBG, &ctc_dev,
                   "[cio_svc] IRQ for board %d (VEC=%d)\n",
                   int_cid, cio[int_cid].ivec);
-        cio[int_cid].intr = TRUE;
+        CIO_SET_INT(int_cid);
     }
 
     /* Check to see if the completion queue has more work in it. We

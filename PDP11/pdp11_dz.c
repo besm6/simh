@@ -226,7 +226,7 @@ uint16 dz_lpr[MAX_DZ_MUXES] = { 0 };                    /* line param */
 uint16 dz_tcr[MAX_DZ_MUXES] = { 0 };                    /* xmit control */
 uint16 dz_msr[MAX_DZ_MUXES] = { 0 };                    /* modem status */
 uint16 dz_tdr[MAX_DZ_MUXES] = { 0 };                    /* xmit data */
-uint16 dz_silo[MAX_DZ_MUXES][DZ_SILO_ALM] = { 0 };      /* silo */
+uint16 dz_silo[MAX_DZ_MUXES][DZ_SILO_ALM] = { {0} };    /* silo */
 uint16 dz_scnt[MAX_DZ_MUXES] = { 0 };                   /* silo used */
 uint8 dz_sae[MAX_DZ_MUXES] = { 0 };                     /* silo alarm enabled */
 uint32 dz_rxi = 0;                                      /* rcv interrupts */
@@ -347,7 +347,7 @@ MTAB dz_mod[] = {
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, "LINES", "LINES=n",
         &dz_setnl, &tmxr_show_lines, (void *) &dz_desc, "Display number of lines" },
     { MTAB_XTD|MTAB_VDV|MTAB_NC, 0, NULL, "LOG=n=file",
-        &dz_set_log, NULL, &dz_desc },
+        &dz_set_log, NULL, &dz_desc, "Enables logging on designated line" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, NULL, "NOLOG=n",
         &dz_set_nolog, NULL, &dz_desc, "Disable logging on designated line" },
     { MTAB_XTD|MTAB_VDV|MTAB_NMO, 0, "LOG", NULL,

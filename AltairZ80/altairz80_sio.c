@@ -167,6 +167,8 @@ extern uint32 PCX;
 extern int32 SR;
 extern UNIT cpu_unit;
 extern const char* handlerNameForPort(const int32 port);
+extern uint32 vectorInterrupt;            /* Interrupt Request */
+extern uint8 dataBus[MAX_INT_VECTORS];    /* Data Bus Value    */
 
 /* Debug Flags */
 static DEBTAB generic_dt[] = {
@@ -220,6 +222,8 @@ static int32 versionPos             = 0;        /* determines state for sending 
 static int32 lastCPMStatus          = 0;        /* result of last attachCPM command                             */
 static int32 lastCommand            = 0;        /* most recent command processed on port 0xfeh                  */
 static int32 getCommonPos           = 0;        /* determines state for sending the 'common' register           */
+static int32 genInterruptPos        = 0;        /* determines state for receiving interrupt vector and data     */
+static int32 genInterruptVec        = 0;        /* stores interrupt vector                                      */
 
 /* CPU Clock Frequency related                                                                                  */
 static uint32 newClockFrequency;
@@ -651,6 +655,8 @@ static SIO_PORT_INFO port_table[PORT_TABLE_SIZE] = {
     {0x01, 0, 0,                0,      0, FALSE, 0, FALSE, TRUE                        },
     {0x02, 0, VGSIO_CAN_READ,   0,      VGSIO_CAN_WRITE, FALSE, 0, TRUE, TRUE           },
     {0x03, 0, VGSIO_CAN_READ,   0,      VGSIO_CAN_WRITE, FALSE, 0, FALSE, TRUE          },
+    {0x04, 0, VGSIO_CAN_READ,   0,      VGSIO_CAN_WRITE, FALSE, 0, TRUE, TRUE           },
+    {0x05, 0, VGSIO_CAN_READ,   0,      VGSIO_CAN_WRITE, FALSE, 0, FALSE, TRUE          },
     {0x10, 0, SIO_CAN_READ,     0,      SIO_CAN_WRITE, TRUE, SIO_RESET, FALSE, TRUE     },
     {0x11, 0, SIO_CAN_READ,     0,      SIO_CAN_WRITE, TRUE, SIO_RESET, TRUE, TRUE      },
     {0x14, 1, SIO_CAN_READ,     0,      SIO_CAN_WRITE, TRUE, SIO_RESET, FALSE, TRUE     },
@@ -1251,6 +1257,7 @@ enum simhPseudoDeviceCommands { /* do not change order or remove commands, add o
     readURLCmd,                 /* 30 read the contents of an URL                                       */
     getCPUClockFrequency,       /* 31 get the clock frequency of the CPU                                */
     setCPUClockFrequency,       /* 32 set the clock frequency of the CPU                                */
+    genInterruptCmd,            /* 33 generate interrupt                                                */
     kSimhPseudoDeviceCommands
 };
 
@@ -1288,6 +1295,7 @@ static const char *cmdNames[kSimhPseudoDeviceCommands] = {
     "readURL",
     "getCPUClockFrequency",
     "setCPUClockFrequency",
+    "genInterrupt",
 };
 
 #define TIMER_STACK_LIMIT          10       /* stack depth of timer stack   */
@@ -1634,7 +1642,9 @@ void do_SIMH_sleep(void) {
      Otherwise there is the possibility that such interrupts are skipped. */
     if ((simh_unit.flags & UNIT_SIMH_TIMERON) && rtc_avail && (sim_os_msec() + 1 >= timeOfNextInterrupt))
         return;
-    if (SIMHSleep && !sio_unit.u4)  /* time to sleep and SIO not attached to a file */
+    if (SIMHSleep && !sio_unit.u4)
+        /* time to sleep and SIO not attached to a file.
+         Use 'D SLEEP 0' to disable this functionality when not needed. */
         sim_os_ms_sleep(SIMHSleep);
 }
 
@@ -1725,6 +1735,19 @@ static int32 simh_out(const int32 port, const int32 data) {
             } else {
                 timerInterruptHandler |= (data << 8);
                 setTimerInterruptAdrPos = lastCommand = 0;
+            }
+            break;
+
+        case genInterruptCmd:
+            if (genInterruptPos == 0) {
+                genInterruptVec = data;
+                genInterruptPos = 1;
+		sim_printf("genInterruptVec=%d genInterruptPos=%d\n", genInterruptVec, genInterruptPos);
+            } else {
+                vectorInterrupt |= (1 << genInterruptVec);
+                dataBus[genInterruptVec] = data;
+                genInterruptPos = lastCommand = 0;
+		sim_printf("genInterruptVec=%d vectorInterrupt=%X dataBus=%02X genInterruptPos=%d\n", genInterruptVec, vectorInterrupt, data, genInterruptPos);
             }
             break;
 
