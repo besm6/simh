@@ -99,6 +99,9 @@ typedef struct {
 
 typedef struct {
     PNP_INFO pnp;       /* Plug-n-Play Information */
+    uint16 fdctype;     /* Default is 1793 */
+    uint8 intenable;    /* Interrupt Enable */
+    uint8 intvector;    /* Interrupt Vector */
     uint8 intrq;        /* WD179X Interrupt Request Output (EOJ) */
     uint8 hld;          /* WD179X Head Load Output */
     uint8 drq;          /* WD179X DMA Request Output */
@@ -106,6 +109,7 @@ typedef struct {
     uint8 fdc_head;     /* H Head Number */
     uint8 sel_drive;    /* Currently selected drive */
     uint8 drivetype;    /* 8 or 5 depending on disk type. */
+    /* Note: the fields above must be kept in sync with WD179X_INFO_PUB */
     uint8 fdc_status;   /* WD179X Status Register */
     uint8 verify;       /* WD179X Type 1 command Verify flag */
     uint8 fdc_data;     /* WD179X Data Register */
@@ -128,6 +132,9 @@ typedef struct {
     uint8 cmdtype;          /* Type of current/former command */
     WD179X_DRIVE_INFO drive[WD179X_MAX_DRIVES];
 } WD179X_INFO;
+
+extern uint32 vectorInterrupt;           /* FDC interrupt pending          */
+extern uint8 dataBus[MAX_INT_VECTORS];   /* FDC interrupt data bus values  */
 
 static SECTOR_FORMAT sdata;
 extern uint32 PCX;
@@ -182,7 +189,7 @@ uint8 floorlog2(unsigned int n);
 static uint8 computeSectorSize(const WD179X_DRIVE_INFO *pDrive);
 static uint8 testMode(const WD179X_DRIVE_INFO *pDrive);
 
-WD179X_INFO wd179x_info_data = { { 0x0, 0, 0x30, 4 } };
+WD179X_INFO wd179x_info_data = { { 0x0, 0, 0x30, 4 }, 1793 };
 WD179X_INFO *wd179x_info = &wd179x_info_data;
 WD179X_INFO_PUB *wd179x_infop = (WD179X_INFO_PUB *)&wd179x_info_data;
 
@@ -194,6 +201,9 @@ static UNIT wd179x_unit[] = {
 };
 
 static REG wd179x_reg[] = {
+    { DRDATAD(FDCTYPE,     wd179x_info_data.fdctype,      16, "Controller type"),          },
+    { FLDATAD(INTENABLE,   wd179x_info_data.intenable,     1, "FDC Interrupt Enable"),     },
+    { DRDATAD(INTVECTOR,   wd179x_info_data.intvector,     8, "FDC Interrupt Vector"),     },
     { FLDATAD(INTRQ,       wd179x_info_data.intrq,         1, "Interrupt Request"),        },
     { FLDATAD(HLD,         wd179x_info_data.hld,           1, "Head Load"),                },
     { FLDATAD(DRQ,         wd179x_info_data.drq,           1, "DMA Request"),              },
@@ -539,6 +549,7 @@ uint8 WD179X_Read(const uint32 Addr)
             sim_debug(STATUS_MSG, &wd179x_dev, "WD179X: " ADDRESS_FORMAT
                       " RD STATUS = 0x%02x, CMDTYPE=%x\n", PCX, cData, wd179x_info->cmdtype);
             wd179x_info->intrq = 0;
+            if (wd179x_info->intenable) vectorInterrupt &= ~(1 << wd179x_info->intvector);
             break;
         case WD179X_TRACK:
             cData = pDrive->track;
@@ -674,6 +685,10 @@ static uint8 Do1793Command(uint8 cCommand)
             wd179x_info->intrq = 0;
             wd179x_info->hld = cCommand & 0x08;
             wd179x_info->verify = cCommand & 0x04;
+            if (wd179x_info->fdctype == 1795) {
+                /* WD1795 and WD1797 have a side select output. */
+                wd179x_info->fdc_head = (cCommand & 0x02) >> 1;
+            }
             break;
         /* Type II Commands */
         case WD179X_READ_REC:
@@ -684,6 +699,10 @@ static uint8 Do1793Command(uint8 cCommand)
             wd179x_info->fdc_status = WD179X_STAT_BUSY;     /* Set BUSY, clear all others */
             wd179x_info->intrq = 0;
             wd179x_info->hld = 1;   /* Load the head immediately, E Flag not checked. */
+            if (wd179x_info->fdctype == 1795) {
+                /* WD1795 and WD1797 have a side select output. */
+                wd179x_info->fdc_head = (cCommand & 0x02) >> 1;
+            }
             break;
         /* Type III Commands */
         case WD179X_READ_ADDR:
@@ -935,6 +954,10 @@ static uint8 Do1793Command(uint8 cCommand)
                     }
                 } else {
                     wd179x_info->intrq = 1;
+                    if (wd179x_info->intenable) {
+                        vectorInterrupt |= (1 << wd179x_info->intvector);
+                        dataBus[wd179x_info->intvector] = wd179x_info->intvector*2;
+                    }
                 }
                 wd179x_info->fdc_status &= ~(WD179X_STAT_BUSY);     /* Clear BUSY */
             }
@@ -978,6 +1001,10 @@ static uint8 Do1793Command(uint8 cCommand)
 
             wd179x_info->fdc_status &= ~(WD179X_STAT_BUSY);     /* Clear BUSY */
             wd179x_info->intrq = 1;
+            if (wd179x_info->intenable) {
+                vectorInterrupt |= (1 << wd179x_info->intvector);
+                dataBus[wd179x_info->intvector] = wd179x_info->intvector*2;
+            }
             wd179x_info->drq = 1;
             break;
         /* Type II Commands */
@@ -994,7 +1021,6 @@ static uint8 Do1793Command(uint8 cCommand)
         default:
             break;
     }
-
 
     return result;
 }
@@ -1032,6 +1058,10 @@ uint8 WD179X_Write(const uint32 Addr, uint8 cData)
             wd179x_info->fdc_write_track = FALSE;
             wd179x_info->fdc_datacount = 0;
             wd179x_info->fdc_dataindex = 0;
+            if (wd179x_info->intenable) {
+                vectorInterrupt |= (1 << wd179x_info->intvector);
+                dataBus[wd179x_info->intvector] = wd179x_info->intvector*2;
+            }
 
             Do1793Command(cData);
             break;
@@ -1057,6 +1087,10 @@ uint8 WD179X_Write(const uint32 Addr, uint8 cData)
                         wd179x_info->fdc_status &= ~(WD179X_STAT_DRQ | WD179X_STAT_BUSY);       /* Clear DRQ, BUSY */
                         wd179x_info->drq = 0;
                         wd179x_info->intrq = 1;
+                        if (wd179x_info->intenable) {
+                            vectorInterrupt |= (1 << wd179x_info->intvector);
+                            dataBus[wd179x_info->intvector] = wd179x_info->intvector*2;
+                        }
 
                     sim_debug(WR_DATA_MSG, &wd179x_dev, "WD179X[%d]: " ADDRESS_FORMAT
                               " Writing sector, T:%2d/S:%d/N:%2d, Len=%d\n", wd179x_info->sel_drive, PCX, pDrive->track, wd179x_info->fdc_head, wd179x_info->fdc_sector, 128 << wd179x_info->fdc_sec_len);
@@ -1177,6 +1211,10 @@ uint8 WD179X_Write(const uint32 Addr, uint8 cData)
                                 wd179x_info->fdc_status &= ~(WD179X_STAT_BUSY | WD179X_STAT_LOST_DATA);     /* Clear BUSY, LOST_DATA */
                                 wd179x_info->drq = 0;
                                 wd179x_info->intrq = 1;
+                                if (wd179x_info->intenable) {
+                                    vectorInterrupt |= (1 << wd179x_info->intvector);
+                                    dataBus[wd179x_info->intvector] = wd179x_info->intvector*2;
+                                }
 
                                 /* Recalculate disk size */
                                 pDrive->uptr->capac = sim_fsize(pDrive->uptr->fileref);

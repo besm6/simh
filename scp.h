@@ -158,87 +158,12 @@ t_stat assign_device (DEVICE *dptr, const char *cptr);
 t_stat deassign_device (DEVICE *dptr);
 t_stat reset_all (uint32 start_device);
 t_stat reset_all_p (uint32 start_device);
+t_stat set_writelock (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat show_writelock (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 const char *sim_dname (DEVICE *dptr);
 const char *sim_uname (UNIT *dptr);
 const char *sim_set_uname (UNIT *uptr, const char *uname);
 t_stat get_yn (const char *ques, t_stat deflt);
-char *sim_trim_endspc (char *cptr);
-int sim_isspace (int c);
-#ifdef isspace
-#undef isspace
-#endif
-#ifndef IN_SCP_C
-#define isspace(chr) sim_isspace (chr)
-#endif
-int sim_islower (int c);
-#ifdef islower
-#undef islower
-#endif
-#define islower(chr) sim_islower (chr)
-int sim_isupper (int c);
-#ifdef isupper
-#undef isupper
-#endif
-#define isupper(chr) sim_isupper (chr)
-int sim_isalpha (int c);
-#ifdef isalpha
-#undef isalpha
-#endif
-#ifndef IN_SCP_C
-#define isalpha(chr) sim_isalpha (chr)
-#endif
-int sim_isprint (int c);
-#ifdef isprint
-#undef isprint
-#endif
-#ifndef IN_SCP_C
-#define isprint(chr) sim_isprint (chr)
-#endif
-int sim_isdigit (int c);
-#ifdef isdigit
-#undef isdigit
-#endif
-#define isdigit(chr) sim_isdigit (chr)
-int sim_isgraph (int c);
-#ifdef isgraph
-#undef isgraph
-#endif
-#ifndef IN_SCP_C
-#define isgraph(chr) sim_isgraph (chr)
-#endif
-int sim_isalnum (int c);
-#ifdef isalnum
-#undef isalnum
-#endif
-#ifndef IN_SCP_C
-#define isalnum(chr) sim_isalnum (chr)
-#endif
-int sim_toupper (int c);
-int sim_tolower (int c);
-#ifdef toupper
-#undef toupper
-#endif
-#define toupper(chr) sim_toupper(chr)
-#ifdef tolower
-#undef tolower
-#endif
-#define tolower(chr) sim_tolower(chr)
-int sim_strncasecmp (const char *string1, const char *string2, size_t len);
-int sim_strcasecmp (const char *string1, const char *string2);
-size_t sim_strlcat (char *dst, const char *src, size_t size);
-size_t sim_strlcpy (char *dst, const char *src, size_t size);
-#ifndef strlcpy
-#define strlcpy(dst, src, size) sim_strlcpy((dst), (src), (size))
-#endif
-#ifndef strlcat
-#define strlcat(dst, src, size) sim_strlcat((dst), (src), (size))
-#endif
-#ifndef strncasecmp
-#define strncasecmp(str1, str2, len) sim_strncasecmp((str1), (str2), (len))
-#endif
-#ifndef strcasecmp
-#define strcasecmp(str1, str2) sim_strcasecmp ((str1), (str2))
-#endif
 void sim_srand (unsigned int seed);
 int sim_rand (void);
 #ifdef RAND_MAX
@@ -322,6 +247,7 @@ const char *sim_error_text (t_stat stat);
 t_stat sim_string_to_stat (const char *cptr, t_stat *cond);
 t_stat sim_sched_step (void);
 t_stat sim_cancel_step (void);
+const char *sim_get_tool_path (const char *tool);
 void sim_printf (const char *fmt, ...) GCC_FMT_ATTR(1, 2);
 void sim_perror (const char *msg);
 t_stat sim_messagef (t_stat stat, const char *fmt, ...) GCC_FMT_ATTR(2, 3);
@@ -333,6 +259,7 @@ void sim_debug_bits (uint32 dbits, DEVICE* dptr, BITFIELD* bitdefs,
 #if defined (__DECC) && defined (__VMS) && (defined (__VAX) || (__DECC_VER < 60590001))
 #define CANT_USE_MACRO_VA_ARGS 1
 #endif
+void _sim_vdebug (uint32 dbits, DEVICE* dptr, UNIT *uptr, const char* fmt, va_list arglist);
 #ifdef CANT_USE_MACRO_VA_ARGS
 #define _sim_debug_device sim_debug
 void sim_debug (uint32 dbits, DEVICE* dptr, const char *fmt, ...) GCC_FMT_ATTR(3, 4);
@@ -448,6 +375,7 @@ extern t_addr (*sim_vm_parse_addr) (DEVICE *dptr, CONST char *cptr, CONST char *
 extern t_bool (*sim_vm_fprint_stopped) (FILE *st, t_stat reason);
 extern t_value (*sim_vm_pc_value) (void);
 extern t_bool (*sim_vm_is_subroutine_call) (t_addr **ret_addrs);
+extern void (*sim_vm_reg_update) (REG *rptr, uint32 idx, t_value prev_val, t_value new_val);
 extern const char **sim_clock_precalibrate_commands;
 extern int32 sim_vm_initial_ips;                        /* base estimate of simulated instructions per second */
 extern const char *sim_vm_interval_units;               /* Simulator can change this - default "instructions" */

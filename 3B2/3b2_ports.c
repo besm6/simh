@@ -42,8 +42,14 @@
  *
  */
 
-#include "3b2_defs.h"
 #include "3b2_ports.h"
+
+#include "sim_tmxr.h"
+
+#include "3b2_cpu.h"
+#include "3b2_io.h"
+#include "3b2_mem.h"
+#include "3b2_timer.h"
 
 /* Static function declarations */
 static t_stat ports_show_queue_common(FILE *st, UNIT *uptr, int32 val,
@@ -90,6 +96,9 @@ static t_stat ports_show_queue_common(FILE *st, UNIT *uptr, int32 val,
 #define PORTS_DIAG_CRC1 0x7ceec900
 #define PORTS_DIAG_CRC2 0x77a1ea56
 #define PORTS_DIAG_CRC3 0x84cf938b
+#define PORTS_DIAG_CRC4 0x31b32383  /* Used by SVR 2.0.5 */
+#define PORTS_DIAG_CRC5 0x4be7bccc  /* Used by SVR 2.0.5 */
+#define PORTS_DIAG_CRC6 0x3197f6dd  /* Used by SVR 2.0.5 */
 
 #define LN(cid,port)   ((PORTS_LINES * ((cid) - ports_base_cid)) + (port))
 #define LCID(ln)       (((ln) / PORTS_LINES) + ports_base_cid)
@@ -295,7 +304,10 @@ static void ports_cmd(uint8 cid, cio_entry *rentry, uint8 *rapp_data)
          * 0x200f000 */
         if (ports_crc == PORTS_DIAG_CRC1 ||
             ports_crc == PORTS_DIAG_CRC2 ||
-            ports_crc == PORTS_DIAG_CRC3) {
+            ports_crc == PORTS_DIAG_CRC3 ||
+            ports_crc == PORTS_DIAG_CRC4 ||
+            ports_crc == PORTS_DIAG_CRC5 ||
+            ports_crc == PORTS_DIAG_CRC6) {
             pwrite_h(0x200f000, 0x1);   /* Test success */
             pwrite_h(0x200f002, 0x0);   /* Test Number */
             pwrite_h(0x200f004, 0x0);   /* Actual */
@@ -375,7 +387,7 @@ static void ports_cmd(uint8 cid, cio_entry *rentry, uint8 *rapp_data)
             tmxr_set_config_line(&ports_ldsc[ln], line_config);
         }
 
-        centry.byte_count = sizeof(PPC_OPTIONS);
+        centry.byte_count = 20;
         centry.opcode = PPC_OPTIONS;
         centry.subdevice = rentry->subdevice;
         centry.address = rentry->address;
@@ -505,7 +517,7 @@ static void ports_update_conn(uint32 ln)
 
     /* Interrupt */
     if (cio[cid].ivec > 0) {
-        cio[cid].intr = TRUE;
+        CIO_SET_INT(cid);
     }
 }
 
@@ -626,7 +638,6 @@ t_stat ports_reset(DEVICE *dptr)
         ports_conf = TRUE;
 
         if (ports_ldsc == NULL) {
-            ports_desc.lines = DEF_PORTS_CARDS * PORTS_LINES;
             ports_desc.ldsc = ports_ldsc =
                 (TMLN *)calloc(ports_desc.lines, sizeof(*ports_ldsc));
         }
@@ -672,7 +683,7 @@ t_stat ports_cio_svc(UNIT *uptr)
               ports_int_cid, ports_int_subdev);
 
     if (cio[ports_int_cid].ivec > 0) {
-        cio[ports_int_cid].intr = TRUE;
+        CIO_SET_INT(ports_int_cid);
     }
 
     switch (cio[ports_int_cid].op) {
@@ -735,7 +746,7 @@ t_stat ports_rcv_svc(UNIT *uptr)
                 if (cio[cid].ivec > 0 &&
                     cio_rqueue(cid, PORTS_RCV_QUEUE,
                                PPQESIZE, &rentry, rapp_data) == SCPE_OK) {
-                    cio[cid].intr = TRUE;
+                    CIO_SET_INT(cid);
 
                     /* Write the character to the memory address */
                     pwrite_b(rentry.address, c);
@@ -809,7 +820,7 @@ t_stat ports_xmt_svc(UNIT *uptr)
                 centry.address = ports_state[ln].tx_req_addr;
                 app_data[0] = RC_FLU;
                 cio_cqueue(cid, CIO_STAT, PPQESIZE, &centry, app_data);
-                cio[cid].intr = TRUE;
+                CIO_SET_INT(cid);
             }
         }
     }

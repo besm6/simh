@@ -29,7 +29,7 @@ rem
 rem Everything implicitly requires BUILD to also be set to have 
 rem any meaning, it always gets set.
 set _X_BUILD=BUILD
-set _X_REQUIRED_WINDOWS_BUILD=20191221
+set _X_REQUIRED_WINDOWS_BUILD=20220119
 call :FindVCVersion _VC_VER
 
 set _PDB=%~dpn1.pdb
@@ -348,7 +348,7 @@ for /F "usebackq tokens=1" %%i in (`git log -1 "--pretty=%%H"`) do SET ACTUAL_GI
 for /F "usebackq tokens=1" %%i in (`git log -1 "--pretty=%%aI"`) do SET ACTUAL_GIT_COMMIT_TIME=%%i
 if exist ..\.git-commit-id for /F "usebackq tokens=2" %%i in (`findstr /C:SIM_GIT_COMMIT_ID ..\.git-commit-id`) do SET GIT_COMMIT_ID=%%i
 if exist ..\.git-commit-id for /F "usebackq tokens=2" %%i in (`findstr /C:SIM_GIT_COMMIT_TIME ..\.git-commit-id`) do SET GIT_COMMIT_TIME=%%i
-if "%ACTUAL_GIT_COMMIT_ID%" neq "%GIT_COMMIT_ID%" "%_GIT_GIT%" log -1 --pretty="SIM_GIT_COMMIT_ID %%H%%ACTUAL_GIT_COMMIT_EXTRAS%%%%nSIM_GIT_COMMIT_TIME %%aI" >..\.git-commit-id
+if "%ACTUAL_GIT_COMMIT_ID%" neq "%GIT_COMMIT_ID%" "%_GIT_GIT%" log -1 --pretty="SIM_GIT_COMMIT_ID %%H%%%%ACTUAL_GIT_COMMIT_EXTRAS%%%%%%nSIM_GIT_COMMIT_TIME %%aI" >..\.git-commit-id
 SET GIT_COMMIT_ID=%ACTUAL_GIT_COMMIT_ID%
 SET GIT_COMMIT_TIME=%ACTUAL_GIT_COMMIT_TIME%
 SET ACTUAL_GIT_COMMIT_ID=

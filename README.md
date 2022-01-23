@@ -9,6 +9,7 @@
 . . [New Simulators](#new-simulators)  
 . . [Simulator Front Panel API](#simulator-front-panel-api)  
 . . [New Functionality](#new-functionality)  
+. . . . [DDCMP Synchronous host physical device support - framer](#ddcmp-synchronous-host-physical-device-support---framer)  
 . . . . [Remote Console Facility](#remote-console-facility)  
 . . . . [VAX/PDP11 Enhancements](#vaxpdp11-enhancements)  
 . . . . [PDP11 Specific Enhancements](#pdp11-specific-enhancements)  
@@ -109,6 +110,10 @@
 The sim_frontpanel API provides a programmatic interface to start and control any simulator without any special additions to the simulator code.
 
 ### New Functionality
+
+#### DDCMP Synchronous host physical device support - framer
+Paul Koning has implemented a USB hardware device which can interface transport DDCMP packets across a synchronous line 
+to physical host systems with native synchronous devices or other simulators using framer devices.
 
 #### Remote Console Facility
 A new capability has been added which allows a TELNET Connection to a user designated port so that some out of band commands can be entered to manipulate and/or adjust a running simulator.  The commands which enable and control this capability are SET REMOTE TELNET=port, SET REMOTE CONNECTIONS=n, SET REMOTE TIMEOUT=seconds, and SHOW REMOTE.
@@ -231,7 +236,7 @@ Host platforms which have libSDL2 available can leverage this functionality.
     RAW Disk Access (including CDROM)
     Virtual Disk Container files, including differencing disks
     File System type detection to accurately autosize disks.
-    Recognized file systems are: DEC ODS1, DEC ODS2, DEC RT11, DEC RSX11, Ultrix Partitions
+    Recognized file systems are: DEC ODS1, DEC ODS2, DEC RT11, DEC RSTS, DEC RSX11, Ultrix Partitions
 
 #### Tape Extensions
     AWS format tape support
@@ -550,12 +555,12 @@ Ubuntu:
     # apt-get install libpcap-dev
     # apt-get install libpcre3-dev
     # apt-get install vde2
-    # apt-get install libsdl2
-    # apt-get install libsdl2_ttf
+    # apt-get install libsdl2-dev
+    # apt-get install libsdl2_ttf-dev
 
 #### Windows
 
-Compiling on windows is supported with recent versions of Microsoft Visual Studio (Standard or Express) and using GCC via the MinGW environment.  Things may also work under Cygwin, but that is not the preferred windows environment.  Not all features will be available as well as with either Visual Studio or MinGW.
+Compiling on windows is supported with recent versions of Microsoft Visual Studio (Standard or Express) and using GCC via the MinGW32 environment.  Things may also work under Cygwin, but that is not the preferred windows environment.  Not all features will be available as well as with either Visual Studio or MinGW32.
 
 ##### Required related files
 The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt
@@ -566,7 +571,7 @@ The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0Re
 
 ##### MinGW32
 
-The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt describes the required steps to use the setup your environment to build using MinGW32.
+Building with MinGW32 requires the same directory organization and the dependent package support described for Visual Studio in the file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt.  Building with MinGW64 is not supported.
 
 #### VMS
 

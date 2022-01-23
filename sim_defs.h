@@ -152,6 +152,10 @@ extern int sim_vax_snprintf(char *buf, size_t buf_size, const char *fmt, ...);
 #define USE_REGEX 1
 #endif
 
+#if (defined (__MWERKS__) && defined (macintosh)) || defined(__DECC)
+#define __FUNCTION__ __FILE__
+#endif
+
 #ifdef  __cplusplus
 extern "C" {
 #endif
@@ -514,9 +518,10 @@ struct DEVICE {
     t_stat              (*attach_help)(FILE *st, DEVICE *dptr,
                             UNIT *uptr, int32 flag, const char *cptr);
                                                         /* attach help */
-    void *help_ctx;                                     /* Context available to help routines */
+    void                *help_ctx;                      /* Context available to help routines */
     const char          *(*description)(DEVICE *dptr);  /* Device Description */
     BRKTYPTAB           *brk_types;                     /* Breakpoint types */
+    void                *type_ctx;                      /* Device Type/Library Context */
     };
 
 /* Device flags */
@@ -592,6 +597,7 @@ struct UNIT {
     void                *up8;                           /* device specific */
     uint16              us9;                            /* device specific */
     uint16              us10;                           /* device specific */
+    uint32              disk_type;                      /* Disk specific info */
     void                *tmxr;                          /* TMXR linkage */
     uint32              recsize;                        /* Tape specific info */
     t_addr              tape_eom;                       /* Tape specific info */
@@ -637,6 +643,8 @@ struct UNIT {
 #define UNIT_DISABLE    0002000         /* disable-able */
 #define UNIT_DIS        0004000         /* disabled */
 #define UNIT_IDLE       0040000         /* idle eligible */
+#define UNIT_WLK        0100000         /* hardware write lock */
+#define UNIT_WPRT     (UNIT_WLK|UNIT_RO)/* write protect */
 
 /* Unused/meaningless flags */
 #define UNIT_TEXT       0000000         /* text mode - no effect */
@@ -705,6 +713,7 @@ struct REG {
 #define REG_VMIO        00400                           /* use VM data print/parse */
 #define REG_VMAD        01000                           /* use VM addr print/parse */
 #define REG_FIT         02000                           /* fit access to size */
+#define REG_DEPOSIT     04000                           /* call VM routine after update */
 #define REG_HRO         (REG_RO | REG_HIDDEN)           /* hidden, read only */
 
 #define REG_V_UF        16                              /* device specific */
