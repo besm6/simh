@@ -160,10 +160,9 @@ extern int32 MMR2;
 #define UNIT_V_DTYPE    (UNIT_V_ATP + 1)                /* drive type */
 #define UNIT_W_DTYPE    5                               /* 5b drive type encode */
 #define UNIT_M_DTYPE    ((1u << UNIT_W_DTYPE) - 1)
-#define UNIT_V_NOAUTO   (UNIT_V_DTYPE + UNIT_W_DTYPE)   /* noautosize */
 #define UNIT_ONL        (1 << UNIT_V_ONL)
 #define UNIT_ATP        (1 << UNIT_V_ATP)
-#define UNIT_NOAUTO     (1 << UNIT_V_NOAUTO)
+#define UNIT_NOAUTO     DKUF_NOAUTOSIZE                 /* noautosize */
 #define UNIT_DTYPE      (UNIT_M_DTYPE << UNIT_V_DTYPE)
 #define GET_DTYPE(x)    (((x) >> UNIT_V_DTYPE) & UNIT_M_DTYPE)
 #define cpkt            us9                             /* current packet */
@@ -2959,10 +2958,13 @@ t_stat rq_attach (UNIT *uptr, CONST char *cptr)
 {
 MSC *cp = rq_ctxmap[uptr->cnum];
 t_stat r;
+t_bool dontchangecapac = (uptr->flags & UNIT_NOAUTO);
 
-if (drv_tab[GET_DTYPE (uptr->flags)].flgs & RQDF_RO)
+if (drv_tab[GET_DTYPE (uptr->flags)].flgs & RQDF_RO) {
     sim_switches |= SWMASK ('R');
-r = sim_disk_attach_ex (uptr, cptr, RQ_NUMBY, sizeof (uint16), (uptr->flags & UNIT_NOAUTO), DBG_DSK, 
+    dontchangecapac = FALSE;
+    }
+r = sim_disk_attach_ex (uptr, cptr, RQ_NUMBY, sizeof (uint16), dontchangecapac, DBG_DSK, 
                         drv_tab[GET_DTYPE (uptr->flags)].name, 0, 0, (uptr->flags & UNIT_NOAUTO) ? NULL : drv_types);
 if (r != SCPE_OK)
     return r;

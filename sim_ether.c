@@ -978,7 +978,7 @@ t_stat eth_show (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
   }
 static int _eth_get_system_id (char *buf, size_t buf_size)
   {memset (buf, 0, buf_size); return 0;}
-t_stat sim_ether_test (DEVICE *dptr)
+t_stat sim_ether_test (DEVICE *dptr, const char *cptr)
   {return SCPE_OK;}
 #else    /* endif unimplemented */
 
@@ -1747,6 +1747,13 @@ static int pcap_mac_if_vms(const char *AdapterName, unsigned char MACAddress[6])
   return 0;
 }
 #endif /* defined (__VMS) && !defined(__VAX) */
+
+#if SIM_MAJOR != 4
+static const char *sim_get_tool_path (const char *tool)
+{
+return tool;
+}
+#endif
 
 static void eth_get_nic_hw_addr(ETH_DEV* dev, const char *devname, int set_on)
 {
@@ -4472,7 +4479,7 @@ return (errors == 0) ? SCPE_OK : SCPE_IERR;
 
 #include <setjmp.h>
 
-t_stat sim_ether_test (DEVICE *dptr)
+t_stat sim_ether_test (DEVICE *dptr, const char *cptr)
 {
 t_stat stat = SCPE_OK;
 SIM_TEST_INIT;
