@@ -75,6 +75,7 @@ int tty_typed [TTY_MAX+1], tty_instate [TTY_MAX+1];
 /* For all lines */
 time_t tty_last_time [LINES_MAX+1];
 int tty_idle_count [LINES_MAX+1];
+int tty_lnorder[LINES_MAX+1] = { -1 };
 
 /* The serial interrupt generator frequency, common for all VT lines */
 int tty_rate = 300;
@@ -94,6 +95,7 @@ uint32 CONSUL_IN[2];
 uint32 CONS_CAN_PRINT[2] = { 01000, 00400 };
 uint32 CONS_HAS_INPUT[2] = { 04000, 02000 };
 
+uint32 CONS_READY[2] = { 0200, 040 };
 /* Command line buffers for TELNET mode. */
 char vt_cbuf [CBUFSIZE] [LINES_MAX+1];
 char *vt_cptr [LINES_MAX+1];
@@ -151,7 +153,7 @@ REG tty_reg[] = {
  * For local connections, it is 0.
  */
 TMLN tty_line [LINES_MAX+1];
-TMXR tty_desc = { LINES_MAX+1, 0, 0, tty_line };        /* mux descriptor */
+TMXR tty_desc = { LINES_MAX+1, 0, 0, tty_line, tty_lnorder };        /* mux descriptor */
 
 #define TTY_UNICODE_CHARSET     0
 #define TTY_KOI7_JCUKEN_CHARSET (1<<UNIT_V_UF)
@@ -186,10 +188,9 @@ t_stat tty_reset (DEVICE *dptr)
     TTY_IN = TTY_OUT = 0;
     CONSUL_IN[0] = CONSUL_IN[1] = 0;
     reg = rus;
+    READY2 |= CONS_READY[0] | CONS_READY[1];
     vt_idle = 1;
     tty_line[0].conn = 1;                   /* faked, always busy */
-    /* In the READY2 register the ready flag for typewriters is inverted (0 means ready),
-     * and the device is always ready. */
     /* Forcing a ready interrupt. */
     PRP |= CONS_CAN_PRINT[0] | CONS_CAN_PRINT[1];
     // Schedule the very first TTY interrupt to match the next clock interrupt.
@@ -224,7 +225,7 @@ t_stat vt_clk (UNIT * this)
         if (num <= TTY_MAX) {
             old = vt_mask & (1 << (TTY_MAX - num));
             vt_mask |= 1 << (TTY_MAX - num);
-	      }
+        }
         switch (tty_unit[num].flags & TTY_CHARSET_MASK) {
         case TTY_KOI7_JCUKEN_CHARSET:
             tmxr_linemsg (t, "Encoding is KOI-7 (jcuken)\r\n");
@@ -487,12 +488,15 @@ MTAB tty_mod[] = {
       "RATE", &tty_setrate, &tty_showrate, NULL, "{300,600,1200,2400,4800,9600,19200}" },
     { MTAB_XTD | MTAB_VDV | MTAB_VALR, 1, "TURBO",
       "TURBO", &tty_setturbo, &tty_showturbo, NULL, "{ON, OFF}"},
-    { UNIT_ATT, UNIT_ATT, "connections",
+    { MTAB_XTD | MTAB_VDV, 0, "SUMMARY",
       NULL, NULL, &tmxr_show_summ, (void*) &tty_desc },
     { MTAB_XTD | MTAB_VDV | MTAB_NMO, 1, "CONNECTIONS",
       NULL, NULL, &tmxr_show_cstat, (void*) &tty_desc },
     { MTAB_XTD | MTAB_VDV | MTAB_NMO, 0, "STATISTICS",
       NULL, NULL, &tmxr_show_cstat, (void*) &tty_desc },
+    { MTAB_XTD | MTAB_VDV | MTAB_NMO | MTAB_VALR,   0,   "LINEORDER",
+      "LINEORDER",   &tmxr_set_lnorder, &tmxr_show_lnorder, (void *) &tty_desc,
+      "Line connection order, e.g. 26;20-24;1-10" },
     { MTAB_XTD | MTAB_VUN | MTAB_NC, 0, NULL,
       "LOG", &tmxr_set_log, &tmxr_show_log, (void*) &tty_desc },
     { MTAB_XTD | MTAB_VUN | MTAB_NC, 0, NULL,
@@ -1306,21 +1310,31 @@ int tty_query ()
     return TTY_IN;
 }
 
+static char cons_is_printing[2];
+
 void consul_print (int dev_num, uint32 cmd)
 {
+    extern unsigned short gost_to_unicode(unsigned char);
+    extern void uni2utf8(unsigned short ch, char buf[5]);
+    int uni;
+    char buf[5];
     int line_num = dev_num + TTY_MAX + 1;
     if (tty_dev.dctrl)
         besm6_debug(">>> CONSUL%o: %03o", line_num, cmd & 0377);
-    cmd &= 0177;
+    
+    READY2 &= ~CONS_READY[dev_num]; /* temporarily not ready  */
+    
     switch (tty_unit[line_num].flags & TTY_STATE_MASK) {
     case TTY_VT340_STATE:
-        vt_send (line_num, cmd);
+        vt_send (line_num, cmd & 0177);
         break;
     case TTY_CONSUL_STATE:
-        besm6_debug(">>> CONSUL%o: Native charset not implemented", line_num);
+        uni = gost_to_unicode(cmd & 0177);
+        uni2utf8(uni, buf);
+        vt_puts(line_num, buf);
         break;
     }
-    PRP |= CONS_CAN_PRINT[dev_num];
+    cons_is_printing[dev_num] = 1;
     vt_idle = 0;
 }
 
@@ -1329,6 +1343,11 @@ void consul_receive ()
     int c, line_num, dev_num;
 
     for (dev_num = 0; dev_num < 2; ++dev_num){
+        if (cons_is_printing[dev_num]) {
+            READY2 |= CONS_READY[dev_num];
+            PRP |= CONS_CAN_PRINT[dev_num];
+            cons_is_printing[dev_num] = 0;
+        }
         line_num = dev_num + TTY_MAX + 1;
         if (! tty_line[line_num].conn)
             continue;
