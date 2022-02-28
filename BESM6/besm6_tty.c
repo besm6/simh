@@ -1218,6 +1218,22 @@ int odd_parity(unsigned char c)
 }
 
 /*
+ * Converting Enter and Backspace to conventional values,
+ * unless the mode is RAW.
+ */
+int vt_fix(int num, int c) {
+    if ((tty_unit[num].flags & TTY_CHARSET_MASK) != TTY_RAW_CHARSET) {
+        switch (c) {
+        case '\r': case '\n':
+            return 3;     /* ETX is used as Enter */
+        case '\177':
+            return '\b';  /* ASCII DEL -> BS */
+        }
+    }
+    return c;
+}
+
+/*
  * Handling input from all connected terminals.
  */
 void vt_receive()
@@ -1255,12 +1271,7 @@ void vt_receive()
                 break;
             }
             if (tty_typed[num] <= 0177) {
-                if ((tty_unit[num].flags & TTY_CHARSET_MASK) != TTY_RAW_CHARSET) {
-                    if (tty_typed[num] == '\r' || tty_typed[num] == '\n')
-                        tty_typed[num] = 3;     /* ETX is used as Enter */
-                    if (tty_typed[num] == '\177')
-                        tty_typed[num] = '\b';  /* ASCII DEL -> BS */
-                }
+                tty_typed[num] = vt_fix (num, tty_typed[num]);
                 tty_instate[num] = 1;
                 TTY_IN |= mask;         /* start bit */
                 GRP |= GRP_TTY_START;   /* not used ? */
@@ -1367,11 +1378,8 @@ void consul_receive ()
             break;
         }
         if (c >= 0 && c <= 0177) {
+            c = vt_fix (line_num, c);
             CONSUL_IN[dev_num] = odd_parity(c) ? c | 0200 : c;
-            if ((tty_unit[line_num].flags & TTY_CHARSET_MASK) != TTY_RAW_CHARSET &&
-                (c == '\r' || c == '\n')) {
-                CONSUL_IN[dev_num] = 3;
-            }
             PRP |= CONS_HAS_INPUT[dev_num];
             vt_idle = 0;
         }
