@@ -2791,18 +2791,22 @@ sim_tape_init ();                                       /* init tape package */
 for (i = 0; cmd_table[i].name; i++) {
     size_t alias_len = strlen (cmd_table[i].name);
     char *cmd_name = (char *)calloc (1 + alias_len, sizeof (*cmd_name));
+    char *env_cmd_val;
+    size_t env_cmd_val_len;
 
     strcpy (cmd_name, cmd_table[i].name);
     while (alias_len > 1) {
         cmd_name[alias_len] = '\0';                 /* Possible short form command name */
         --alias_len;
-        if (getenv (cmd_name)) {                    /* Externally defined command alias? */
+        env_cmd_val = getenv (cmd_name);
+        if (env_cmd_val) {                          /* Externally defined command alias? */
+            env_cmd_val_len = strlen (env_cmd_val);
             ++sim_external_env_count;
             sim_external_env = (struct deleted_env_var *)realloc (sim_external_env, sim_external_env_count * sizeof (*sim_external_env));
             sim_external_env[sim_external_env_count - 1].name = (char *)malloc (1 + strlen (cmd_name));
             strcpy (sim_external_env[sim_external_env_count - 1].name, cmd_name);
-            sim_external_env[sim_external_env_count - 1].value = (char *)malloc (1 + strlen (getenv (cmd_name)));
-            strcpy (sim_external_env[sim_external_env_count - 1].value, getenv (cmd_name));
+            sim_external_env[sim_external_env_count - 1].value = (char *)malloc (1 + env_cmd_val_len);
+            strlcpy (sim_external_env[sim_external_env_count - 1].value, env_cmd_val, 1 + env_cmd_val_len);
             unsetenv (cmd_name);                    /* Remove it to protect against possibly malicious aliases */
             }
         }
@@ -2907,9 +2911,9 @@ if (cptr == NULL) {
 else
     cptr2 = NULL;
 docmdp = find_cmd ("DO");
-if (cptr && (sizeof (nbuf) > strlen (cptr) + strlen ("/simh.ini") + 3)) {
+if (docmdp && cptr && (sizeof (nbuf) > strlen (cptr) + strlen ("/simh.ini") + 3)) {
     snprintf(nbuf, sizeof (nbuf), "\"%s%s%ssimh.ini\"", cptr2 ? cptr2 : "", cptr, strchr (cptr, '/') ? "/" : "\\");
-    stat = docmdp->action (-1, nbuf) & ~SCPE_NOMESSAGE; /* simh.ini proc cmd file */
+    stat = docmdp->action (-1, nbuf);                   /* simh.ini proc cmd file */
     }
 if (SCPE_BARE_STATUS(stat) == SCPE_OPENERR)
     stat = docmdp->action (-1, "simh.ini");             /* simh.ini proc cmd file */
@@ -4275,6 +4279,75 @@ if (cmdp && (cmdp->action == &return_cmd) && (0 != *cptr)) { /* return command w
     return stat;                                        /* return with explicit return status */
     }
 return stat | SCPE_NOMESSAGE;                           /* suppress message since we've already done that here */
+}
+
+
+/* sim_call_argv - call a routine with C style argc, argv parsed arguments
+
+   Inputs:
+
+   main_like_routine =  the routine that is to be called with parsed arguments
+   cptr              =  the command argument string to be broken down into argc, argv
+
+   When the main_like_routine is called, argc and argv are populated.  
+   
+      argc is the number of tokens parsed from the input string plus 1
+      argv is an array of parsed tokens where argv[0] is the unparsed input string
+
+*/
+
+
+t_stat sim_call_argv (int (*main_like_routine)(int argc, char *argv[]), const char *cptr)
+{
+int argc = 1;
+char **argv = (char **)calloc ((1 + argc), sizeof (*argv));
+size_t cptr_len = strlen (cptr);
+char *argline = (char *)malloc (2 + 2 * cptr_len);
+char *cp, quote;
+t_stat result = SCPE_OK;
+
+if ((argv == NULL) || (argline == NULL)) {
+    free (argv);
+    free (argline);
+    return SCPE_MEM;
+    }
+if (cptr == NULL) {
+    free (argv);
+    free (argline);
+    return SCPE_ARG;
+    }
+strcpy (argline, cptr);
+cp = argline + cptr_len + 1;
+strcpy (cp, cptr);
+argv[0] = argline;                  /* argv[0] points to unparsed arguments */
+argv[argc + 1] = NULL;              /* make sure the argument list always ends with a NULL */
+while (*cp) {
+    while (sim_isspace (*cp))       /* skip blanks */
+        cp++;
+    if (*cp == '\0')                /* all done? */
+        break;
+    if (*cp == '\'' || *cp == '"')  /* quoted string? */
+        quote = *cp++;
+    else
+        quote = 0;
+    ++argc;
+    argv = (char **)realloc (argv, (1 + argc) * sizeof (*argv));
+    if (argv == NULL) {
+        result = SCPE_MEM;
+        break;
+        }
+    argv[argc - 1] = cp;            /* save start */
+    argv[argc] = NULL;              /* make sure the argument list always ends with a NULL */
+    while (*cp && (quote ? (*cp != quote) : !sim_isspace (*cp)))
+        cp++;
+    if (*cp)                        /* term at quote/spc */
+        *cp++ = '\0';
+    }
+if (argv != NULL)
+    result = (t_stat)main_like_routine (argc, argv);
+free (argline);
+free (argv);
+return result;
 }
 
 /* Substitute_args - replace %n tokens in 'instr' with the do command's arguments
@@ -7942,14 +8015,17 @@ t_stat set_writelock (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 if (((uptr->flags & UNIT_WPRT) != 0) == val)        /* Already set as desired? */
     return SCPE_OK;                                 /* Do nothing */
-if (val)                                            /* Lock? */
+if (val) {                                          /* Lock? */
     uptr->flags |= UNIT_WLK;                        /* Do it. */
+    if ((uptr->flags & UNIT_ATT) == 0)
+        uptr->flags |= UNIT_RO;                     /* Next attach will be Read-Only. */
+    }
 else                                                /* Unlock */
     if (((uptr->flags & UNIT_ATT) != 0) &&          /* Transition from Locked to Unlock while attached read-only? */
         ((uptr->flags & UNIT_RO) != 0))
         return sim_messagef (SCPE_ALATT, "%s: Can't enable write when attached read only\n", sim_uname (uptr));
     else
-        uptr->flags &= ~UNIT_WLK;
+        uptr->flags &= ~UNIT_WPRT;
 return SCPE_OK;
 }
 
@@ -11903,8 +11979,12 @@ do {
         (bare_reason != SCPE_STOP)    && 
         (bare_reason != SCPE_STEP)    && 
         (bare_reason != SCPE_RUNTIME) && 
-        (bare_reason != SCPE_EXIT))
-        sim_messagef (reason, "\nUnexpected internal error while processing event for %s which returned %d - %s\n", sim_uname (uptr), reason, sim_error_text (reason));
+        (bare_reason != SCPE_EXIT)) {
+        if (bare_reason == SCPE_UNATT) 
+            sim_messagef (reason, "\nUnexpected I/O error while processing event for %s - %s\n", sim_uname (uptr), sim_error_text (reason));
+        else
+            sim_messagef (reason, "\nUnexpected internal error while processing event for %s which returned %d - %s\n", sim_uname (uptr), reason, sim_error_text (reason));
+        }
     } while ((reason == SCPE_OK) && 
              ((sim_interval + sim_interval_catchup) <= 0) && 
              (sim_clock_queue != QUEUE_LIST_END) &&
@@ -13873,10 +13953,13 @@ va_list arglist;
 t_bool inhibit_message = (!sim_show_message || (stat & SCPE_NOMESSAGE));
 char msg_prefix[32] = "";
 size_t prefix_len;
+t_bool newline_prefix = (*fmt == '\n');
 
 if ((stat == SCPE_OK) && (sim_quiet || (sim_switches & SWMASK ('Q'))))
     return stat;
-sprintf (msg_prefix, "%%SIM-%s: ", (stat == SCPE_OK) ? "INFO" : "ERROR");
+if (newline_prefix)
+    ++fmt;
+sprintf (msg_prefix, "%s%%SIM-%s: ", newline_prefix ? (sim_is_running ? "\r\n" : "\n") : "", (stat == SCPE_OK) ? "INFO" : "ERROR");
 prefix_len = strlen (msg_prefix);
 while (1) {                                         /* format passed string, args */
     va_start (arglist, fmt);
@@ -16250,6 +16333,73 @@ if (sim_switches & SWMASK ('T'))
 return result;
 }
 
+struct arg_test_result {
+    int expected_argc;
+    const char *expected_argv[12];
+    };
+static struct parse_arg_function_test {
+    const char *input;
+    struct arg_test_result result;
+    } parse_arg_function_tests[] = {
+        {"1 2 3 4",
+                 {5, {"", "1", "2", "3", "4", NULL}}},
+        {"'1 2 3 4'",  
+                 {2, {"", "1 2 3 4", NULL}}},
+        {"1 \"2\" 3 4",  
+                 {5, {"", "1", "2", "3", "4", NULL}}},
+        {NULL}
+    };
+static int arg_test_index;
+
+static int arg_check (int argc, char **argv)
+{
+struct parse_arg_function_test *t = &parse_arg_function_tests[arg_test_index];
+struct arg_test_result *r = &t->result;
+int i;
+
+sim_printf ("Arg test for input: %s\n", t->input);
+if (r->expected_argc != argc) {
+    sim_printf ("Unexpected argc.  Expected: %d, Got: %d\n", r->expected_argc, argc);
+    return -1;
+    }
+if (0 != strcmp (argv[0], t->input)) {
+    sim_printf ("Unexpected argv[%d].  Expected: '%s', Got: '%s'\n", 0, t->input, argv[0]);
+    return -1;
+    }
+for (i = 1; i >= 0;i++) {
+    if ((argv[i] == NULL) && (r->expected_argv[i] != NULL)) {
+        sim_printf ("Unexpected argv[%d].  Expected: '%s', Got: NULL\n", i, r->expected_argv[i]);
+        return -1;
+        }
+    if ((argv[i] != NULL) && (r->expected_argv[i] == NULL)) {
+        sim_printf ("Unexpected argv[%d].  Expected: NULL, Got: '%s'\n", i, argv[i]);
+        return -1;
+        }
+    if (argv[i] == NULL)
+        break;
+    if (strcmp (r->expected_argv[i], argv[i])) {
+        sim_printf ("Unexpected argv[%d].  Expected: '%s', Got: '%s'\n", i, r->expected_argv[i], argv[i]);
+        return -1;
+        }
+    }
+sim_printf ("Good Result\n");
+return 0;
+}
+
+static t_stat test_arg_parsing (void)
+{
+t_stat result = SCPE_OK;
+
+if (sim_switches & SWMASK ('T'))
+    sim_messagef (SCPE_OK, "test_arg_parsing - starting\n");
+for (arg_test_index = 0; parse_arg_function_tests[arg_test_index].input && (result == SCPE_OK); arg_test_index++) {
+    result = sim_call_argv (&arg_check, parse_arg_function_tests[arg_test_index].input);
+    }
+if (sim_switches & SWMASK ('T'))
+    sim_messagef (SCPE_OK, "test_arg_parsing - done\n");
+return result;
+}
+
 static t_stat sim_scp_svc (UNIT *uptr)
 {
 sim_printf ("Unit %s fired at %.0f\n", sim_uname (uptr), sim_gtime ());
@@ -16392,6 +16542,8 @@ if ((strcmp (gbuf, "ALL") == 0) || (strcmp (gbuf, "SCP") == 0)) {
         return sim_messagef (SCPE_IERR, "SCP register validation test failed\n");
     if (test_scp_parsing () != SCPE_OK)
         return sim_messagef (SCPE_IERR, "SCP parsing test failed\n");
+    if (test_arg_parsing () != SCPE_OK)
+        return sim_messagef (SCPE_IERR, "SCP argument parsing test failed\n");
     if (test_scp_event_sequencing () != SCPE_OK)
         return sim_messagef (SCPE_IERR, "SCP event sequencing test failed\n");
 }
