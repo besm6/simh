@@ -248,6 +248,9 @@
 #ifndef MIN
 #define MIN(a,b)  (((a) <= (b)) ? (a) : (b))
 #endif
+/* Max width of a value expressed as a formatted string */
+#define MAX_WIDTH ((int) ((CHAR_BIT * sizeof (t_value) * 4 + 3)/3))
+
 
 /* search logical and boolean ops */
 
@@ -2911,32 +2914,34 @@ if (cptr == NULL) {
 else
     cptr2 = NULL;
 docmdp = find_cmd ("DO");
-if (docmdp && cptr && (sizeof (nbuf) > strlen (cptr) + strlen ("/simh.ini") + 3)) {
-    snprintf(nbuf, sizeof (nbuf), "\"%s%s%ssimh.ini\"", cptr2 ? cptr2 : "", cptr, strchr (cptr, '/') ? "/" : "\\");
-    stat = docmdp->action (-1, nbuf);                   /* simh.ini proc cmd file */
-    }
-if (SCPE_BARE_STATUS(stat) == SCPE_OPENERR)
-    stat = docmdp->action (-1, "simh.ini");             /* simh.ini proc cmd file */
-if (*cbuf)                                              /* cmd file arg? */
-    stat = docmdp->action (0, cbuf);                    /* proc cmd file */
-else {
-    if (*argv[0]) {                                    /* sim name arg? */
-        char *np;                                      /* "path.ini" */
-        nbuf[0] = '"';                                 /* starting " */
-        strlcpy (nbuf + 1, argv[0], PATH_MAX + 2);     /* copy sim name */
-        if ((np = (char *)match_ext (nbuf, "EXE")))    /* remove .exe */
-            *np = 0;
-        strlcat (nbuf, ".ini\"", sizeof (nbuf));       /* add .ini" */
-        stat = docmdp->action (-1, nbuf) & ~SCPE_NOMESSAGE; /* proc default cmd file */
-        if (stat == SCPE_OPENERR) {                    /* didn't exist/can't open? */
-            np = strrchr (nbuf, '/');                  /* stript path and try again in cwd */
-            if (np == NULL)
-                np = strrchr (nbuf, '\\');             /* windows path separator */
-            if (np == NULL)
-                np = strrchr (nbuf, ']');              /* VMS path separator */
-            if (np != NULL) {
-                *np = '"';
-                stat = docmdp->action (-1, np) & ~SCPE_NOMESSAGE;/* proc default cmd file */
+if (docmdp) {
+    if (cptr && (sizeof (nbuf) > strlen (cptr) + strlen ("/simh.ini") + 3)) {
+        snprintf(nbuf, sizeof (nbuf), "\"%s%s%ssimh.ini\"", cptr2 ? cptr2 : "", cptr, strchr (cptr, '/') ? "/" : "\\");
+        stat = docmdp->action (-1, nbuf);                   /* simh.ini proc cmd file */
+        }
+    if (SCPE_BARE_STATUS(stat) == SCPE_OPENERR)
+        stat = docmdp->action (-1, "simh.ini");             /* simh.ini proc cmd file */
+    if (*cbuf)                                              /* cmd file arg? */
+        stat = docmdp->action (0, cbuf);                    /* proc cmd file */
+    else {
+        if (*argv[0]) {                                    /* sim name arg? */
+            char *np;                                      /* "path.ini" */
+            nbuf[0] = '"';                                 /* starting " */
+            strlcpy (nbuf + 1, argv[0], PATH_MAX + 2);     /* copy sim name */
+            if ((np = (char *)match_ext (nbuf, "EXE")))    /* remove .exe */
+                *np = 0;
+            strlcat (nbuf, ".ini\"", sizeof (nbuf));       /* add .ini" */
+            stat = docmdp->action (-1, nbuf) & ~SCPE_NOMESSAGE; /* proc default cmd file */
+            if (stat == SCPE_OPENERR) {                    /* didn't exist/can't open? */
+                np = strrchr (nbuf, '/');                  /* stript path and try again in cwd */
+                if (np == NULL)
+                    np = strrchr (nbuf, '\\');             /* windows path separator */
+                if (np == NULL)
+                    np = strrchr (nbuf, ']');              /* VMS path separator */
+                if (np != NULL) {
+                    *np = '"';
+                    stat = docmdp->action (-1, np) & ~SCPE_NOMESSAGE;/* proc default cmd file */
+                    }
                 }
             }
         }
@@ -4301,24 +4306,26 @@ t_stat sim_call_argv (int (*main_like_routine)(int argc, char *argv[]), const ch
 {
 int argc = 1;
 char **argv = (char **)calloc ((1 + argc), sizeof (*argv));
-size_t cptr_len = strlen (cptr);
-char *argline = (char *)malloc (2 + 2 * cptr_len);
+size_t arg_size;
+char *argline = NULL;
 char *cp, quote;
 t_stat result = SCPE_OK;
 
-if ((argv == NULL) || (argline == NULL)) {
-    free (argv);
-    free (argline);
-    return SCPE_MEM;
-    }
 if (cptr == NULL) {
     free (argv);
     free (argline);
     return SCPE_ARG;
     }
-strcpy (argline, cptr);
-cp = argline + cptr_len + 1;
-strcpy (cp, cptr);
+arg_size = 2 + (2 * strlen (cptr));
+argline = (char *)malloc (arg_size);
+if ((argv == NULL) || (argline == NULL)) {
+    free (argv);
+    free (argline);
+    return SCPE_MEM;
+    }
+strlcpy (argline, cptr, arg_size);
+cp = argline + (arg_size / 2);
+strlcpy (cp, cptr, arg_size / 2);
 argv[0] = argline;                  /* argv[0] points to unparsed arguments */
 argv[argc + 1] = NULL;              /* make sure the argument list always ends with a NULL */
 while (*cp) {
@@ -6465,7 +6472,7 @@ return SCPE_OK;
 
 const char *sprint_capac (DEVICE *dptr, UNIT *uptr)
 {
-static char capac_buf[((CHAR_BIT * sizeof (t_value) * 4 + 3)/3) + 12];
+static char capac_buf[MAX_WIDTH + 12];
 t_addr kval = (uptr->flags & UNIT_BINK)? 1024: 1000;
 t_addr mval;
 double remfrac;
@@ -11664,7 +11671,6 @@ return val * negate;
 t_stat sprint_val (char *buffer, t_value val, uint32 radix,
     uint32 width, uint32 format)
 {
-#define MAX_WIDTH ((int) ((CHAR_BIT * sizeof (t_value) * 4 + 3)/3))
 t_value owtest, wtest;
 t_bool negative = FALSE;
 int32 d, digit, ndigits, commas = 0;
@@ -11675,8 +11681,7 @@ if (((format == PV_LEFTSIGN) || (format == PV_RCOMMASIGN)) &&
     val = (t_value)(-((t_svalue)val));
     negative = TRUE;
     }
-for (d = 0; d < MAX_WIDTH; d++)
-    dbuf[d] = (format == PV_RZRO)? '0': ' ';
+memset (dbuf, (format == PV_RZRO)? '0': ' ', MAX_WIDTH);
 dbuf[MAX_WIDTH] = 0;
 d = MAX_WIDTH;
 do {
@@ -12844,13 +12849,14 @@ if (spc < SIM_BKPT_N_SPC) {
 const char *sim_brk_message(void)
 {
 static char msg[256];
-char addr[65];
+char addr[MAX_WIDTH + 1];
 char buf[32];
 
 msg[0] = '\0';
 if (sim_vm_sprint_addr)
     sim_vm_sprint_addr (addr, sim_dflt_dev, (t_value)sim_brk_match_addr);
-else sprint_val (addr, (t_value)sim_brk_match_addr, sim_dflt_dev->aradix, sim_dflt_dev->awidth, PV_LEFT);
+else 
+    sprint_val (addr, (t_value)sim_brk_match_addr, sim_dflt_dev->aradix, sim_dflt_dev->awidth, PV_LEFT);
 if (sim_brk_type_desc) {
     BRKTYPTAB *brk = sim_brk_type_desc;
 
@@ -13767,7 +13773,7 @@ static const char *sim_debug_prefix (uint32 dbits, DEVICE* dptr, UNIT* uptr)
 const char* debug_type = _get_dbg_verb (dbits, dptr, uptr);
 char tim_t[32] = "";
 char tim_a[32] = "";
-char pc_s[64] = "";
+char pc_s[MAX_WIDTH + 1] = "";
 struct timespec time_now;
 
 if (sim_deb_switches & (SWMASK ('T') | SWMASK ('R') | SWMASK ('A'))) {
@@ -15855,7 +15861,7 @@ return ((*gptr == '\0') && (*string));
 static t_svalue sim_eval_postfix (Stack *stack1, t_stat *stat)
 {
 Stack *stack2 = new_Stack();    /* local working stack2 which is holds the numbers operators */
-char temp_data[CBUFSIZE];       /* Holds the items popped from the stack2 */
+char temp_data[CBUFSIZE + 2];   /* Holds the items popped from the stack2 */
 Operator *temp_op;
 t_svalue temp_val;
 char temp_string[CBUFSIZE + 2];
