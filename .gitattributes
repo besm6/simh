@@ -1,7 +1,16 @@
+# Global attributes for forcing line endings normalization of specific files
+
+* text=aut
+
+# Visual Studio projects and solutions
+*.sln     text eol=crlf
+*.vcproj  text eol=crlf
+*.vcxproj text eol=crlf
+*.filters text eol=crlf
+
+# Binaries
 *.jpg binary
 *.png binary
-*.sln binary
-*.vcproj binary
 *.exe binary
 *.lda binary
 *.bin binary
@@ -12,5 +21,6 @@
 *.vhd binary
 *.crd binary
 *.dck binary
-sim_rev.h export-subst
 
+# Other files
+sim_rev.h export-subst
