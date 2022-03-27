@@ -1,4 +1,5 @@
 @echo off
+
 :: Rebuild all of SIMH simulators using Visual Studio
 ::
 :: If this procedure is not invoked from a Developer command prompt
@@ -20,8 +21,6 @@
 ::
 :: Individual simulator sources are in .\simulator_name
 :: Individual simulator executables are produced in .\BIN\NT\Win32-{Debug or Release}\
-::
-::
 
 :: Initialize target variables
 set _BUILD_CONFIG=Release

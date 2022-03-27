@@ -1,39 +1,38 @@
-rem
-rem  This script will build all the simulators in the current branch 
-rem  (presumed to be master) and package the resulting windows binaries
-rem  into a zip file which will be named for the revision, build date and 
-rem  git commit id.  The resulting zip file will be pushed to the github
-rem  Win32-Development-Binaries repository for public access.
-rem
-rem  We're using a github repository for this purpose since github no longer
-rem  supports a Download files facility since some folks were using it to 
-rem  contain large binary files.  The typical set of simh windows binaries
-rem  is about 35MB in size and the plan is to delete and recreate the whole
-rem  Win32-Development-Binaries repository at least every few months.
-rem
-rem  If this script is invoked with a single parameter "reset", the local
-rem  repository will be wiped out and reset.  This should be done AFTER
-rem  the github one is deleted and recreated.  The github repo should be
-rem  deleted by visiting https://github.com/simh/Win32-Development-Binaries/settings
-rem  and clicking on the "Delete this repository" button and entering
-rem  Win32-Development-Binaries
-rem  and then clicking on the "I understand the consequences, delete this repository" button.
-rem  It should be recreated by visiting https://github.com/new and selecting
-rem  simh in the Owner drop down and entering Win32-Development-Binaries in
-rem  the repository name text box.  Then enter "Current Windows Binaries" in
-rem  the Description text box and click on the green "Create repository" button.
-rem
-rem  This procedure depends on:
-rem     - Visual Studio 2008 (Express) tools to compile the desired 
-rem       simulators.  The compiler and its related pieces
-rem       must be installed in the windows %ProgramFiles% directory.
-rem     - git.exe (installed as part of GitExtensions)
-rem     - git credentials available which have write access to the 
-rem       github simh/Win32-Development-Binaries repository.
-rem     - 7-Zip (7z.exe) to package the compiled simulators into
-rem       a zip file.
-rem
-rem
+@echo off
+
+:: This script will build all the simulators in the current branch
+:: (presumed to be master) and package the resulting windows binaries
+:: into a zip file which will be named for the revision, build date and
+:: git commit id. The resulting zip file will be pushed to the github
+:: Win32-Development-Binaries repository for public access
+::
+:: We're using a github repository for this purpose since github no longer
+:: supports a Download files facility since some folks were using it to
+:: contain large binary files. The typical set of simh windows binaries
+:: is about 35MB in size and the plan is to delete and recreate the whole
+:: Win32-Development-Binaries repository at least every few months
+::
+:: If this script is invoked with a single parameter "reset", the local
+:: repository will be wiped out and reset. This should be done AFTER
+:: the github one is deleted and recreated. The github repo should be
+:: deleted by visiting https://github.com/simh/Win32-Development-Binaries/settings
+:: and clicking on the "Delete this repository" button and entering
+:: Win32-Development-Binaries
+:: and then clicking on the "I understand the consequences, delete this repository" button.
+:: It should be recreated by visiting https://github.com/new and selecting
+:: simh in the Owner drop down and entering Win32-Development-Binaries in
+:: the repository name text box. Then enter "Current Windows Binaries" in
+:: the Description text box and click on the green "Create repository" button
+::
+:: This procedure depends on:
+::     - Visual Studio 2008 (Express) tools to compile the desired
+::       simulators. The compiler and its related pieces
+::       must be installed in the windows %ProgramFiles% directory
+::     - git.exe (installed as part of GitExtensions)
+::     - git credentials available which have write access to the
+::       github simh/Win32-Development-Binaries repository
+::     - 7-Zip (7z.exe) to package the compiled simulators into
+::       a zip file
 
 set BIN_REPO=Win32-Development-Binaries
 set REMOTE_REPO=git@github.com:simh/%BIN_REPO%.git
@@ -53,7 +52,7 @@ echo **** ERROR **** Invalid argument
 echo.
 echo Usage: %0 {reset}
 echo.
-echo   invoking with the parameter "reset" (no quotes) will clean out 
+echo   invoking with the parameter "reset" (no quotes) will clean out
 echo   the local repository and push a newly create repo to github.
 echo   This should be done AFTER the github one is deleted and recreated.
 echo   See the comments at the beginning of %0 for complete 
@@ -71,18 +70,19 @@ echo **** ERROR **** 7-Zip is unavailable
 exit /B 1
 :ZipOK
 
-rem  Now locate the Visual Studio (VC++) 2008 components and setup the environment variables to use them
+:: Now locate the Visual Studio (VC++) 2008 components and setup the environment variables to use them
 if exist "%VS90COMNTOOLS%\..\..\VC\bin\vcvars32.bat" goto VS2008Found
 @echo off
 echo **** ERROR **** Visual Studio 2008 is unavailable
 exit /B 1
 :VS2008Found
 call "%VS90COMNTOOLS%\..\..\VC\bin\vcvars32.bat"
-rem  If later versions of Visual Studio are also installed, there can be some confusion about 
-rem  where the Windows SDK is located.
+
+:: If later versions of Visual Studio are also installed, there can be some confusion about
+:: where the Windows SDK is located
 call :WhereInInclude winsock2.h > NUL 2>&1
 if %ERRORLEVEL% equ 0 goto VSOK
-rem  need to fixup the Windows SDK reference to use the SDK which was packaged with Visual VC++ 2008
+:: Need to fixup the Windows SDK reference to use the SDK which was packaged with Visual VC++ 2008
 if exist "%PROGRAMW6432%\Microsoft SDKs\Windows\v6.0A\include\winsock2.h" set INCLUDE=%INCLUDE%%PROGRAMW6432%\Microsoft SDKs\Windows\v6.0A\include;
 if exist "%PROGRAMW6432%\Microsoft SDKs\Windows\v6.0A\lib\wsock32.lib" set LIB=%LIB%%PROGRAMW6432%\Microsoft SDKs\Windows\v6.0A\LIB;
 if exist "%PROGRAMW6432%\Microsoft SDKs\Windows\v6.0A\bin\mt.exe" set PATH=%PATH%;%PROGRAMW6432%\Microsoft SDKs\Windows\v6.0A\bin;
@@ -93,8 +93,8 @@ echo **** ERROR **** Can't locate the Windows SDK include and library files
 exit /B 1
 :VSOK
 
-rem  This procedure must be located in the "Visual Studio Projects\Win32-Development-Binaries" directory.
-rem  The git repository directory (.git) is located relative to that directory.
+:: This procedure must be located in the "Visual Studio Projects\Win32-Development-Binaries" directory
+:: The git repository directory (.git) is located relative to that directory
 cd %~p0
 SET GIT_COMMIT_ID=
 SET GIT_COMMIT_TIME=

@@ -1,33 +1,32 @@
-rem
-rem  This script performs several maintenance functions prior to building
-rem  simh projects.  Some of these funtions are optional and depend on the
-rem  needs of the project being built, and others are generic and are always
-rem  performed.
-rem
-rem  The optional activities are invoked by passing parameters to this 
-rem  procedure.  The parameters are:
-rem     ROM     To run the BuildROMs program prior to executing a project
-rem             build.  This program verifies that the include files containing
-rem             ROM images are consistent with the ROM images from which they
-rem             are derived.
-rem     BUILD   To validate that the required dependent libraries and include
-rem             files are available in the directory ..\..\windows-build\
-rem             These libraries currently include winpcap, pthreads, SDL
-rem             and LIBPCRE.
-rem     LIBSDL  To validate that the required dependent SDL libraries and include
-rem             files are available in the directory ..\..\windows-build\
-rem     LIBPCRE To validate that the required dependent PCRE libraries and include
-rem             files are available in the directory ..\..\windows-build\
-rem
-rem  In addition to the optional activities mentioned above, other activities
-rem  are also performed.  These include:
-rem       - performing the activities which make confirm or generate the git 
-rem         repository commit id available in an include file during compiles.
-rem
-rem
+@echo off
 
-rem Everything implicitly requires BUILD to also be set to have 
-rem any meaning, it always gets set.
+:: This script performs several maintenance functions prior to building
+:: simh projects. Some of these funtions are optional and depend on the
+:: needs of the project being built, and others are generic and are always
+:: performed
+::
+:: The optional activities are invoked by passing parameters to this
+:: procedure. The parameters are:
+::     ROM     To run the BuildROMs program prior to executing a project
+::             build. This program verifies that the include files containing
+::             ROM images are consistent with the ROM images from which they
+::             are derived.
+::     BUILD   To validate that the required dependent libraries and include
+::             files are available in the directory ..\..\windows-build\
+::             These libraries currently include winpcap, pthreads, SDL
+::             and LIBPCRE.
+::     LIBSDL  To validate that the required dependent SDL libraries and include
+::             files are available in the directory ..\..\windows-build\
+::     LIBPCRE To validate that the required dependent PCRE libraries and include
+::             files are available in the directory ..\..\windows-build\
+::
+:: In addition to the optional activities mentioned above, other activities
+:: are also performed. These include:
+::      - performing the activities which make confirm or generate the git
+::        repository commit id available in an include file during compiles
+
+:: Everything implicitly requires BUILD to also be set to have
+:: any meaning, it always gets set
 set _X_BUILD=BUILD
 set _X_REQUIRED_WINDOWS_BUILD=20220119
 call :FindVCVersion _VC_VER
@@ -57,7 +56,6 @@ shift
 goto _next_arg
 :_done_args
 
-
 :_do_rom
 pushd ..
 if "%_X_ROM%" == "" goto _done_rom
@@ -67,7 +65,7 @@ if exist BIN\NT\Win32-Release\BuildTools\BuildROMs.exe SET _BLD=BIN\NT\Win32-Rel
 if "%_BLD%" == "" echo ************************************************
 if "%_BLD%" == "" echo ************************************************
 if "%_BLD%" == "" echo **  Project dependencies are not correct.     **
-if "%_BLD%" == "" echo **  This project should depend on BuildROMs.  **
+if "%_BLD%" == "" echo **  This project should depend on BuildROMs   **
 if "%_BLD%" == "" echo ************************************************
 if "%_BLD%" == "" echo ************************************************
 if "%_BLD%" == "" echo error: Review the Output Tab for more details.
@@ -113,11 +111,11 @@ exit 1
 :_check_build
 if "%_X_BUILD%" == "" goto _done_build
 if not exist ..\..\windows-build-windows-build goto _check_files
-rem This is a newly extracted windows-build.zip file with the
-rem top level directory named as it existed in the zip file.
-rem We rename that top level directory.  If a previous one already
-rem exists, that will be an older version, so we try to remove 
-rem that one first.
+:: This is a newly extracted windows-build.zip file with the
+:: top level directory named as it existed in the zip file.
+:: We rename that top level directory. If a previous one already
+:: exists, that will be an older version, so we try to remove
+:: that one first.
 if exist ..\..\windows-build rmdir /s /q ..\..\windows-build
 ren ..\..\windows-build-windows-build windows-build
 if errorlevel 1 goto _notice3
@@ -192,6 +190,7 @@ set _VCLIB_DIR_=
 set _LIB_VC_VER=
 :_done_library
 goto _done_build
+
 :_notice1
 if "%_TRIED_CLONE%" neq "" goto _notice1_announce
 if "%_GIT_GIT%" equ "" goto _notice1_announce
@@ -209,12 +208,14 @@ echo ** This may take a minute or so.  Please wait...   **
 echo **                                                 **
 echo *****************************************************
 echo *****************************************************
+
 :_try_clone
 pushd ..\..
 "%_GIT_GIT%" clone https://github.com/simh/windows-build windows-build
 popd
 set _TRIED_CLONE=1
 goto _check_build
+
 :_notice1_announce
 echo *****************************************************
 echo *****************************************************
@@ -223,6 +224,7 @@ echo *****************************************************
 echo *****************************************************
 set _exit_reason=The required build support is not available.
 goto _ProjectInfo
+
 :_notice2
 if "%_TRIED_PULL%" neq "" goto _notice2_announce
 if "%_GIT_GIT%" equ "" goto _notice2_announce
@@ -243,6 +245,7 @@ echo *****************************************************
 echo *****************************************************
 rmdir /s /q ..\..\windows-build
 goto _try_clone
+
 :_try_pull
 echo *****************************************************
 echo *****************************************************
@@ -259,6 +262,7 @@ pushd ..\..\windows-build
 popd
 set _TRIED_PULL=1
 goto _check_build
+
 :_notice2_announce
 echo *****************************************************
 echo *****************************************************
@@ -267,6 +271,7 @@ echo *****************************************************
 echo *****************************************************
 set _exit_reason=The required build support is out of date.
 goto _ProjectInfo
+
 :_notice3
 echo *****************************************************
 echo *****************************************************
@@ -276,6 +281,7 @@ echo *****************************************************
 echo *****************************************************
 set _exit_reason=Can't rename ../../windows-build-windows-build to ../../windows-build
 goto _ProjectInfo
+
 :_notice4
 echo *********************************
 echo *********************************
@@ -296,6 +302,7 @@ echo **  that.                                          **
 echo *****************************************************
 echo *****************************************************
 goto _ProjectInfo
+
 :_ProjectInfo
 type 0ReadMe_Projects.txt
 echo error: %_exit_reason%
@@ -333,11 +340,9 @@ exit 1
 :_done_git
 
 :_SetId
-rem
-rem A race condition exists while creating the .git-commit-id.h file.
-rem This race can happen at the beginning of a parallel build where 
-rem several projects can start execution at almost the same time.
-rem
+:: A race condition exists while creating the .git-commit-id.h file.
+:: This race can happen at the beginning of a parallel build where
+:: several projects can start execution at almost the same time
 SET ACTUAL_GIT_COMMIT_ID=
 SET ACTUAL_GIT_COMMIT_TIME=
 SET ACTUAL_GIT_COMMIT_EXTRAS=
@@ -353,6 +358,7 @@ SET GIT_COMMIT_ID=%ACTUAL_GIT_COMMIT_ID%
 SET GIT_COMMIT_TIME=%ACTUAL_GIT_COMMIT_TIME%
 SET ACTUAL_GIT_COMMIT_ID=
 SET ACTUAL_GIT_COMMIT_TIME=
+
 :_VerifyGitCommitId.h
 SET OLD_GIT_COMMIT_ID=
 if not exist .git-commit-id.h echo.>.git-commit-id.h
@@ -367,7 +373,6 @@ if errorlevel 1 goto _SetId
 :_done_id
 if not exist .git-commit-id.h echo. >.git-commit-id.h
 goto :EOF
-
 
 :WhereInPath
 if "%~$PATH:1" NEQ "" exit /B 0
