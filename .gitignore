@@ -28,8 +28,13 @@ ipch/
 
 # Generated files
 .git-commit-id
+VisualStudio2022/*.h
+VisualStudio2022/*.txt
 
 # Build results
 obj/
 lib/
 bin/
+
+# Dependencies
+windows-build/
