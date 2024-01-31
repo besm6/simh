@@ -19,7 +19,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
  * SERGE VAKULENKO OR LEONID BROUKHIS BE LIABLE FOR ANY CLAIM, DAMAGES
  * OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE 
  * OR OTHER DEALINGS IN THE SOFTWARE.
 
  * Except as contained in this notice, the name of Leonid Broukhis or
@@ -142,7 +142,7 @@ extern uint32 BAZ[8], TABST, RZ;
 extern uint32 READY; /* read by ext 4031 */
 extern uint32 READY2; /* read by ext 4102 */
 extern DEVICE cpu_dev, drum_dev, mmu_dev;
-extern DEVICE md_dev[8];
+extern DEVICE md_dev[];
 extern DEVICE clock_dev;
 extern DEVICE printer_dev;
 extern DEVICE tty_dev;
@@ -150,7 +150,7 @@ extern DEVICE fs_dev;
 extern DEVICE pl_dev;
 extern DEVICE vu_dev;
 extern DEVICE pi_dev;
-extern DEVICE mg_dev[4];
+extern DEVICE mg_dev[];
 extern jmp_buf cpu_halt;
 
 /*
@@ -358,8 +358,12 @@ int tty_query (void);
 void vt_print (void);
 void tt_print (void);
 void vt_receive (void);
+void tt_receive (void);
 void consul_print (int num, uint32 cmd);
 uint32 consul_read (int num);
+void mux_send (uint32 syllable);
+uint32 mux_read (void);
+void mux_clear (void);
 int vt_is_idle (void);
 
 /*
@@ -481,7 +485,11 @@ t_value besm6_unpack (t_value val, t_value mask);
 #define PRP_CONS1_DONE    000001000             /* 10 */
 #define PRP_CONS2_DONE    000000400             /* 9 */
 
+#define PRP_PLOTTER       000000200             /* 8 */
+#define PRP_MUX_INPUT     000000100             /* 7 */
+#define PRP_MUX_DONE      000000040             /* 6 */
+
 /* Номер блока ОЗУ или номер страницы, вызвавших прерывание */
 extern uint32 iintr_data;
-
+extern uint32 trace_counter;
 #endif

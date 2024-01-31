@@ -61,6 +61,8 @@ t_value ACC, RMR, GRP, MGRP;
 uint32 PRP, MPRP;
 uint32 READY, READY2;                   /* ready flags of various devices */
 int32 tmr_poll = CLK_DELAY;             /* pgm timer poll */
+uint32 trace_counter;
+t_uint64 touched[256][1 << (24-6)];
 
 /* Wired (non-registered) bits of interrupt registers (GRP and PRP)
  * cannot be cleared by writing to the GRP and must be cleared by clearing
@@ -79,6 +81,7 @@ int32 tmr_poll = CLK_DELAY;             /* pgm timer poll */
 
 int corr_stack;
 int redraw_panel;
+int autotime;
 jmp_buf cpu_halt;
 
 t_stat cpu_examine (t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
@@ -87,6 +90,8 @@ t_stat cpu_reset (DEVICE *dptr);
 t_stat cpu_req (UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_pult (UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_pult (FILE *st, UNIT *up, int32 v, CONST void *dp);
+t_stat cpu_set_autotime (UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_show_autotime (FILE *st, UNIT *up, int32 v, CONST void *dp);
 
 
 /*
@@ -103,39 +108,39 @@ UNIT cpu_unit = { UDATA (NULL, UNIT_FIX, MEMSIZE) };
 #define ORDATAVM(nm,loc,wd) REGDATA(nm,(loc),8,wd,0,1,NULL,NULL,REG_VMIO,0,0)
 
 REG cpu_reg[] = {
-    { ORDATA   (СчАС,   PC,         15) }, /* счётчик адреса команды */
-    { ORDATA   (РК,     RK,         24) }, /* регистр выполняемой команды */
-    { ORDATA   (Аисп,   Aex,        15) }, /* исполнительный адрес */
-    { ORDATAVM (СМ,     ACC,        48) }, /* сумматор */
-    { ORDATAVM (РМР,    RMR,        48) }, /* регистр младших разрядов */
-    { BINRDATA (РАУ,    RAU,         6) }, /* режимы АУ */
-    { ORDATA   (М1,     M[1],       15) }, /* регистры-модификаторы */
-    { ORDATA   (М2,     M[2],       15) },
-    { ORDATA   (М3,     M[3],       15) },
-    { ORDATA   (М4,     M[4],       15) },
-    { ORDATA   (М5,     M[5],       15) },
-    { ORDATA   (М6,     M[6],       15) },
-    { ORDATA   (М7,     M[7],       15) },
-    { ORDATA   (М10,    M[010],     15) },
-    { ORDATA   (М11,    M[011],     15) },
-    { ORDATA   (М12,    M[012],     15) },
-    { ORDATA   (М13,    M[013],     15) },
-    { ORDATA   (М14,    M[014],     15) },
-    { ORDATA   (М15,    M[015],     15) },
-    { ORDATA   (М16,    M[016],     15) },
-    { ORDATA   (М17,    M[017],     15) }, /* указатель магазина */
-    { ORDATA   (М20,    M[020],     15) }, /* MOD - модификатор адреса */
-    { ORDATA   (М21,    M[021],     15) }, /* PSW - режимы УУ */
-    { ORDATA   (М27,    M[027],     15) }, /* SPSW - упрятывание режимов УУ */
-    { ORDATA   (М32,    M[032],     15) }, /* ERET - адрес возврата из экстракода */
-    { ORDATA   (М33,    M[033],     15) }, /* IRET - адрес возврата из прерывания */
-    { ORDATA   (М34,    M[034],     16) }, /* IBP - адрес прерывания по выполнению */
-    { ORDATA   (М35,    M[035],     16) }, /* DWP - адрес прерывания по чтению/записи */
-    { BINRDATA (РУУ,    RUU,         9) }, /* ПКП, ПКЛ, РежЭ, РежПр, ПрИК, БРО, ПрК */
-    { ORDATAVM (ГРП,    GRP,        48) }, /* главный регистр прерываний */
-    { ORDATAVM (МГРП,   MGRP,       48) }, /* маска ГРП */
-    { ORDATA   (ПРП,    PRP,        24) }, /* периферийный регистр прерываний */
-    { ORDATA   (МПРП,   MPRP,       24) }, /* маска ПРП */
+    { ORDATA   ( "СчАС",  PC,       15) }, /* счётчик адреса команды */
+    { ORDATA   ( "РК",    RK,       24) }, /* регистр выполняемой команды */
+    { ORDATA   ( "Аисп",  Aex,      15) }, /* исполнительный адрес */
+    { ORDATAVM ( "СМ",    ACC,      48) }, /* сумматор */
+    { ORDATAVM ( "РМР",   RMR,      48) }, /* регистр младших разрядов */
+    { BINRDATA ( "РАУ",   RAU,       6) }, /* режимы АУ */
+    { ORDATA   ( "М1",    M[1],     15) }, /* регистры-модификаторы */
+    { ORDATA   ( "М2",    M[2],     15) },
+    { ORDATA   ( "М3",    M[3],     15) },
+    { ORDATA   ( "М4",    M[4],     15) },
+    { ORDATA   ( "М5",    M[5],     15) },
+    { ORDATA   ( "М6",    M[6],     15) },
+    { ORDATA   ( "М7",    M[7],     15) },
+    { ORDATA   ( "М10",   M[010],   15) },
+    { ORDATA   ( "М11",   M[011],   15) },
+    { ORDATA   ( "М12",   M[012],   15) },
+    { ORDATA   ( "М13",   M[013],   15) },
+    { ORDATA   ( "М14",   M[014],   15) },
+    { ORDATA   ( "М15",   M[015],   15) },
+    { ORDATA   ( "М16",   M[016],   15) },
+    { ORDATA   ( "М17",   M[017],   15) }, /* указатель магазина */
+    { ORDATA   ( "М20",   M[020],   15) }, /* MOD - модификатор адреса */
+    { ORDATA   ( "М21",   M[021],   15) }, /* PSW - режимы УУ */
+    { ORDATA   ( "М27",   M[027],   15) }, /* SPSW - упрятывание режимов УУ */
+    { ORDATA   ( "М32",   M[032],   15) }, /* ERET - адрес возврата из экстракода */
+    { ORDATA   ( "М33",   M[033],   15) }, /* IRET - адрес возврата из прерывания */
+    { ORDATA   ( "М34",   M[034],   16) }, /* IBP - адрес прерывания по выполнению */
+    { ORDATA   ( "М35",   M[035],   16) }, /* DWP - адрес прерывания по чтению/записи */
+    { BINRDATA ( "РУУ",   RUU,       9) }, /* ПКП, ПКЛ, РежЭ, РежПр, ПрИК, БРО, ПрК */
+    { ORDATAVM ( "ГРП",   GRP,      48) }, /* главный регистр прерываний */
+    { ORDATAVM ( "МГРП",  MGRP,     48) }, /* маска ГРП */
+    { ORDATA   ( "ПРП",   PRP,      24) }, /* периферийный регистр прерываний */
+    { ORDATA   ( "МПРП",  MPRP,     24) }, /* маска ПРП */
     { 0 }
 };
 
@@ -155,6 +160,9 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV,
         0, NULL,    "NOPANEL",  &besm6_close_panel, NULL,               NULL,
                                 "Closes graphical panel" },
+    { MTAB_XTD|MTAB_VDV|MTAB_VALR,
+        0, "AUTOTIME", "AUTOTIME", &cpu_set_autotime, &cpu_show_autotime, NULL,
+                                "{ON, OFF} Controls automatic date/time setting at boot-up" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALO,
         0, "PULT",  "PULT",     &cpu_set_pult,      &cpu_show_pult,     NULL,
                                 "Selects a hardwired program or switch reg." },
@@ -173,73 +181,73 @@ DEVICE cpu_dev = {
  * REG: A pseudo-device containing Latin synonyms of all CPU registers.
  */
 REG reg_reg[] = {
-    { ORDATA   (PC,     PC,             15) }, /* program counter */
-    { ORDATA   (RK,     RK,             24) }, /* instruction register */
-    { ORDATA   (Aex,    Aex,            15) }, /* effective address */
-    { ORDATAVM (ACC,    ACC,            48) }, /* accumulator */
-    { ORDATAVM (RMR,    RMR,            48) }, /* LSB register */
-    { BINRDATA (RAU,    RAU,             6) }, /* ALU modes */
-    { ORDATA   (M1,     M[1],           15) }, /* index (modifier) registers */
-    { ORDATA   (M2,     M[2],           15) },
-    { ORDATA   (M3,     M[3],           15) },
-    { ORDATA   (M4,     M[4],           15) },
-    { ORDATA   (M5,     M[5],           15) },
-    { ORDATA   (M6,     M[6],           15) },
-    { ORDATA   (M7,     M[7],           15) },
-    { ORDATA   (M10,    M[010],         15) },
-    { ORDATA   (M11,    M[011],         15) },
-    { ORDATA   (M12,    M[012],         15) },
-    { ORDATA   (M13,    M[013],         15) },
-    { ORDATA   (M14,    M[014],         15) },
-    { ORDATA   (M15,    M[015],         15) },
-    { ORDATA   (M16,    M[016],         15) },
-    { ORDATA   (M17,    M[017],         15) }, /* also the stack pointer */
-    { ORDATA   (M20,    M[020],         15) }, /* MOD - address modifier register */
-    { ORDATA   (M21,    M[021],         15) }, /* PSW - CU modes */
-    { ORDATA   (M27,    M[027],         15) }, /* SPSW - saved CU modes */
-    { ORDATA   (M32,    M[032],         15) }, /* ERET - extracode return address */
-    { ORDATA   (M33,    M[033],         15) }, /* IRET - interrupt return address */
-    { ORDATA   (M34,    M[034],         16) }, /* IBP - instruction bkpt address */
-    { ORDATA   (M35,    M[035],         16) }, /* DWP - watchpoint address */
-    { BINRDATA (RUU,    RUU,             9) }, /* execution modes  */
-    { ORDATAVM (GRP,    GRP,            48) }, /* main interrupt reg */
-    { ORDATAVM (MGRP,   MGRP,           48) }, /* mask of the above  */
-    { ORDATA   (PRP,    PRP,            24) }, /* peripheral interrupt reg */
-    { ORDATA   (MPRP,   MPRP,           24) }, /* mask of the above*/
+    { ORDATA   ( PC,    PC,         15) },          /* program counter */
+    { ORDATA   ( RK,    RK,         24) },          /* instruction register */
+    { ORDATA   ( Aex,   Aex,        15) },          /* effective address */
+    { ORDATAVM ( ACC,   ACC,        48) },          /* accumulator */
+    { ORDATAVM ( RMR,   RMR,        48) },          /* LSB register */
+    { BINRDATA ( RAU,   RAU,         6) },          /* ALU modes */
+    { ORDATA   ( M1,    M[1],       15) },          /* index (modifier) registers */
+    { ORDATA   ( M2,    M[2],       15) },
+    { ORDATA   ( M3,    M[3],       15) },
+    { ORDATA   ( M4,    M[4],       15) },
+    { ORDATA   ( M5,    M[5],       15) },
+    { ORDATA   ( M6,    M[6],       15) },
+    { ORDATA   ( M7,    M[7],       15) },
+    { ORDATA   ( M10,   M[010],     15) },
+    { ORDATA   ( M11,   M[011],     15) },
+    { ORDATA   ( M12,   M[012],     15) },
+    { ORDATA   ( M13,   M[013],     15) },
+    { ORDATA   ( M14,   M[014],     15) },
+    { ORDATA   ( M15,   M[015],     15) },
+    { ORDATA   ( M16,   M[016],     15) },
+    { ORDATA   ( M17,   M[017],     15) },          /* also the stack pointer */
+    { ORDATA   ( M20,   M[020],     15) },          /* MOD - address modifier register */
+    { ORDATA   ( M21,   M[021],     15) },          /* PSW - CU modes */
+    { ORDATA   ( M27,   M[027],     15) },          /* SPSW - saved CU modes */
+    { ORDATA   ( M32,   M[032],     15) },          /* ERET - extracode return address */
+    { ORDATA   ( M33,   M[033],     15) },          /* IRET - interrupt return address */
+    { ORDATA   ( M34,   M[034],     16) },          /* IBP - instruction bkpt address */
+    { ORDATA   ( M35,   M[035],     16) },          /* DWP - watchpoint address */
+    { BINRDATA ( RUU,   RUU,         9) },          /* execution modes  */
+    { ORDATAVM ( GRP,   GRP,        48) },          /* main interrupt reg */
+    { ORDATAVM ( MGRP,  MGRP,       48) },          /* mask of the above  */
+    { ORDATA   ( PRP,   PRP,        24) },          /* peripheral interrupt reg */
+    { ORDATA   ( MPRP,  MPRP,       24) },          /* mask of the above*/
 
-    { ORDATAVM (BRZ0,   BRZ[0],         50) },
-    { ORDATAVM (BRZ1,   BRZ[1],         50) },
-    { ORDATAVM (BRZ2,   BRZ[2],         50) },
-    { ORDATAVM (BRZ3,   BRZ[3],         50) },
-    { ORDATAVM (BRZ4,   BRZ[4],         50) },
-    { ORDATAVM (BRZ5,   BRZ[5],         50) },
-    { ORDATAVM (BRZ6,   BRZ[6],         50) },
-    { ORDATAVM (BRZ7,   BRZ[7],         50) },
-    { ORDATA   (BAZ0,   BAZ[0],         16) },
-    { ORDATA   (BAZ1,   BAZ[1],         16) },
-    { ORDATA   (BAZ2,   BAZ[2],         16) },
-    { ORDATA   (BAZ3,   BAZ[3],         16) },
-    { ORDATA   (BAZ4,   BAZ[4],         16) },
-    { ORDATA   (BAZ5,   BAZ[5],         16) },
-    { ORDATA   (BAZ6,   BAZ[6],         16) },
-    { ORDATA   (BAZ7,   BAZ[7],         16) },
-    { ORDATA   (TABST,  TABST,          28) },
-    { ORDATAVM (RP0,    RP[0],          48) },
-    { ORDATAVM (RP1,    RP[1],          48) },
-    { ORDATAVM (RP2,    RP[2],          48) },
-    { ORDATAVM (RP3,    RP[3],          48) },
-    { ORDATAVM (RP4,    RP[4],          48) },
-    { ORDATAVM (RP5,    RP[5],          48) },
-    { ORDATAVM (RP6,    RP[6],          48) },
-    { ORDATAVM (RP7,    RP[7],          48) },
-    { ORDATA   (RZ,     RZ,             32) },
-    { ORDATAVM (FP1,    pult[0][1],     50) },
-    { ORDATAVM (FP2,    pult[0][2],     50) },
-    { ORDATAVM (FP3,    pult[0][3],     50) },
-    { ORDATAVM (FP4,    pult[0][4],     50) },
-    { ORDATAVM (FP5,    pult[0][5],     50) },
-    { ORDATAVM (FP6,    pult[0][6],     50) },
-    { ORDATAVM (FP7,    pult[0][7],     50) },
+    { ORDATAVM ( BRZ0,  BRZ[0],     50) },
+    { ORDATAVM ( BRZ1,  BRZ[1],     50) },
+    { ORDATAVM ( BRZ2,  BRZ[2],     50) },
+    { ORDATAVM ( BRZ3,  BRZ[3],     50) },
+    { ORDATAVM ( BRZ4,  BRZ[4],     50) },
+    { ORDATAVM ( BRZ5,  BRZ[5],     50) },
+    { ORDATAVM ( BRZ6,  BRZ[6],     50) },
+    { ORDATAVM ( BRZ7,  BRZ[7],     50) },
+    { ORDATA   ( BAZ0,  BAZ[0],     16) },
+    { ORDATA   ( BAZ1,  BAZ[1],     16) },
+    { ORDATA   ( BAZ2,  BAZ[2],     16) },
+    { ORDATA   ( BAZ3,  BAZ[3],     16) },
+    { ORDATA   ( BAZ4,  BAZ[4],     16) },
+    { ORDATA   ( BAZ5,  BAZ[5],     16) },
+    { ORDATA   ( BAZ6,  BAZ[6],     16) },
+    { ORDATA   ( BAZ7,  BAZ[7],     16) },
+    { ORDATA   ( TABST, TABST,      28) },
+    { ORDATAVM ( RP0,   RP[0],      48) },
+    { ORDATAVM ( RP1,   RP[1],      48) },
+    { ORDATAVM ( RP2,   RP[2],      48) },
+    { ORDATAVM ( RP3,   RP[3],      48) },
+    { ORDATAVM ( RP4,   RP[4],      48) },
+    { ORDATAVM ( RP5,   RP[5],      48) },
+    { ORDATAVM ( RP6,   RP[6],      48) },
+    { ORDATAVM ( RP7,   RP[7],      48) },
+    { ORDATA   ( RZ,    RZ,         32) },
+    { ORDATAVM ( FP1,   pult[0][1], 50) },
+    { ORDATAVM ( FP2,   pult[0][2], 50) },
+    { ORDATAVM ( FP3,   pult[0][3], 50) },
+    { ORDATAVM ( FP4,   pult[0][4], 50) },
+    { ORDATAVM ( FP5,   pult[0][5], 50) },
+    { ORDATAVM ( FP6,   pult[0][6], 50) },
+    { ORDATAVM ( FP7,   pult[0][7], 50) },
     { 0 }
 };
 
@@ -350,13 +358,37 @@ t_stat cpu_deposit (t_value val, t_addr addr, UNIT *uptr, int32 sw)
     return SCPE_OK;
 }
 
+t_stat dump_touched(CONST char *name) {
+    FILE * f = fopen(name, "w");
+    int total = 0;
+    if (!f) {
+        sim_printf("Opening '%s' failed\n", name);
+        return SCPE_ARG;
+    }
+    for (uint32 word = 0; word < 0400; ++word)
+            for (uint32 loc = 0; loc < 1 << (24-6); ++loc)
+                if (touched[word][loc])
+                    for (uint32 i = 0; i < 64; ++i)
+                        if (touched[word][loc] & (1LL << i)) {
+                            uint32 cmd = loc*64+i;
+                            ++total;
+                            if ((cmd >> 19) & 1)
+                                fprintf(f, "%03o %02o %02o %05o\n", word, cmd >> 20,
+                                        (cmd >> 15) & 037, cmd & 077777);
+                            else
+                                fprintf(f, "%03o %02o %03o %04o\n", word, cmd >> 20,
+                                        (cmd >> 12) & 0377, cmd & 07777);
+                        }
+    fclose(f);
+    sim_printf("%d instructions dumped to '%s'\n", total, name);
+    return SCPE_OK;
+}
 /*
  * Reset routine
  */
 t_stat cpu_reset (DEVICE *dptr)
 {
     int i;
-
     ACC = 0;
     RMR = 0;
     RAU = 0;
@@ -403,6 +435,9 @@ t_stat cpu_set_pult (UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
     int sw;
     if (cptr) sw = atoi(cptr); else sw = 0;
+    if (sw > 10) {
+        return dump_touched(cptr);
+    }
     if (sw >= 0 && sw <= 10) {
         pult_packet_switch = sw;
         if (sw)
@@ -547,14 +582,26 @@ static void cmd_002 ()
     }
 }
 
+void dump(const char * what, uint map[]) {
+	int i;
+	for (i = 0; i < 32768; ++i) {
+		if (map[i]) 
+			besm6_debug("---- %s @%05o: %d", what, i, map[i]);
+	}
+}
+
 /*
  * Команда "увв"
  */
 static void cmd_033 ()
 {
-#if 0
-    besm6_debug ("*** увв %04o, СМ[24:1]=%08o",
-                 Aex & 04177, (uint32) ACC & BITS(24));
+static uint32 tableau;
+static uint32 totreads, totwrites;
+static uint32 readmap[32768], writemap[32768];
+#if 1
+    if (Aex & ~04177)
+    besm6_debug ("*** @%05o, увв %05o, СМ[24:1]=%08o",
+                 PC, Aex, (uint32) ACC & BITS(24));
 #endif
     switch (Aex & 04177) {
     case 0:
@@ -624,11 +671,17 @@ static void cmd_033 ()
     case 050: case 051: case 052: case 053:
     case 054: case 055: case 056: case 057:
         /* Управление молоточками АЦПУ */
+        trace_counter = 1000;
         printer_hammer (Aex >= 050, Aex & 7, (uint32) (ACC & BITS(16)));
         break;
+    case 070:
+	/* ES printer output */
+        besm6_debug(">>> ES print: %016llo", ACC);
+	break;
     case 0140:
         /* Запись в регистр телеграфных каналов */
         tty_send ((uint32) ACC & BITS(24));
+        //	writemap[PC]++;	if (++totwrites % 10000 == 0) dump("W", writemap);
         break;
     case 0141:
         /* TODO: formatting magnetic tape */
@@ -638,10 +691,9 @@ static void cmd_033 ()
         /* TODO: имитация сигналов прерывания ПРП */
         longjmp (cpu_halt, STOP_UNIMPLEMENTED);
         break;
-    case 0147:
-        /* Writing to the power supply control register
-         * does not have any observable effect
-         */
+    case 0143:
+        /* sending a syllable to the muxed serial interface */
+        mux_send ((uint32) ACC & BITS(16));
         break;
     case 0150: case 0151:
         /* sending commands to the punched card readers */
@@ -649,7 +701,10 @@ static void cmd_033 ()
         break;
     case 0153:
         /* гашение аппаратуры сопряжения с терминалами */
-/*              besm6_debug(">>> гашение АС: %08o", (uint32) ACC & BITS(24));*/
+        mux_clear ();           /* ACC is ignored */
+        memory[077023] = SET_PARITY(1LL<<47, PARITY_NUMBER);
+        memory[076774] = SET_PARITY(00101010101010101LL, PARITY_NUMBER);
+        MPRP |= 040;
         break;
     case 0154: case 0155:
         /*
@@ -674,9 +729,17 @@ static void cmd_033 ()
         /* Выдача кода в пульт оператора */
         consul_print (Aex & 1, (uint32) ACC & BITS(8));
         break;
+    case 0147:
+        /* Writing to the power supply control register
+         * does not have any observable effect; repurposed
+         */
+      // break;
     case 0177:
         /* управление табло ГПВЦ СО АН СССР */
-/*              besm6_debug(">>> ТАБЛО: %08o", (uint32) ACC & BITS(24));*/
+	if (tableau != ((uint32) ACC & BITS(24))) {
+	  tableau = (uint32) ACC & BITS(24);
+          // besm6_debug(">>> ТАБЛО: %08o", tableau);
+        }
         break;
     case 04001: case 04002:
         /* TODO: считывание слога в режиме имитации обмена */
@@ -721,15 +784,21 @@ static void cmd_033 ()
         break;
     case 04034:
         /* Чтение младшей половины ПРП */
-        ACC = (PRP & 07777) | 0377;
+        ACC = (PRP & 07777) | 037;
         break;
     case 04035:
         /* Опрос триггера ОШМi - наличие ошибок при внешнем обмене. */
         ACC = drum_errors() | disk_errors() | mg_errors();
         break;
+    case 04070:
+	/* ES printer status: */
+        besm6_debug("<<< ES printer read");
+	ACC = 01000;
+	break;
     case 04100:
         /* Опрос телеграфных каналов связи */
         ACC = tty_query ();
+        //	readmap[PC]++;	if (++totreads % 10000 == 0) dump("R", readmap);
         break;
     case 04102:
         /* Опрос сигналов готовности перфокарт и перфолент */
@@ -747,8 +816,12 @@ static void cmd_033 ()
     case 04115:
         /* Неизвестное обращение. ДИСПАК выдаёт эту команду
          * группами по 8 штук каждые несколько секунд. */
-        ACC = 0;
+        ACC = 0; // 0240;
         break;
+    case 04143:
+        /* reading from the muxed serial interface */
+	ACC = mux_read();
+	break;
     case 04150: case 04154:
         /* считывание строки с устройства ввода с перфоленты */
         ACC = vu_read ((Aex - 04150) >> 2);
@@ -769,7 +842,7 @@ static void cmd_033 ()
         break;
     case 04177:
         /* чтение табло ГПВЦ СО АН СССР */
-        ACC = 0;
+        ACC = tableau;
         break;
     default: {
         unsigned val = Aex & 04177;
@@ -797,6 +870,7 @@ void check_initial_setup ()
     const int MGRP_COPY = 01455;    /* OS version specific? */
     const int TAKEN = 0442;         /* fixed? */
     const int YEAR = 0221;          /* fixed */
+    static int time_cnt;
 
     /* 47 р. яч. ЗАНЯТА - разр. приказы вообще */
     const t_value SETUP_REQS_ENABLED = 1LL << 46;
@@ -826,6 +900,8 @@ void check_initial_setup ()
         pult[0][4] = 1;
         pult[0][5] = 1 << 21;
         GRP |= GRP_PANEL_REQ;
+        // trace_counter = 2000;
+        // besm6_debug("Setting operator shift number");
     } else {
         struct tm * d;
 
@@ -850,8 +926,31 @@ void check_initial_setup ()
             (d->tm_hour % 10) << 8 |
             (d->tm_min / 10) << 4 |
             (d->tm_min % 10);
+        // besm6_debug("Setting time %d", ++time_cnt);
         GRP |= GRP_PANEL_REQ;
     }
+}
+
+/*
+ * Automatic time setup. 
+ */
+t_stat cpu_set_autotime (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    if (!cptr)
+        return SCPE_MISVAL;
+    if (!MATCH_CMD("ON", cptr))
+        autotime = 1;
+    else if (!MATCH_CMD("OFF", cptr))
+        autotime = 0;
+    else
+        return SCPE_ARG;
+    return SCPE_OK;
+}
+
+t_stat cpu_show_autotime (FILE *st, UNIT *up, int32 v, CONST void *dp)
+{
+    fprintf(st, "Automatic setup is %s", autotime ? "enabled" : "disabled");
+    return SCPE_OK;
 }
 
 /*
@@ -871,16 +970,23 @@ void cpu_one_inst ()
      * are kept as a reference.
      */
     uint32 delay;
-
+    static int old_PC;
+    static int boot_done;
     corr_stack = 0;
+    //    if (PC == 0175 && old_PC != 0175)
+    //   besm6_debug("Came to 00175 from %05o", old_PC);
+    old_PC = PC;
     word = mmu_fetch (PC);
     if (RUU & RUU_RIGHT_INSTR)
         RK = (uint32)word;      /* get right instruction */
     else
         RK = (uint32)(word >> 24);/* get left instruction */
-
+    
     RK &= BITS(24);
-
+    addr = PC & 0xFF;
+    if (boot_done && IS_SUPERVISOR(RUU))
+        touched[addr][RK/64] |= 1LL << (RK % 64);
+    boot_done = PC < 02000 || PC >= 04000;
     reg = RK >> 20;
     if (RK & BBIT(20)) {
         addr = RK & BITS(15);
@@ -891,8 +997,14 @@ void cpu_one_inst ()
             addr |= 070000;
         opcode = (RK >> 12) & 077;
     }
-
-    if (sim_deb && cpu_dev.dctrl) {
+    if (trace_counter && PC != 04440) {
+      const char *besm6_opname (int opcode);
+      --trace_counter;
+      besm6_log_cont("_%05o: %s\t%o", PC, besm6_opname(opcode), addr);
+      if (reg) besm6_log_cont("_(M%o)", reg);
+      besm6_log("_");
+    }
+    if (sim_deb && cpu_dev.dctrl && !IS_SUPERVISOR(RUU)) {
         fprintf (sim_deb, "*** %05o%s: ", PC,
                  (RUU & RUU_RIGHT_INSTR) ? "п" : "л");
         besm6_fprint_cmd (sim_deb, RK);
@@ -1200,6 +1312,7 @@ void cpu_one_inst ()
         delay = MEAN_TIME (3, 5);
         break;
     case 032:                                       /* э32, ext */
+        // besm6_debug("УВВ32 @%05o", PC);
         /* Fall through... */
     case 033:                                       /* увв, ext */
         Aex = ADDR (addr + M[reg]);
@@ -1420,6 +1533,7 @@ void cpu_one_inst ()
                 break;
         } else
             break;
+        if (Aex == 05176) besm6_log("_uza phyzobm");
         PC = Aex;
         RUU &= ~RUU_RIGHT_INSTR;
         delay += 3;
@@ -1439,12 +1553,21 @@ void cpu_one_inst ()
                 break;
         } else
             /* fall thru, i.e. branch */;
+        if (Aex == 05176) besm6_log("_u1a phyzobm");
         PC = Aex;
         RUU &= ~RUU_RIGHT_INSTR;
         delay += 3;
         break;
     case 0300:                                      /* пб, uj */
         Aex = ADDR (addr + M[reg]);
+        if (Aex == 05176) {
+            int zone = (ACC >> 24) & 01777;
+            if (zone) {
+                int pc = RUU & RUU_RIGHT_INSTR ? PC : PC-1;
+                besm6_log("_physobm @%05o, zone = %04o, WORD = %016llo",
+                          pc, zone-4, memory[pc]);
+            }
+        }
         PC = Aex;
         RUU &= ~RUU_RIGHT_INSTR;
         delay = 7;
@@ -1453,6 +1576,14 @@ void cpu_one_inst ()
         Aex = addr;
         M[reg] = nextpc;
         M[0] = 0;
+        if (Aex == 05176) {
+            int zone = (ACC >> 24) & 01777;
+            if (zone) {
+                int pc = RUU & RUU_RIGHT_INSTR ? PC : PC-1;
+                besm6_log("_physobm @%05o, zone = %04o, WORD = %016llo",
+                          pc, zone-4, memory[pc]);
+            }
+        }
         PC = addr;
         RUU &= ~RUU_RIGHT_INSTR;
         delay = 7;
@@ -1496,6 +1627,7 @@ void cpu_one_inst ()
     branch_zero:    Aex = addr;
         delay = 4;
         if (! M[reg]) {
+            if (addr == 05176) besm6_log("_vzm phyzobm");
             PC = addr;
             RUU &= ~RUU_RIGHT_INSTR;
             delay += 3;
@@ -1505,6 +1637,7 @@ void cpu_one_inst ()
         Aex = addr;
         delay = 4;
         if (M[reg]) {
+            if (addr == 05176) besm6_log("_v1m phyzobm");
             PC = addr;
             RUU &= ~RUU_RIGHT_INSTR;
             delay += 3;
@@ -1536,6 +1669,7 @@ void cpu_one_inst ()
 
     /* Не находимся ли мы в цикле "ЖДУ" диспака? */
     if (RUU == 047 && PC == 04440 && RK == 067704440) {
+        if (autotime)
         check_initial_setup ();
         sim_idle(0, TRUE);
     }
@@ -1618,7 +1752,7 @@ t_stat sim_instr (void)
          */
         switch (r) {
         default:
-ret:        besm6_draw_panel(1);
+        ret:                    besm6_draw_panel(1);
             return r;
         case STOP_RWATCH:
         case STOP_WWATCH:
@@ -1834,6 +1968,7 @@ t_stat fast_clk (UNIT * this)
      */
     if (tty_counter == CLK_TPS/50) {
         tt_print();
+        tt_receive();
         tty_counter = 0;
     }
 
@@ -1865,3 +2000,4 @@ DEVICE clock_dev = {
     NULL, NULL, NULL, NULL,
     DEV_DEBUG
 };
+

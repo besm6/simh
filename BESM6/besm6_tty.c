@@ -18,7 +18,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
  * SERGE VAKULENKO OR LEONID BROUKHIS BE LIABLE FOR ANY CLAIM, DAMAGES
  * OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE 
  * OR OTHER DEALINGS IN THE SOFTWARE.
 
  * Except as contained in this notice, the name of Leonid Broukhis or
@@ -45,6 +45,18 @@ char * lat[] = { 0, "T", "\r", "O", " ", "H", "N", "M", "\n", "L", "R", "G", "I"
 /* $ = Кто там? */
 char * dig[] = { 0, "5", "\r", "9", " ", "Щ", ",", ".", "\n", ")", "4", "Ш", "8", "0", ":", "=",
                  "3", "+", "$", "?", "'", "6", "Э", "/", "-", "2", "Ю", 0, "7", "1", "(", 0 };
+
+int tomtk2(int c) {
+    switch (c) {
+    case 3: case '\r': case '\n': return 2;        
+    case ' ': return 4;
+    case 'A': case 'a': return 030;
+    case 'B': case 'w': return 023;
+    case 'K': case 'k': return 036;
+    case 'O': case 'o': return 003;
+    default: return 1;
+    }
+}
 
 char ** reg = 0;
 
@@ -91,6 +103,7 @@ uint32 tt_mask = 0, vt_mask = 0;
 
 uint32 TTY_OUT = 0, TTY_IN = 0, vt_idle = 0;
 uint32 CONSUL_IN[2];
+uint32 MUX_SYLLABLE, mux_reg_busy;
 
 uint32 CONS_CAN_PRINT[2] = { 01000, 00400 };
 uint32 CONS_HAS_INPUT[2] = { 04000, 02000 };
@@ -102,37 +115,39 @@ char *vt_cptr [LINES_MAX+1];
 
 void tt_print();
 void consul_receive();
+void mux_receive (void);
 t_stat vt_clk(UNIT *);
+t_stat mux_event(UNIT *);
 extern const char *get_sim_sw (const char *cptr);
 
 int attached_console;
 
 UNIT tty_unit [] = {
     { UDATA (vt_clk, UNIT_DIS|UNIT_IDLE, 0) },       /* fake unit, clock */
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
-    { UDATA (NULL, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
     /* The next two units are parallel interface */
     { UDATA (NULL, UNIT_SEQ, 0) },
     { UDATA (NULL, UNIT_SEQ, 0) },
@@ -169,11 +184,13 @@ TMXR tty_desc = { LINES_MAX+1, 0, 0, tty_line, tty_lnorder };        /* mux desc
 #define TTY_AUTHENTIC_BSPACE    (1<<(UNIT_V_UF+4))
 #define TTY_BSPACE_MASK         (1<<(UNIT_V_UF+4))
 #define TTY_CMDLINE_MASK        (1<<(UNIT_V_UF+5))
+#define TTY_INVERSE_READY       (1<<(UNIT_V_UF+6))
+#define TTY_MUX_MODE            (1<<(UNIT_V_UF+7))
 
 static void reset_line(int num)
 {
     /* Reset to a sensible default */
-    tty_unit[num].flags &= ~(TTY_CHARSET_MASK|TTY_BSPACE_MASK|TTY_CMDLINE_MASK);
+    tty_unit[num].flags &= ~(TTY_CHARSET_MASK|TTY_BSPACE_MASK|TTY_CMDLINE_MASK|TTY_INVERSE_READY);
     tty_typed[num] = -1;
     tty_instate[num] = 0;
 }
@@ -189,9 +206,12 @@ t_stat tty_reset (DEVICE *dptr)
     CONSUL_IN[0] = CONSUL_IN[1] = 0;
     reg = rus;
     READY2 |= CONS_READY[0] | CONS_READY[1];
+    if (tty_unit[25].flags & TTY_INVERSE_READY)
+        READY2 &= ~CONS_READY[0];
+    if (tty_unit[26].flags & TTY_INVERSE_READY)
+        READY2 &= ~CONS_READY[1];
     vt_idle = 1;
     tty_line[0].conn = 1;                   /* faked, always busy */
-    /* Forcing a ready interrupt. */
     PRP |= CONS_CAN_PRINT[0] | CONS_CAN_PRINT[1];
     // Schedule the very first TTY interrupt to match the next clock interrupt.
     return sim_clock_coschedule (tty_unit, 0);
@@ -200,16 +220,22 @@ t_stat tty_reset (DEVICE *dptr)
 /* Bit 19 of GRP, should be <tty_rate> Hz */
 t_stat vt_clk (UNIT * this)
 {
-    int num, old;
-
+    int num;
+    int old;
     GRP |= MGRP & GRP_SERIAL;
 
+    if (MPRP & 0200) {
+        static int bit;
+        PRP |= 0200;
+        READY = READY ^ (1 << (bit++ % 24));
+    }
     /* Polling receiving from sockets */
     tmxr_poll_rx (&tty_desc);
 
     vt_print();
     vt_receive();
     consul_receive();
+    mux_receive();
 
     /* Are there any new network connections? */
     num = tmxr_poll_conn (&tty_desc);
@@ -222,10 +248,10 @@ t_stat vt_clk (UNIT * this)
         t->rcve = 1;
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_VT340_STATE;
-        if (num <= TTY_MAX) {
-            old = vt_mask & (1 << (TTY_MAX - num));
+        if (num <= TTY_MAX && !(tty_unit[num].flags & TTY_MUX_MODE)) {
+	    old = vt_mask & (1 << (TTY_MAX - num));
             vt_mask |= 1 << (TTY_MAX - num);
-        }
+	}
         switch (tty_unit[num].flags & TTY_CHARSET_MASK) {
         case TTY_KOI7_JCUKEN_CHARSET:
             tmxr_linemsg (t, "Encoding is KOI-7 (jcuken)\r\n");
@@ -257,10 +283,10 @@ t_stat vt_clk (UNIT * this)
 
         /* Entering ^C (ETX) to get a prompt. */
         t->rxb [t->rxbpi++] = '\3';
-        if (num <= TTY_MAX) {
-            old = vt_mask & (1 << (TTY_MAX - num));
-            vt_mask |= 1 << (TTY_MAX - num);
-        }
+	if (old) {
+            sprintf (buf, "Type HYC<enter> (no echo is normal)\r\n");
+            tmxr_linemsg (t, buf);
+	}
     }
 
     /*
@@ -280,8 +306,8 @@ t_stat vt_clk (UNIT * this)
     /* If the TTY system is not idle, schedule the next interrupt
      * by instruction count using the target interrupt rate of 300 Hz;
      * otherwise we can wait for a roughly equivalent wallclock time period,
-     * e.g. until the next 250 Hz wallclock interrupt, but making sure
-     * that the model time interval between GRP_SERIAL interrupts
+     * e.g. until the next 250 Hz wallclock interrupt, but making sure 
+     * that the model time interval between GRP_SERIAL interrupts 
      * is never less than expected.
      */
     if (vt_is_idle()) {
@@ -325,13 +351,15 @@ t_stat tty_setmode (UNIT *u, int32 val, CONST char *cptr, void *desc)
             return SCPE_NXPAR;
         t->conn = 1;
         t->rcve = 0;
-        tt_mask |= mask;
-        vt_mask &= ~mask;
+        if (!(tty_unit[num].flags & TTY_MUX_MODE)) {
+            tt_mask |= mask;
+            vt_mask &= ~mask;
+        }
         break;
     case TTY_VT340_STATE:
         t->conn = 1;
         t->rcve = 0;
-        if (num <= TTY_MAX) {
+        if (num <= TTY_MAX && !(tty_unit[num].flags & TTY_MUX_MODE)) {
             vt_mask |= mask;
             tt_mask &= ~mask;
         }
@@ -357,6 +385,9 @@ t_stat tty_attach (UNIT *u, CONST char *cptr)
     char gbuf[CBUFSIZE];
     int r, m, n;
 
+    if (num > 24 && tty_unit[num].flags & TTY_INVERSE_READY) {
+        READY2 &= ~CONS_READY[num-25];
+    }
     /* All arguments but the magic words "console" and "none" are passed
      * to tmxr_attach().
      */
@@ -448,6 +479,7 @@ t_stat tty_setturbo (UNIT *up, int32 v, CONST char *cp, void *dp) {
  * set ttyN jcuken      - selecting KOI-7 encoding, JCUKEN layout
  * set ttyN qwerty      - selecting KOI-7 encoding, QWERTY layout
  * set ttyN raw         - selecting transmission of raw chars
+ * set ttyN mux         - consider ttyN connected via UART mux
  * set ttyN off         - disconnecting a line
  * set ttyN tt          - a Baudot TTY
  * set ttyN vt          - a Videoton-340 terminal
@@ -482,6 +514,12 @@ MTAB tty_mod[] = {
       "DESTRBS" },
     { TTY_BSPACE_MASK, TTY_AUTHENTIC_BSPACE, NULL,
       "AUTHBS" },
+    { TTY_INVERSE_READY, TTY_INVERSE_READY, "inverse ready",
+      "INVREADY" },
+    { TTY_INVERSE_READY, 0, "regular ready",
+      "REGREADY" },
+    { TTY_MUX_MODE, TTY_MUX_MODE, "treat as connected via UART mux",
+      "MUX" },
     { MTAB_XTD | MTAB_VDV | MTAB_VALR, 1, NULL,
       "DISCONNECT", &tmxr_dscln, NULL, (void*) &tty_desc, "terminates telnet connection" },
     { MTAB_XTD | MTAB_VDV | MTAB_VALR, 1, "RATE",
@@ -513,7 +551,8 @@ DEVICE tty_dev = {
 
 void tty_send (uint32 mask)
 {
-    /* besm6_debug ("*** TTY: transmit %08o", mask); */
+    if (mask && tty_dev.dctrl)
+        besm6_debug ("*** TTY: transmit %08o", mask);
 
     TTY_OUT = mask;
 }
@@ -680,6 +719,7 @@ void vt_print()
     vt_idle = 0;
 }
 
+
 /* Input from Baudot TTYs not implemented. Output may require some additional work.
  */
 void tt_print()
@@ -690,6 +730,8 @@ void tt_print()
     if (workset == 0) {
         return;
     }
+    if (tty_dev.dctrl)
+        besm6_debug("<<< TTY_OUT: %08o", TTY_OUT);
 
     for (num = besm6_highest_bit (workset) - TTY_MAX;
          workset; num = besm6_highest_bit (workset) - TTY_MAX) {
@@ -1066,13 +1108,13 @@ int vt_getc (int num)
         /* Пользователь отключился. */
         if (t->ipad) {
             besm6_debug ("*** tty%d: disconnecting %s",
-                         num,
+                         num, 
                          t->ipad);
             t->ipad = NULL;
         }
         tty_setmode (tty_unit+num, TTY_OFFLINE_STATE, 0, 0);
         tty_unit[num].flags &= ~TTY_STATE_MASK;
-        return -2;
+        return -128;
     }
     if (t->rcve) {
         /* A telnet line. */
@@ -1114,7 +1156,8 @@ int vt_getc (int num)
         if (! (c & SCPE_KFLAG))
             return -1;
     }
-    return c & 0377;
+    c &= 0377;
+    return c ? c : 8;
 }
 
 /*
@@ -1130,16 +1173,17 @@ static int vt_kbd_input_unicode (int num)
     if (r < 0 || r > 0377)
         return r;
     c1 = r & 0377;
-    if (! (c1 & 0x80))
+    if (! (c1 & 0x80)) {
         return unicode_to_koi7 (c1);
-
+    }
     r = vt_getc (num);
     if (r < 0 || r > 0377)
         return r;
     c2 = r & 0377;
-    if (! (c1 & 0x20))
-        return unicode_to_koi7 ((c1 & 0x1f) << 6 | (c2 & 0x3f));
-
+    if (! (c1 & 0x20)) {
+        r = (c1 & 0x1f) << 6 | (c2 & 0x3f);
+        return unicode_to_koi7 (r);
+    }
     r = vt_getc (num);
     if (r < 0 || r > 0377)
         return r;
@@ -1148,8 +1192,9 @@ static int vt_kbd_input_unicode (int num)
         /* Skip zero width no-break space. */
         goto again;
     }
-    return unicode_to_koi7 ((c1 & 0x0f) << 12 | (c2 & 0x3f) << 6 |
-                            (c3 & 0x3f));
+    r = (c1 & 0x0f) << 12 | (c2 & 0x3f) << 6 |
+        (c3 & 0x3f);
+    return unicode_to_koi7 (r);
 }
 
 /*
@@ -1234,6 +1279,23 @@ int vt_fix(int num, int c) {
 }
 
 /*
+ * Receive a character (in KOI-7) from a line.
+ */
+int getsym(int num) {
+    switch (tty_unit[num].flags & TTY_CHARSET_MASK) {
+    case TTY_KOI7_JCUKEN_CHARSET:
+        return vt_kbd_input_koi7 (num);
+    case TTY_RAW_CHARSET:
+    case TTY_KOI7_QWERTY_CHARSET:
+        return vt_getc (num);
+    case TTY_UNICODE_CHARSET:
+        return vt_kbd_input_unicode (num);
+    default:
+        return '?';
+    }
+}
+
+/*
  * Handling input from all connected terminals.
  */
 void vt_receive()
@@ -1241,44 +1303,31 @@ void vt_receive()
     uint32 workset = vt_mask;
     int num;
 
-    TTY_IN = 0;
+    TTY_IN &= ~workset;
     for (num = besm6_highest_bit (workset) - TTY_MAX;
          workset; num = besm6_highest_bit (workset) - TTY_MAX) {
         uint32 mask = 1 << (TTY_MAX - num);
         switch (tty_instate[num]) {
         case 0:
             if (tty_typed[num] <= -2) {
-                /* A disconnected line */
-    		        TTY_IN |= mask;		/* "long start" */
+		TTY_IN |= mask;		/* "long start" */
+//		++tty_typed[num];
+		if (tty_typed[num] == -1) vt_mask &= ~mask;
                 break;
             }
-            switch (tty_unit[num].flags & TTY_CHARSET_MASK) {
-            case TTY_KOI7_JCUKEN_CHARSET:
-                tty_typed[num] = vt_kbd_input_koi7 (num);
-                break;
-            case TTY_RAW_CHARSET:
-            case TTY_KOI7_QWERTY_CHARSET:
-                tty_typed[num] = vt_getc (num);
-                break;
-            case TTY_UNICODE_CHARSET:
-                tty_typed[num] = vt_kbd_input_unicode (num);
-                break;
-            default:
-                tty_typed[num] = '?';
-                break;
-            }
+            tty_typed[num] = getsym(num);
             if (tty_typed[num] < 0) {
                 break;
             }
             if (tty_typed[num] <= 0177) {
-                tty_typed[num] = vt_fix (num, tty_typed[num]);
+                tty_typed[num] = vt_fix(num, tty_typed[num]);
                 tty_instate[num] = 1;
                 TTY_IN |= mask;         /* start bit */
                 GRP |= GRP_TTY_START;   /* not used ? */
                 /* auto-enabling the interrupt just in case
                  * (seems to be unneeded as the interrupt is never disabled)
                  */
-                MGRP |= GRP_SERIAL;
+                MGRP |= GRP_SERIAL;       
                 vt_receiving |= mask;
             }
             break;
@@ -1306,8 +1355,73 @@ void vt_receive()
         vt_idle = 0;
 }
 
+#define DIRECT
+#ifdef DIRECT
+#define TT_CLEAR(x,y) x &= ~(y)
+#define TT_SET(x,y) x |= (y)
+#elif defined(INVERTED)
+#define TT_SET(x,y) x &= ~(y)
+#define TT_CLEAR(x,y) x |= (y)
+#endif
+
 /*
- * Checking if all terminals are idle.
+ * Input from Baudot teletypes.
+ */
+void tt_receive()
+{
+    uint32 workset = tt_mask;
+    int num;
+    
+    TT_CLEAR(TTY_IN, workset);
+    for (num = besm6_highest_bit (workset) - TTY_MAX;
+         workset; num = besm6_highest_bit (workset) - TTY_MAX) {
+        uint32 mask = 1 << (TTY_MAX - num);
+        switch (tty_instate[num]) {
+        case 0:
+#if 0            
+            if (tty_typed[num] <= -2) {
+		TTY_IN |= mask;		/* "long start" */
+//		++tty_typed[num];
+		if (tty_typed[num] == -1) vt_mask &= ~mask;
+                break;
+            }
+#endif
+            tty_typed[num] = getsym(num);
+            if (tty_typed[num] < 0) {
+                    break;
+            }
+            if (tty_typed[num] <= 0177) {
+                tty_typed[num] = tomtk2(tty_typed[num]);
+                // besm6_debug("<<< Teletype: MTK-2 char %02o\n", tty_typed[num]);
+                tty_instate[num] = 1;
+                TT_SET(TTY_IN, mask);         /* start bit */
+                MGRP |= GRP_TTY_START;
+                GRP |= GRP_TTY_START;
+                tt_receiving |= mask;
+            }
+            break;
+        case 1: case 2: case 3: case 4: case 5:
+            /* need inverted byte, big endian ordering */
+            TT_SET(TTY_IN, (tty_typed[num] & (1 << (5-tty_instate[num]))) ? 0 : mask);
+            tty_instate[num]++;
+            break;
+        case 6: case 7: case 8:
+            /* stop bits are 0 */
+            tty_instate[num]++;
+            break;
+        case 9:
+            tty_instate[num] = 0;   /* ready for the next char */
+            tt_receiving &= ~mask;
+            break;
+        }
+        workset &= ~mask;
+    }
+    if (tt_receiving)
+        vt_idle = 0;
+}
+
+/*
+ * Checking if all terminals are idle. 
  * SIMH should not enter idle mode until they are.
  */
 int vt_is_idle ()
@@ -1332,8 +1446,11 @@ void consul_print (int dev_num, uint32 cmd)
     int line_num = dev_num + TTY_MAX + 1;
     if (tty_dev.dctrl)
         besm6_debug(">>> CONSUL%o: %03o", line_num, cmd & 0377);
-    
-    READY2 &= ~CONS_READY[dev_num]; /* temporarily not ready  */
+
+    if (tty_unit[line_num].flags & TTY_INVERSE_READY)
+        READY2 |= CONS_READY[dev_num];
+    else
+        READY2 &= ~CONS_READY[dev_num]; /* temporarily not ready  */
     
     switch (tty_unit[line_num].flags & TTY_STATE_MASK) {
     case TTY_VT340_STATE:
@@ -1354,31 +1471,20 @@ void consul_receive ()
     int c, line_num, dev_num;
 
     for (dev_num = 0; dev_num < 2; ++dev_num){
+        line_num = dev_num + TTY_MAX + 1;
         if (cons_is_printing[dev_num]) {
-            READY2 |= CONS_READY[dev_num];
+            if (tty_unit[line_num].flags & TTY_INVERSE_READY)
+                READY2 &= ~CONS_READY[dev_num];
+            else
+                READY2 |= CONS_READY[dev_num];
             PRP |= CONS_CAN_PRINT[dev_num];
             cons_is_printing[dev_num] = 0;
         }
-        line_num = dev_num + TTY_MAX + 1;
         if (! tty_line[line_num].conn)
             continue;
-        switch (tty_unit[line_num].flags & TTY_CHARSET_MASK) {
-        case TTY_KOI7_JCUKEN_CHARSET:
-            c = vt_kbd_input_koi7 (line_num);
-            break;
-        case TTY_RAW_CHARSET:
-        case TTY_KOI7_QWERTY_CHARSET:
-            c = vt_getc (line_num);
-            break;
-        case TTY_UNICODE_CHARSET:
-            c = vt_kbd_input_unicode (line_num);
-            break;
-        default:
-            c = '?';
-            break;
-        }
+        c = getsym(line_num);
         if (c >= 0 && c <= 0177) {
-            c = vt_fix (line_num, c);
+            c = vt_fix(line_num, c);
             CONSUL_IN[dev_num] = odd_parity(c) ? c | 0200 : c;
             PRP |= CONS_HAS_INPUT[dev_num];
             vt_idle = 0;
@@ -1392,3 +1498,79 @@ uint32 consul_read (int num)
         besm6_debug("<<< CONSUL%o: %03o", num+TTY_MAX+1, CONSUL_IN[num]);
     return CONSUL_IN[num];
 }
+
+uint32 mux_read ()
+{
+//    if (tty_dev.dctrl)
+        besm6_debug("<<< MUX: %03o %03o", MUX_SYLLABLE >> 8, MUX_SYLLABLE & 0377);
+    return MUX_SYLLABLE;
+}
+
+t_stat mux_event(UNIT * u) {
+        PRP |= PRP_MUX_DONE;
+        return SCPE_OK;
+}
+
+void mux_send(uint32 syl)
+{
+    int line_num = (syl >> 8) & 0177;
+//    if (tty_dev.dctrl)
+        besm6_debug(">>> MUX: %03o %03o", syl >> 8, syl & 0377);
+    if (syl & 0x4000) {
+        if (syl & 0x80) {
+            // Line status request
+            mux_reg_busy = 1;
+            // Control syllable
+            int recv = vt_receiving & (1 << (TTY_MAX - line_num));
+            MUX_SYLLABLE = (syl & ~0x80) | (recv ? 0 : 8); 
+            PRP |= PRP_MUX_INPUT;    /* done */
+        } else {
+            if (syl & 8) {
+                vt_receiving &= ~(1 << (TTY_MAX - line_num));
+            } else
+                vt_receiving |= 1 << (TTY_MAX - line_num);
+        }
+        return;
+    }
+    if (line_num <= TTY_MAX) {
+        vt_send (line_num, syl & 0177);
+        vt_idle = 0;
+        sim_activate_after(tty_unit + line_num, 10);
+    } else
+        besm6_debug(">>> MUX: bad line %03o", line_num);
+}
+
+void mux_receive ()
+{
+    int c, line_num, dev_num;
+    if (mux_reg_busy) {
+        PRP |= PRP_MUX_INPUT;
+        return;
+    }
+
+    for (line_num = 1; line_num <= TTY_MAX; ++line_num) {
+        if (! tty_line[line_num].conn || !(tty_unit[line_num].flags & TTY_MUX_MODE))
+            continue;
+        c = getsym(line_num);
+        if (c >= 0 && c <= 0177) {
+            besm6_debug("Got %03o from line %02o", c, line_num);
+            vt_send(line_num, c == '\177' ? '\b' : c);
+            c = vt_fix(line_num, c);
+            MUX_SYLLABLE = (line_num << 8) | (odd_parity(c) ? c | 0200 : c);
+            PRP |= PRP_MUX_INPUT;
+            vt_idle = 0;
+            mux_reg_busy = 1;
+        }
+    }
+}
+
+void mux_clear()
+{
+//    if (tty_dev.dctrl)
+    besm6_debug(">>> MUX: clear, PRP = %05o", PRP);
+    PRP &= ~PRP_MUX_INPUT;
+    PRP |= PRP_MUX_DONE;
+    MUX_SYLLABLE = 0;
+    mux_reg_busy = 0;
+}
+    
