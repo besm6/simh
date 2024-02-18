@@ -660,6 +660,7 @@ static uint32 readmap[32768], writemap[32768];
         /* Запись в МПРП */
 /*              besm6_debug(">>> запись в МПРП");*/
         MPRP = ACC & 077777777;
+	// besm6_debug("MPRP = %016llo", MPRP);
         break;
     case 035:
         /* TODO: управление режимом имитации обмена
@@ -951,6 +952,46 @@ t_stat cpu_show_autotime (FILE *st, UNIT *up, int32 v, CONST void *dp)
 {
     fprintf(st, "Automatic setup is %s", autotime ? "enabled" : "disabled");
     return SCPE_OK;
+}
+
+static unsigned short extmem[32768];
+static unsigned short last;
+
+void write_032(int addr, t_value val) {
+    int v = val & 077777777; 
+    // if (v || addr) besm6_debug("W32 %08o -> %05o", v, addr);
+    switch (addr) {
+    case 0:
+	if (v & 2) {
+	    PRP &= ~040;
+	}
+	else if (v == 0) {
+		static int cnt;
+		if (++cnt % 10000 == 0) {
+			besm6_debug("10K writes of 0 to 0");
+		}
+	}
+	break;
+    case 077777:
+	if (v & 0400) {
+	    // interrupt - will result in setting E6 in PRP after some time
+	    PRP |= 040;
+	}
+	break;
+    default:
+	last = extmem[addr] = v;
+    }
+}
+
+t_value read_032(int addr) {
+    // besm6_debug("R32 %05o", addr);
+    switch (addr) {
+    case 0:
+	return 0400;		/* ready */
+    case 2:
+	return last;
+    default: return extmem[addr];
+    }
 }
 
 /*
@@ -1312,8 +1353,14 @@ void cpu_one_inst ()
         delay = MEAN_TIME (3, 5);
         break;
     case 032:                                       /* э32, ext */
-        // besm6_debug("УВВ32 @%05o", PC);
-        /* Fall through... */
+	if (RK & BBIT(19))
+	    write_032(ADDR(addr-070000+M[reg]), ACC);
+	else {
+	    t_value res;
+	    res = read_032(ADDR(addr+M[reg]));
+	    ACC = res << 24 | ACC & 077777777;
+	}
+	break;
     case 033:                                       /* увв, ext */
         Aex = ADDR (addr + M[reg]);
         if (! IS_SUPERVISOR (RUU))
