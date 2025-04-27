@@ -310,7 +310,7 @@ ifeq (${WIN32},)  #*nix Environments (&& cygwin)
   LTO_EXCLUDE_VERSIONS =
   PCAPLIB = pcap
   ifeq (agcc,$(findstring agcc,${GCC})) # Android target build?
-    OS_CCDEFS += -D_GNU_SOURCE -DSIM_ASYNCH_IO 
+    OS_CCDEFS += -D_GNU_SOURCE -DSIM_ASYNCH_IO
     OS_LDFLAGS = -lm
   else # Non-Android (or Native Android) Builds
     ifeq (,$(INCLUDES)$(LIBRARIES))
@@ -649,27 +649,18 @@ ifeq (${WIN32},)  #*nix Environments (&& cygwin)
     endif
     ifneq (,$(call find_include,SDL2/SDL))
       ifneq (,$(call find_lib,SDL2))
-        ifneq (,$(findstring Haiku,$(OSTYPE)))
-          ifneq (,$(shell which sdl2-config))
-            SDLX_CONFIG = sdl2-config
-          endif
-        else
-          SDLX_CONFIG = $(realpath $(dir $(call find_include,SDL2/SDL))../../bin/sdl2-config)
-        endif
-        ifneq (,$(SDLX_CONFIG))
-          VIDEO_CCDEFS += -DHAVE_LIBSDL -DUSE_SIM_VIDEO `$(SDLX_CONFIG) --cflags`
-          VIDEO_LDFLAGS += `$(SDLX_CONFIG) --libs`
-          VIDEO_FEATURES = - video capabilities provided by libSDL2 (Simple Directmedia Layer)
-          DISPLAYL = ${DISPLAYD}/display.c $(DISPLAYD)/sim_ws.c
-          DISPLAYVT = ${DISPLAYD}/vt11.c
-          DISPLAY340 = ${DISPLAYD}/type340.c
-          DISPLAYNG = ${DISPLAYD}/ng.c
-          DISPLAYIII = ${DISPLAYD}/iii.c
-          DISPLAY_OPT += -DUSE_DISPLAY $(VIDEO_CCDEFS) $(VIDEO_LDFLAGS)
-          $(info using libSDL2: $(call find_include,SDL2/SDL))
-          ifeq (Darwin,$(OSTYPE))
-            VIDEO_CCDEFS += -DSDL_MAIN_AVAILABLE
-          endif
+        VIDEO_CCDEFS += -DHAVE_LIBSDL -DUSE_SIM_VIDEO $(shell pkgconf SDL2_ttf --cflags)
+        VIDEO_LDFLAGS += $(shell pkgconf SDL2_ttf --libs)
+        VIDEO_FEATURES = - video capabilities provided by libSDL2 (Simple Directmedia Layer)
+        DISPLAYL = ${DISPLAYD}/display.c $(DISPLAYD)/sim_ws.c
+        DISPLAYVT = ${DISPLAYD}/vt11.c
+        DISPLAY340 = ${DISPLAYD}/type340.c
+        DISPLAYNG = ${DISPLAYD}/ng.c
+        DISPLAYIII = ${DISPLAYD}/iii.c
+        DISPLAY_OPT += -DUSE_DISPLAY $(VIDEO_CCDEFS) $(VIDEO_LDFLAGS)
+        $(info using libSDL2: $(call find_include,SDL2/SDL))
+        ifeq (Darwin,$(OSTYPE))
+          VIDEO_CCDEFS += -DSDL_MAIN_AVAILABLE
         endif
       endif
     endif
@@ -1837,7 +1828,7 @@ INTEL_PARTS = \
 	${INTELSYSC}/multibus.c \
 	${INTELSYSC}/mem.c \
 	${INTELSYSC}/sys.c \
-	${INTELSYSC}/zx200a.c 
+	${INTELSYSC}/zx200a.c
 
 
 INTEL_MDSD = ${INTELSYSD}/Intel-MDS
@@ -1897,7 +1888,7 @@ BESM6 = ${BESM6D}/besm6_cpu.c ${BESM6D}/besm6_sys.c ${BESM6D}/besm6_mmu.c \
 
 ifneq (,$(BESM6_BUILD))
     BESM6_OPT = -I ${BESM6D} -DUSE_INT64 $(BESM6_PANEL_OPT)
-    ifneq (,$(and ${SDLX_CONFIG},${VIDEO_LDFLAGS}, $(or $(and $(call find_include,SDL2/SDL_ttf),$(call find_lib,SDL2_ttf)), $(and $(call find_include,SDL/SDL_ttf),$(call find_lib,SDL_ttf)))))
+    ifneq (,${VIDEO_CCDEFS})
         FONTPATH += /usr/share/fonts /Library/Fonts /usr/lib/jvm /System/Library/Frameworks/JavaVM.framework/Versions C:/Windows/Fonts
         FONTPATH := $(dir $(foreach dir,$(strip $(FONTPATH)),$(wildcard $(dir)/.)))
         FONTNAME += DejaVuSans.ttf LucidaSansRegular.ttf FreeSans.ttf AppleGothic.ttf tahoma.ttf
@@ -1974,9 +1965,8 @@ ifneq (,$(BESM6_BUILD))
           endif
         endif
         BESM6_OPT = -I ${BESM6D} -DUSE_INT64
-    else ifneq (,$(and $(findstring sdl2,${VIDEO_LDFLAGS}),$(call find_include,SDL2/SDL_ttf),$(call find_lib,SDL2_ttf)))
-        $(info using libSDL2_ttf: $(call find_lib,SDL2_ttf) $(call find_include,SDL2/SDL_ttf))
-        $(info ***)
+    else
+        $(info using libSDL2_ttf: $(shell pkgconf SDL2_ttf --libs-only-l))
         BESM6_PANEL_OPT = -DFONTFILE=${FONTFILE} ${VIDEO_CCDEFS} ${VIDEO_LDFLAGS} -lSDL2_ttf
     endif
 endif
@@ -2133,12 +2123,12 @@ SAGE = ${SAGED}/sage_cpu.c ${SAGED}/sage_sys.c ${SAGED}/sage_stddev.c \
     ${SAGED}/sage_cons.c ${SAGED}/sage_fd.c ${SAGED}/sage_lp.c \
     ${SAGED}/m68k_cpu.c ${SAGED}/m68k_mem.c ${SAGED}/m68k_scp.c \
     ${SAGED}/m68k_parse.tab.c ${SAGED}/m68k_sys.c \
-    ${SAGED}/i8251.c ${SAGED}/i8253.c ${SAGED}/i8255.c ${SAGED}/i8259.c ${SAGED}/i8272.c 
+    ${SAGED}/i8251.c ${SAGED}/i8253.c ${SAGED}/i8255.c ${SAGED}/i8259.c ${SAGED}/i8272.c
 SAGE_OPT = -I ${SAGED} -DHAVE_INT64
 
 PDQ3D = ${SIMHD}/PDQ-3
 PDQ3 = ${PDQ3D}/pdq3_cpu.c ${PDQ3D}/pdq3_sys.c ${PDQ3D}/pdq3_stddev.c \
-    ${PDQ3D}/pdq3_mem.c ${PDQ3D}/pdq3_debug.c ${PDQ3D}/pdq3_fdc.c 
+    ${PDQ3D}/pdq3_mem.c ${PDQ3D}/pdq3_debug.c ${PDQ3D}/pdq3_fdc.c
 PDQ3_OPT = -I ${PDQ3D}
 
 #
@@ -2155,7 +2145,7 @@ ALL = pdp1 pdp4 pdp7 pdp8 pdp9 pdp15 pdp11 pdp10 \
 	swtp6800mp-a swtp6800mp-a2 tx-0 ssem b5500 intel-mds \
 	scelbi 3b2 i701 i704 i7010 i7070 i7080 i7090 \
 	sigma uc15 pdp10-ka pdp10-ki pdp10-kl pdp10-ks pdp6 i650 \
-	imlac tt2500 sel32 
+	imlac tt2500 sel32
 
 all : ${ALL}
 

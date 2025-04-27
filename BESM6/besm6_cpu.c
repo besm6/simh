@@ -582,7 +582,8 @@ static void cmd_002 ()
     }
 }
 
-void dump(const char * what, uint map[]) {
+void dump(const char * what, uint32 map[]) 
+{
 	int i;
 	for (i = 0; i < 32768; ++i) {
 		if (map[i]) 

@@ -63,7 +63,7 @@
 #define STATUS_POWERUP      004000000   /* The unit is powered up */
 #define STATUS_ABSENT       010000000   /* The unit is not connected */
 #define STATUS_BUF_ERR      020000000   /* Transfer buffer not ready */
- 
+
 /*
  * Total size of a "7.25 Mb" disk is 1000 (decimal) blocks;
  * of a "29 Mb" disk - 4000 blocks, out of which 4 are so called
@@ -541,7 +541,7 @@ void disk_format (UNIT *u)
     log_data(fmtbuf, 5);
 
     /* Печатаем идентификатор, адрес и контрольную сумму адреса. */
-    if (u->dptr->dctrl & DEB_TRC)
+    if (u->dptr->dctrl & DEB_TRC) {
         if (IS_29MB(u))
             besm6_debug ("::: формат МД %02o зона %04o память %05o skip %02o и-а-кса %010o %010o",
                          c->dev, c->zone, c->memory, ptr - memory -c ->memory,
@@ -552,6 +552,7 @@ void disk_format (UNIT *u)
                          c->dev, c->zone, c->track, c->memory, (uint32) (ptr - memory -c ->memory),
                          (int) (fmtbuf[0] >> 8 & BITS(30)),
                          (int) (fmtbuf[2] >> 14 & BITS(30)));
+    }
 }
 
 /*
@@ -829,7 +830,7 @@ void disk_ctl (int ctlr, uint32 cmd)
             if (has_debug(ctlr))
                 besm6_debug ("::: КМД %c: selected group %d",
                              ctlr + '3', c->group);
-        }        
+        }
         GRP |= c->mask_grp;
     } else if (cmd == 011050) {
         // Release the currently selected group (reset back to 0),
@@ -998,4 +999,3 @@ int disk_errors ()
 #endif
     return disk_fail;
 }
-
