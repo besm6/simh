@@ -453,6 +453,12 @@ unicode_to_gost (unsigned short val)
         case 0xca: return 0127;
         }
         break;
+    case 0x2a:
+        switch ((unsigned char) val) {
+        case 0x7d: return 0116;
+        case 0x7e: return 0117;
+        }
+        break;
     }
     return 017;
 }
