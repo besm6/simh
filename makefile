@@ -2436,6 +2436,12 @@ BESM6 = ${BESM6D}/besm6_cpu.c ${BESM6D}/besm6_sys.c ${BESM6D}/besm6_mmu.c \
         ${BESM6D}/besm6_punch.c ${BESM6D}/besm6_punchcard.c ${BESM6D}/besm6_vu.c
 BESM6_OPT = -I ${BESM6D} -DUSE_INT64 $(VIDEO_TTF_OPT)
 
+SVSD = ${SIMHD}/SVS
+SVS = ${SVSD}/svs_cpu.c ${SVSD}/svs_sys.c ${SVSD}/svs_mmu.c \
+        ${SVSD}/svs_arith.c ${SVSD}/svs_trace.c ${SVSD}/svs_mpd.c \
+        ${SVSD}/svs_iom.c
+SVS_OPT = -I ${SVSD} -DUSE_INT64 -DNUM_CORES=4
+
 PDP6D = ${SIMHD}/PDP10
 ifneq (,${DISPLAY_OPT})
   PDP6_DISPLAY_OPT =
@@ -3042,6 +3048,12 @@ besm6 : $(BIN)besm6$(EXE)
 
 $(BIN)besm6$(EXE) : ${BESM6} ${SIM}
 	$(MAKEIT) OPTS="$(BESM6_OPT)" NOCPP=1
+
+
+svs : $(BIN)svs$(EXE)
+
+$(BIN)svs$(EXE) : ${SVS} ${SIM}
+	$(MAKEIT) OPTS="$(SVS_OPT)" NOCPP=1
 
 
 sigma : $(BIN)sigma$(EXE)
