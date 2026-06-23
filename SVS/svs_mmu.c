@@ -141,13 +141,12 @@ void mmu_store64(CORE *cpu, int vaddr, t_value val64)
     if (paddr != 0 && svs_trace >= TRACE_ALL) {
         fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
             cpu->index, vaddr, paddr, cpu->TagR);
-        fprintf(sim_log, "%04o %04o %04o %04o:%02o %04o\n",
+        fprintf(sim_log, "%03x %03x %03x %03x %04x\n",
             (int) (val64 >> 52) & 07777,
             (int) (val64 >> 40) & 07777,
             (int) (val64 >> 28) & 07777,
             (int) (val64 >> 16) & 07777,
-            (int) (val64 >> 12) & 017,
-            (int) val64 & 07777);
+            (int) val64 & 0177777);
     }
 }
 

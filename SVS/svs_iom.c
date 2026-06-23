@@ -29,22 +29,46 @@
 #include "svs_defs.h"
 
 /*
- * Коды операций ПВВ.
+ * Командное слово БАК (см. ПВВ.md §5.6).
+ *
+ * Процессор (АДАП) строит командное слово в адап.bemsh:2960-2965:
+ *   адрес-с-точки-зрения-ПВВ блока БАКПВВ  ИЛИ  КОП,  затем СДА 64+16; ЗПП.
+ * Из-за сдвига вправо на 16 перед ЗПП значащие 48 разрядов попадают в МЛАДШУЮ
+ * половину 64-битного слова (старшие 16 разрядов нулевые), а не в старшую, как
+ * при обычной записи аккумулятора. Слово кладётся в СТБАК (0100₈ = iom->HA),
+ * после чего следует звонок в дверь: СЧ ЕПВВ; РЕГ '50' (адап.bemsh:2968-2969).
+ *
+ *   разряды 1..36   адрес 2-словного блока БАКПВВ с точки зрения ПВВ (физический;
+ *                   ДФАПВВ прибавил базу АДРЕС). Здесь же лежат флаги СЕМБИТ
+ *                   (разр.17) и ПОБ (разр.21); их выделение — в Phase 2.
+ *   разряды 37..44  КОП — код операции (база М36, младший разряд = разряд 37)
+ *
+ * Пример (наблюдается при ВЫЗОС): слово 0x40000e8040 → КОП=004 (разр.39,
+ * чтение/обмен), адрес блока = 0xe8040 = 3500100₈.
  */
-#define IOM_START_IO            001
-#define IOM_SET_CHANNEL_BUSY    002
-#define IOM_RESET_CHANNEL_BUSY  003
-#define IOM_LOAD_HOME_ADDRESS   004
-#define IOM_LOAD_UTAB_ADDRESS   005
-#define IOM_LOAD_IOQ_ADDRESS    006
-#define IOM_LOAD_SQ_ADDRESS     007
-#define IOM_SCAN_OUT            010
-#define IOM_SCAN_IN             011
-#define IOM_SYNC_IO             012
-#define IOM_GET_STATUS          013
-#define IOM_INHIBIT             014
-#define IOM_ACTIVATE            015
-#define IOM_LOAD_DFO_FLAGS      016
+#define BAK_BLOCK_ADDR(v)   ((uint32)((v) & 000777777777777LL)) /* разр.1..36: адрес блока БАКПВВ */
+#define BAK_KOP(v)          ((int)(((v) >> 36) & 0377))         /* разр.37..44: поле КОП, база М36 */
+
+#define BAK_KOP_EXCHANGE1   001     /* разряд 37 (=М36В'1') — вариант обмена */
+#define BAK_KOP_EXCHANGE3   003     /* разряды 37-38 (=М36В'3') — вариант обмена */
+#define BAK_KOP_RDEXCHANGE  004     /* разряд 39 (=М36В'4') — чтение/обмен */
+
+/*
+ * Перевод адреса "с точки зрения ПВВ" в физический адрес ОЗУ.
+ *
+ * Макрос ДФАПВВ (адап.bemsh:60) прибавляет к адресу константу АДРЕС, переводя
+ * его в адресное пространство ПВВ. В реальной СВС ПВВ — отдельный процессор со
+ * своим физическим адресным пространством; в симуляторе ОЗУ одно (массив
+ * memory[]), поэтому адрес "с т.з. ПВВ" нужно перевести обратно вычитанием
+ * АДРЕС. АДРЕС — константа компоновки модуля АДАП и равна разности адресов
+ * блока БАКПВВ в двух представлениях: 3500100₈ (ПВВ) − 030100₈ (ОЗУ).
+ *
+ * Замечание: рабочая конфигурация (SVS/dispak.ini) держит приписку страниц
+ * данных ПВВ единичной (virtual == physical), поэтому одного вычитания АДРЕС
+ * достаточно для всех структур ПВВ (БАКПВВ, ТОЧ, ТУС, заявки).
+ */
+#define IOM_ADRES           03450000                /* база ДФАПВВ (3500100₈-030100₈) */
+#define IOM_PHYS(a)         ((uint32)((a) - IOM_ADRES))
 
 IOMDATA iom_data[4];        /* состояние ПВВ */
 
@@ -125,6 +149,7 @@ void iom_reset(int index)
 
     iom->index = index;
     iom->HA = 0100;
+    iom->BAK = 0;
     iom->UTA = 0;
     iom->IOQA = 0;
     iom->SQA = 0;
@@ -139,36 +164,52 @@ void iom_request(int index)
 {
     IOMDATA *iom = &iom_data[index];
 
-    t_value request = memory[iom->HA];
-    if (request == 0)
+    /*
+     * Звонок в дверь не несёт адреса. Сначала смотрим в СТБАК (= iom->HA, 0100₈):
+     * при инициализации процессор кладёт туда командное слово БАК — указатель на
+     * блок БАКПВВ (адрес блока в разр.1..36, КОП в разр.37..44). Значащие 48
+     * разрядов — в МЛАДШЕЙ части 64-битного слова (см. описание формата выше).
+     */
+    t_value ptr = memory[iom->HA] & BITS48;
+    if (ptr != 0) {
+        int kop = BAK_KOP(ptr);
+        iom->BAK = IOM_PHYS(BAK_BLOCK_ADDR(ptr));
+
+        if (svs_trace >= TRACE_INSTRUCTIONS)
+            fprintf(sim_log, "iom%d --- Инициализация БАК: КОП=%03o, БАКПВВ@%o\n",
+                iom->index, kop, iom->BAK);
+
+        /*
+         * Подтверждение: гасим СТБАК. Цикл ожидания в процессоре
+         * (адап.bemsh:2971: СЧП СТБАК; ПО ДОЖДЛ) выходит, когда старшие 48
+         * разрядов слова становятся нулевыми.
+         */
+        memory[iom->HA] = 0;
+        return;
+    }
+
+    /*
+     * Иначе команда лежит в 2-словном блоке БАКПВВ по запомненному адресу
+     * (ЗАПУСК/ПУСКОБ: ЗППР БАКПВВ; РЕГ '50'; затем опрос СЧПР БАКПВВ; ПО ВЫХМКФ,
+     * адап.bemsh:3548-3556, 3830-3841).
+     */
+    if (iom->BAK == 0)
+        return;
+    t_value cmd = memory[iom->BAK] & BITS48;
+    if (cmd == 0)
         return;
 
-    /* Запрос выполнен. */
-    memory[iom->HA] = 0;
+    if (svs_trace >= TRACE_INSTRUCTIONS)
+        fprintf(sim_log, "iom%d --- Команда БАКПВВ@%o: КОП=%03o, слово=%#jx\n",
+            iom->index, iom->BAK, BAK_KOP(cmd), (intmax_t)cmd);
 
-    switch (request >> 42) {
-    case IOM_START_IO:
-    case IOM_SET_CHANNEL_BUSY:
-    case IOM_RESET_CHANNEL_BUSY:
-    case IOM_LOAD_HOME_ADDRESS:
-        iom->HA = request & BITS(20);
-        if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "iom%d --- Установка базового адреса ПВВ: %#o\n",
-                iom->index, iom->HA);
-        break;
-    case IOM_LOAD_UTAB_ADDRESS:
-    case IOM_LOAD_IOQ_ADDRESS:
-    case IOM_LOAD_SQ_ADDRESS:
-    case IOM_SCAN_OUT:
-    case IOM_SCAN_IN:
-    case IOM_SYNC_IO:
-    case IOM_GET_STATUS:
-    case IOM_INHIBIT:
-    case IOM_ACTIVATE:
-    case IOM_LOAD_DFO_FLAGS:
-    default:
-        if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "iom%d --- Неизвестный запрос к ПВВ: %#jx\n",
-                iom->index, (intmax_t)request);
-    }
+    /*
+     * Управляющая команда (МКФ, ППД, сброс канала, реконфигурация) — без
+     * передачи данных. Подтверждаем завершение, обнуляя оба слова блока БАКПВВ:
+     * старшие 48 разр. слова 0 → опрос ПО ВЫХМКФ выходит; СЕМБИТ снимается, и
+     * следующий захват канала (МКФ: И СЕМБИТ; ПО ВЗЯЛМК) проходит.
+     * TODO (Phase 3): для ПУСКОБ обойти очередь ТОЧ и выполнить обмен данными.
+     */
+    memory[iom->BAK]     = 0;
+    memory[iom->BAK + 1] = 0;
 }
