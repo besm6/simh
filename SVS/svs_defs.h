@@ -410,6 +410,14 @@ void iom_reset(int index);
 void iom_request(int index);
 
 /*
+ * Дисковое устройство (МД).
+ */
+extern DEVICE disk_dev;
+t_stat svs_disk_io(int dev, int zone, int sysaddr, int memaddr, int is_write);
+t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr);
+t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr);
+
+/*
  * Разряды главного регистра прерываний (ГРП)
  * Внешние:
  */

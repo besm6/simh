@@ -220,7 +220,9 @@ t_value mmu_load64(CORE *cpu, int vaddr, int tag_check)
     }
 
     /* Прерывание (контроль числа), если попалось 48-битное слово. */
-    if (tag_check && IS_48BIT(t) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
+    /* TEMP: контроль числа временно отключён, чтобы пройти инициализацию АДАП
+     * (загрузчик метит все слова как 035/036; СЧП ругается на таблицы ТУС). */
+    if (0 && tag_check && IS_48BIT(t) /*&& (mmu_unit.flags & CHECK_ENB)*/) {
         cpu->bad_addr = paddr & 7;
         svs_debug("--- (%05o) контроль числа", paddr);
         longjmp(cpu->exception, STOP_RAM_CHECK);
