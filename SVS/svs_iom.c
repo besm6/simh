@@ -210,12 +210,10 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int dev)
     int is_read  = (int)((so >> 47) & 1);       /* разр.48: ТЕГ48 чтение */
     /*
      * Физический адрес зоны — в РМР слова СПУ (младшие 16 разр. 64-битного слова,
-     * §5.4: "копия младших 16 разр. адреса в РМР"). ТУСЗ не настроена → тип ёмкости 0
-     * (7,25 МБ) → зона удвоена (зона×2). Диск svs2053.bin — 29 МБ (зона как есть),
-     * поэтому делим на 2, восстанавливая логическую зону.
-     * TODO: брать тип ёмкости из ТУСЗ[НУС] и масштабировать корректно (§5.4).
+     * §5.4: "копия младших 16 разр. адреса в РМР"). При типе ёмкости 1 (29 МБ,
+     * ТУСЗ разр.28) зона записывается «как есть», поэтому берём РМР напрямую.
      */
-    int zone     = (int)((memory[z + 4] & 0xFFFF) >> 1);
+    int zone     = (int)(memory[z + 4] & 0xFFFF);
     int memaddr  = (int)(do_ & 077777);         /* адрес буфера данных ОП из ДО */
     t_stat r;
     (void)spu;
@@ -268,19 +266,21 @@ static void iom_pusk_obmen(IOMDATA *iom)
         return;
     }
 
-    /* По 2 слова на устройство; границы ТОЧ заранее не знаем — сканируем с запасом. */
-    for (nus = 0; nus < 64; nus++) {
-        t_value head = memory[toch + 2*nus] & BITS48;
+    /* По 2 слова на устройство; индекс = 2·НУС, НУС до ДТУС=ККАН*16=112 (адап.bemsh:391).
+     * Указатели — в старшей части слова (значение<<16), как и поля заявки. */
+    for (nus = 0; nus < 112; nus++) {
+        t_value head = (memory[toch + 2*nus] >> 16) & BITS48;
         uint32 z = IOM_DAIMA(head);
 
         if (head == 0)
             continue;
 
-        /* Идём по цепочке заявок (связь — 0-е слово). */
+        /* Идём по цепочке заявок (связь — 0-е слово). dev=0: единственный МД на DISK0
+         * (канал из ТУСЗ[НУС] разр.33:38 здесь 0; TODO: извлекать для многодисковой конфиг.). */
         while (z != 0) {
-            uint32 next = IOM_DAIMA(memory[z] & BITS48);    /* следующая заявка */
+            uint32 next = IOM_DAIMA((memory[z] >> 16) & BITS48);  /* следующая заявка */
             found++;
-            iom_xfer_zaiavka(iom, z, nus);
+            iom_xfer_zaiavka(iom, z, 0);
             z = next;
         }
 
@@ -296,9 +296,7 @@ static void iom_pusk_obmen(IOMDATA *iom)
             fprintf(sim_log, "iom%d --- ПУСКОБ: обработано заявок %d, ПРПВВ\n",
                 iom->index, found);
     } else if (svs_trace >= TRACE_INSTRUCTIONS) {
-        fprintf(sim_log, "iom%d --- ПУСКОБ: ТОЧ@%o пуста "
-            "(заявка обслуживается на звонке ЕСВС из ТВЗП, см. iom_service_tvzp)\n",
-            iom->index, toch);
+        fprintf(sim_log, "iom%d --- ПУСКОБ: ТОЧ@%o пуста\n", iom->index, toch);
     }
 }
 
