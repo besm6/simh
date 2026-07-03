@@ -61,14 +61,16 @@ The general form of invocation is:
 besm6 [-flags] [scriptfile [arguments...]]
 ```
 
-Run the simulator **from inside the `BESM6/` directory**, because the example scripts refer to
-their data files by bare relative names (`drum1x.bin`, `boot_dispak.b6`, `input.txt`, …):
+Run each script **from the directory that holds its data files**, because scripts refer to their
+data files by bare relative names (`drum1x.bin`, `boot_dispak.b6`, `input.txt`, …). The
+interactive demos live in `BESM6/demo/`; the regression tests live in `BESM6/tests/`:
 
 ```sh
-cd BESM6
-../BIN/besm6 dispak.ini        # boot the DISPAK operating system
-../BIN/besm6 test_alu.ini      # run the ALU regression test
+cd BESM6/demo  && ../../BIN/besm6 dispak.ini        # boot the DISPAK operating system
+cd BESM6/tests && ../../BIN/besm6 besm6_test.ini    # run the whole regression suite
 ```
+
+`make besm6` runs the regression suite automatically after a successful build.
 
 With no script file, the simulator starts interactively at the `sim>` prompt. Type `help` for
 the command list and `q` (or `quit`) to leave:
@@ -158,8 +160,8 @@ can be used in `ASSERT` conditions (e.g. `assert ACC==0`).
 ## Loading and dumping programs
 
 The simulator loads programs from a **text** file in the same format used by the DISPAK
-operating system. This is the `.b6` format used by `boot_dispak.b6`, `test_alu.b6`, and the
-other bundled programs.
+operating system. This is the `.b6` format used by `demo/boot_dispak.b6`, `tests/alu.b6`, and the
+other bundled programs. (`load` also auto-detects binary `a.out` executables; see `tests/aout/`.)
 
 Load and start:
 
@@ -579,16 +581,16 @@ mean:
    ```
 7. **Boot** — `load boot_dispak.b6` then `run 2000`.
 
-> The system disk images (`sbor2053.bin`, `krab2063.bin`, `sbor2048.bin`, `svs2048.bin`,
-> `alt2048.bin`) are **not** included in the repository — you must obtain them and place them in
-> this directory before `dispak.ini` will boot. The drum, scratch-disk, and printer files are
-> created for you.
+> `dispak.ini` lives in `BESM6/demo/`; run it from there. The system disk images
+> (`sbor2053.bin`, `krab2063.bin`, `sbor2048.bin`, `svs2048.bin`, `alt2048.bin`) are **not**
+> included in the repository — you must obtain them and place them in `BESM6/demo/` before
+> `dispak.ini` will boot. The drum, scratch-disk, and printer files are created for you.
 
 ### Running a batch job from paper tape
 
-`punchtape.ini` demonstrates automated operation. It attaches the job deck `input.txt` to the
-tape reader, boots DISPAK by `do`-ing `dispak.ini`, then drives the machine from the front panel
-and by scripting the operator console:
+`demo/punchtape.ini` demonstrates automated operation (run it from `BESM6/demo/`). It attaches
+the job deck `input.txt` to the tape reader, boots DISPAK by `do`-ing `dispak.ini`, then drives
+the machine from the front panel and by scripting the operator console:
 
 * Deposit a request code into switch registers 5/6 and `set cpu req` to ask DISPAK to read from
   the tape reader.
@@ -601,19 +603,24 @@ substring); `send after=N "..."` injects characters after N simulated cycles.
 
 ### Regression tests
 
-The `test_*.ini` scripts load a `.b6` program, set breakpoints, run, and verify:
+The self-checking test suite lives in `BESM6/tests/` and is run automatically by
+`make besm6` (SIMH discovers `tests/besm6_test.ini` after a successful build). Each test loads a
+program, runs it, and asserts the resulting machine state with `if (...) echof "FAIL…"; exit 1`,
+so a mismatch fails the build. For example `alu.ini`:
 
 ```
-sim> set mmu cache
-sim> load test_alu.b6
-sim> br 32013           ; expect three stops here
-sim> go 32000
-sim> go
-sim> go
+load alu.b6
+br 32013
+go -q 32000
+if (PC != 032013) echof "FAIL: alu stop 1"; ex PC; exit 1
+...
+echof "PASS: alu"
 ```
 
-`test_pprog05.ini` additionally uses `ex -f ACC` to check the accumulator holds 1.0, 2.0, 3.0,
-4.0 at successive breakpoints.
+`pprog05.ini` compares the accumulator against the raw octal words for 1.0, 2.0, 3.0, 4.0, and
+`aout.ini` exercises the binary `a.out` loader. Note that numbers in `if` expressions are
+decimal unless written with a leading `0` (octal). See
+[tests/README.md](tests/README.md) for how to run and add tests.
 
 ---
 

@@ -20,14 +20,24 @@ Build options come from the makefile: `BESM6_OPT = -I BESM6 -DUSE_INT64 …` (th
 
 ## Run and test
 
-Simulator control scripts are `.ini` files, run from inside `BESM6/` so relative `attach` paths resolve:
+Simulator control scripts are `.ini` files, run from the directory that holds their data files so relative `attach`/`load` paths resolve.
+
+The **regression suite** lives in `BESM6/tests/`. `make besm6` runs it automatically after a successful build (SIMH auto-discovers `BESM6/tests/besm6_test.ini`), so a broken test fails the build. Run or add tests as described in [BESM6/tests/README.md](BESM6/tests/README.md):
 
 ```sh
-cd BESM6 && ../BIN/besm6 dispak.ini        # boot the DISPAK OS from disk images
-cd BESM6 && ../BIN/besm6 test_alu.ini      # ALU regression (uses SIMH breakpoints)
+cd BESM6/tests && ../../BIN/besm6 besm6_test.ini   # whole suite (alu, pprog05, aout)
+cd BESM6/tests && ../../BIN/besm6 alu.ini          # one test
 ```
 
-Tests rely on hitting expected breakpoint addresses (`br <addr>`, then `go`). Tracing: `set cpu debug` / `set mmu debug` / `set drum debug`, with console output redirected via `set console log=<file>`. Disk/drum images (`*.bin`, `boot_dispak.b6`) are attached by the `.ini` scripts; `.b6` files are loadable BESM-6 memory images.
+The tests are self-checking: they assert machine state with `if (...) echof "FAIL…"; exit 1` (note: `if` literals are decimal unless written with a leading `0` for octal). `.b6` files are textual BESM-6 memory images; `tests/aout/` holds a binary `a.out` fixture for the loader.
+
+The **interactive demos** are in `BESM6/demo/` and need external disk/drum images (`*.bin`) that are not in the repo:
+
+```sh
+cd BESM6/demo && ../../BIN/besm6 dispak.ini        # boot the DISPAK OS from disk images
+```
+
+Tracing: `set cpu debug` / `set mmu debug` / `set drum debug`, with console output redirected via `set console log=<file>`.
 
 ## Architecture notes (`BESM6/`)
 
