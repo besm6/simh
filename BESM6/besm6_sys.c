@@ -634,13 +634,121 @@ t_stat besm6_read_line (FILE *input, int *type, t_value *val)
 }
 
 /*
+ * Read one 6-byte big-endian word from a binary a.out image.
+ * Returns (t_value)-1 on end of file.
+ */
+static t_value freadw (FILE *f)
+{
+    t_value w = 0;
+    int i, c;
+
+    for (i = 0; i < 6; ++i) {
+        c = getc (f);
+        if (c == EOF)
+            return (t_value) -1;
+        w = (w << 8) | (c & 0xff);
+    }
+    return w;
+}
+
+/*
+ * Base load address of a fully linked a.out image (BADDR = HDRSZ / W).
+ * Words 0..7 are reserved, so the const segment starts at word 010.
+ */
+#define AOUT_BADDR      8
+
+/*
+ * a.out magic numbers: the string "BESM" plus a variant code in the low bits.
+ * FMAGIC - standard impure executable; NMAGIC - read-only (pure) text segment.
+ */
+#define AOUT_FMAGIC     0x4245534d0107LL        /* "BESM" + 0407 */
+#define AOUT_NMAGIC     0x4245534d0108LL        /* "BESM" + 0410 */
+#define AOUT_RELFLG     1                       /* fully linked, no relocation */
+
+/*
+ * Load a binary a.out image: header, then the const/text/data segments.
+ * The entry point (a_entry) becomes the start address.
+ */
+static t_stat besm6_load_aout (FILE *input)
+{
+    t_value a_magic, a_const, a_text, a_data, a_bss, a_syms, a_entry, a_flag;
+    t_value word;
+    int addr, i, n;
+
+    a_magic = freadw (input);
+    a_const = freadw (input);
+    a_text  = freadw (input);
+    a_data  = freadw (input);
+    a_bss   = freadw (input);
+    a_syms  = freadw (input);
+    a_entry = freadw (input);
+    a_flag  = freadw (input);
+    if (a_flag == (t_value) -1) {
+        besm6_log ("Truncated a.out header");
+        return SCPE_FMT;
+    }
+    (void) a_bss;
+    (void) a_syms;
+
+    /* Only fully linked images (RELFLG set) can be loaded and run directly. */
+    if (! (a_flag & AOUT_RELFLG)) {
+        besm6_log ("Cannot load relocatable binary");
+        return SCPE_FMT;
+    }
+
+    addr = AOUT_BADDR;
+    /* const segment - read-only data */
+    n = (int) (a_const / 6);
+    for (i = 0; i < n; ++i) {
+        word = freadw (input);
+        if (word == (t_value) -1 || addr > MEMSIZE)
+            return SCPE_FMT;
+        memory [addr++] = SET_PARITY (word, PARITY_NUMBER);
+    }
+    /* text segment - machine code */
+    n = (int) (a_text / 6);
+    for (i = 0; i < n; ++i) {
+        word = freadw (input);
+        if (word == (t_value) -1 || addr > MEMSIZE)
+            return SCPE_FMT;
+        memory [addr++] = SET_PARITY (word, PARITY_INSN);
+    }
+    /* Pure text: page-align the data segment to a 1024-word boundary. */
+    if (a_magic == AOUT_NMAGIC)
+        addr = (addr + 1023) & ~1023;
+    /* data segment - initialized variables */
+    n = (int) (a_data / 6);
+    for (i = 0; i < n; ++i) {
+        word = freadw (input);
+        if (word == (t_value) -1 || addr > MEMSIZE)
+            return SCPE_FMT;
+        memory [addr++] = SET_PARITY (word, PARITY_NUMBER);
+    }
+    PC = (uint32) a_entry;
+    return SCPE_OK;
+}
+
+/*
  * Load memory from file.
+ * Automatically detects a binary a.out image and loads it; otherwise
+ * falls back to the textual .b6 memory-image format.
  */
 t_stat besm6_load (FILE *input)
 {
     int addr, type;
     t_value word;
     t_stat err;
+    unsigned char magic [6];
+
+    /* Peek at the first word to detect a binary a.out image. */
+    if (fread (magic, 1, 6, input) == 6 &&
+        magic[0] == 'B' && magic[1] == 'E' &&
+        magic[2] == 'S' && magic[3] == 'M' &&
+        magic[4] == 0x01 && (magic[5] == 0x07 || magic[5] == 0x08)) {
+        rewind (input);
+        return besm6_load_aout (input);
+    }
+    rewind (input);
 
     addr = 1;
     PC = 1;
