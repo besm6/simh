@@ -2,7 +2,7 @@
 
 This directory contains a [SIMH](http://simh.trailing-edge.com/)-based simulator of the
 **BESM-6** (БЭСМ-6), the most widely used Soviet mainframe of the 1960s–80s. The BESM-6 is a
-48-bit, octal machine with sign-magnitude floating-point arithmetic. This guide explains how to
+48-bit machine with sign-magnitude floating-point arithmetic. This guide explains how to
 build the simulator, load and run BESM-6 software, attach peripherals, drive the machine from its
 front panel, and debug what happens inside.
 
