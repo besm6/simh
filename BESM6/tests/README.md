@@ -36,16 +36,16 @@ stops at the first failure.
 |---------------|---------------------|--------|
 | `alu.ini`     | `alu.b6`            | Arithmetic-unit program halts three times at address 032013. |
 | `pprog05.ini` | `pprog05.b6`        | Accumulator holds 1.0, 2.0, 3.0, 4.0 across four passes. |
-| `aout.ini`    | `aout/test1`        | The binary a.out loader loads a linked executable and starts it at its `a_entry` (010). |
+| `aout.ini`    | `aout/hello`        | The binary a.out loader loads a linked executable that prints `Hello!` to the operator console and starts it at its `a_entry` (010). |
 
 ## Fixture formats
 
 - **`.b6`** — a textual BESM-6 memory image (address lines `в`, octal words `с`,
   instructions `к`, start address `п`). Loaded by `load`. See the main
   [BESM6/README.md](../README.md) for the format and `dump` command.
-- **`aout/test1`** — a binary `a.out` executable produced by the BESM-6 Unix
+- **`aout/hello`** — a binary `a.out` executable produced by the BESM-6 Unix
   cross toolchain (`b6as`/`b6ld`); `load` auto-detects the `BESM` magic. The
-  `aout/` directory keeps the source (`test1.S`), a disassembly (`test1.dis`)
+  `aout/` directory keeps the source (`hello.s`), a disassembly (`hello.dis`)
   and a `Makefile` that rebuilds it (`make -C aout`) when the toolchain is
   installed.
 
