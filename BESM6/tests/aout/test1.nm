@@ -1,0 +1,5 @@
+00007 a len
+00011 t loop
+00010 t main
+00013 d msg
+00010 f test1.o
