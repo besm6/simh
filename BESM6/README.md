@@ -331,6 +331,10 @@ switches: `-n` creates a new/empty image, `-e` requires an existing file, `-t` s
 `-r` attaches read-only. Most peripheral devices are **disabled by default** and are enabled
 implicitly when you attach or `set` them.
 
+> **Programming the peripherals.** This section covers how to *connect* a device. For how a program
+> *drives* one — the `033` «увв» I/O instruction and its full address map, each device's control
+> word and bit fields, and the ГРП/ПРП interrupt bits — see **[Peripherals.md](Peripherals.md)**.
+
 Disk and drum images share the same on-disk geometry: storage is divided into *zones* of
 `8 + 1024` words (8 service words followed by 1024 user words), and each word is written as an
 8-byte little-endian record.
