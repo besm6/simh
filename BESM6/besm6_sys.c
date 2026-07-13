@@ -703,7 +703,10 @@ static t_stat besm6_load_aout (FILE *input)
         word = freadw (input);
         if (word == (t_value) -1 || addr > MEMSIZE)
             return SCPE_FMT;
-        memory [addr++] = SET_PARITY (word, PARITY_NUMBER);
+        if (addr >= 0500 && addr < 0550)
+            memory [addr++] = SET_PARITY (word, PARITY_INSN);
+        else
+            memory [addr++] = SET_PARITY (word, PARITY_NUMBER);
     }
     /* text segment - machine code */
     n = (int) (a_text / 6);
