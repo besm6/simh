@@ -153,6 +153,11 @@ That is: page *i* (i = 0…3) takes its bits 1–5 from accumulator bits `5i+1 �
 bit `29+i`, its bit 7 from bit `33+i`, its bit 8 from `37+i`, its bit 9 from `41+i` and its bit 10
 from `45+i`. Each page number is then masked to `MEMSIZE/1024 - 1` = `777` (512 pages of 1 Kword).
 
+> **Memory mapping is a subject of its own.** РП and РЗ are listed here because `002 «рег»` is how
+> they are written, but what they *mean* — address translation, the protection rules, how they
+> differ between user and supervisor mode and between instruction fetch and data access — is covered
+> in **[Memory_Mapping.md](Memory_Mapping.md)**.
+
 ---
 
 ## Instruction 033 «увв» — the peripheral address map
@@ -938,6 +943,8 @@ word field by field.
 
 * [README.md](README.md) — building and running the simulator, attaching devices, the front panel,
   tracing and debugging.
+* [Memory_Mapping.md](Memory_Mapping.md) — the other half of `002 «рег»`: the page registers РП and
+  the protection register РЗ, address translation, and the protection rules.
 * [besm6_defs.h](besm6_defs.h) — the ГРП and ПРП bit definitions, device prototypes, and the
   `BBIT`/`BITS` bit macros.
 * [besm6_cpu.c](besm6_cpu.c) — `cmd_002()` and `cmd_033()`, the two instruction decoders that this

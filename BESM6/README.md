@@ -295,6 +295,12 @@ The memory-management unit is a separate device, `MMU`:
 | `set mmu cache` / `set mmu nocache` | Enable/disable true LRU write-cache modelling. Accurate but ~20 % slower; off by default. |
 | `set mmu check` / `set mmu nocheck` | Enable/disable parity checking. |
 
+> **Programming the MMU.** This section covers how to *configure* the simulated MMU. For how a
+> program *drives* it — the page registers РП and the protection register РЗ, virtual-to-physical
+> translation, how protection differs between user and supervisor mode and between instruction fetch
+> and data access, and how a protection fault is reported — see
+> **[Memory_Mapping.md](Memory_Mapping.md)**.
+
 ---
 
 ## The front panel
