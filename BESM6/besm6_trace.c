@@ -137,21 +137,21 @@ static void fprint_word_octal (FILE *of, t_value val)
 
 /*
  * Reset the previous-register snapshot, so the first besm6_trace_registers()
- * call after a reset dumps the full initial state.
+ * call after a reset dumps the non-zero initial state.
  */
 void besm6_trace_reset ()
 {
-    prev_ACC = ~ACC;
-    prev_RMR = ~RMR;
-    prev_GRP = ~GRP;
-    prev_MGRP = ~MGRP;
-    prev_RAU = ~RAU;
-    prev_RUU = ~RUU;
-    prev_PRP = ~PRP;
-    prev_MPRP = ~MPRP;
-    prev_RZ = ~RZ;
-    memset (prev_M, 0xff, sizeof (prev_M));
-    memset (prev_RP, 0xff, sizeof (prev_RP));
+    prev_ACC = 0;
+    prev_RMR = 0;
+    prev_GRP = 0;
+    prev_MGRP = 0;
+    prev_RAU = 0;
+    prev_RUU = 0;
+    prev_PRP = 0;
+    prev_MPRP = 0;
+    prev_RZ = 0;
+    memset (prev_M, 0, sizeof (prev_M));
+    memset (prev_RP, 0, sizeof (prev_RP));
 }
 
 /*
