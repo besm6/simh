@@ -530,6 +530,86 @@ sim> set -n console log=log.txt     ; -n truncates/creates the file
 sim> set console debug=log          ; send debug output to the console log too
 ```
 
+or send the debug stream straight to its own file:
+
+```
+sim> set debug "out.trace"          ; all debug output goes here
+```
+
+### The CPU instruction trace
+
+`set cpu debug` turns the processor into a full instruction tracer. While it is
+on, every executed instruction is logged, together with the machine state it
+touches, to the debug output. A typical run looks like:
+
+```
+sim> set debug "out.trace"
+sim> set cpu debug
+sim> dep PC 32000
+sim> step 20
+```
+
+The trace covers four things, all controlled by the one `set cpu debug` toggle:
+
+1. **Instructions.** One line per executed command:
+
+   ```
+   32016 L: 01 010 4412 сч 4412(1)
+   ```
+
+   `32016` is the instruction address (octal `СчАС`); `L`/`R` marks the left or
+   right half-word of the double-command word; then the octal instruction fields
+   (register, opcode, address) and the disassembled mnemonic. For an extracode
+   (`э50`…`э77`) the executive address is appended as `= ⟨addr⟩`.
+
+2. **Register changes.** After each instruction, only the registers that
+   *changed* are printed, indented, so the trace stays readable:
+
+   ```
+         ACC = 7777 7777 7777 7777
+         M1 = 34412
+         RAU = 10
+   ```
+
+   All CPU state is covered, including supervisor-only registers and the page
+   table: `ACC`, `RMR`, `RAU`, `RUU`, the whole `M0`…`M35` file (index registers
+   plus `MOD`/`PSW`/`SPSW`/… ), the interrupt registers `GRP`/`MGRP` and
+   `PRP`/`MPRP`, the mapping registers `RP0`…`RP7`, and the protection register
+   `RZ`. The very first trace line dumps every register as the initial state.
+   (The left/right half-word bit of `RUU` is *not* reported as a change, since it
+   flips every instruction and is already shown by the `L`/`R` marker.)
+
+3. **Memory read/write.** Operand loads and stores show the address and 48-bit
+   value:
+
+   ```
+         Memory Read [34412] = 7777 7777 7777 7777
+         Memory Write [77766] = 0000 0000 0000 0000
+   ```
+
+   Instruction *fetches* are deliberately not traced (they would double every
+   line); only operand accesses appear.
+
+4. **Exceptions and interrupts.** Internal faults and external interrupts are
+   flagged on their own line, with the address and the reason:
+
+   ```
+   ----- 00500L: Запрещенная команда -----
+   ```
+
+Put together, a short fragment reads:
+
+```
+32012 R: 00 100 7766 зп -12
+      Memory Write [77766] = 0000 0000 0000 0000
+32013 L: 00 037 0000 ржа
+      RAU = 00
+```
+
+The trace can be very large — thousands of lines per millisecond of simulated
+time — so enable it around a bounded `step`/`go`, or combine it with a
+breakpoint, rather than over a whole DISPAK boot. `set cpu nodebug` turns it off.
+
 ### Breakpoints and watchpoints
 
 ```
