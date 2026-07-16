@@ -412,6 +412,7 @@ t_stat cpu_reset (DEVICE *dptr)
     sim_brk_types = SWMASK ('E') | SWMASK('R') | SWMASK('W');
     sim_brk_dflt = SWMASK ('E');
 
+    besm6_trace_reset ();       /* full register dump on first trace */
     besm6_draw_panel(1);
 
     return SCPE_OK;
@@ -1044,16 +1045,9 @@ void cpu_one_inst ()
       if (reg) besm6_log_cont("_(M%o)", reg);
       besm6_log("_");
     }
-    if (sim_deb && cpu_dev.dctrl && !IS_SUPERVISOR(RUU)) {
-        fprintf (sim_deb, "*** %05o%s: ", PC,
-                 (RUU & RUU_RIGHT_INSTR) ? "п" : "л");
-        besm6_fprint_cmd (sim_deb, RK);
-        fprintf (sim_deb, "\tСМ=");
-        fprint_sym (sim_deb, 0, &ACC, 0, 0);
-        fprintf (sim_deb, "\tРАУ=%02o", RAU);
-        if (reg)
-            fprintf (sim_deb, "\tМ[%o]=%05o", reg, M[reg]);
-        fprintf (sim_deb, "\n");
+    if (sim_deb && cpu_dev.dctrl) {
+        /* Trace this instruction: address, octal fields and mnemonics. */
+        besm6_trace_instruction ();
     }
     nextpc = ADDR(PC + 1);
     if (RUU & RUU_RIGHT_INSTR) {
@@ -1750,6 +1744,8 @@ void op_int_1 (const char *msg)
 void op_int_2 ()
 {
     /*besm6_okno ("Внешнее прерывание");*/
+    if (sim_deb && cpu_dev.dctrl)
+        besm6_trace_exception ("external interrupt");
     M[SPSW] = (M[PSW] & (PSW_INTR_DISABLE | PSW_MMAP_DISABLE |
                          PSW_PROT_DISABLE)) | IS_SUPERVISOR (RUU);
     M[IRET] = PC;
@@ -1779,13 +1775,11 @@ t_stat sim_instr (void)
     r = setjmp (cpu_halt);
     if (r) {
         M[017] += corr_stack;
-        if (cpu_dev.dctrl) {
+        if (sim_deb && cpu_dev.dctrl) {
             const char *message = (r >= SCPE_BASE) ?
                 sim_error_text (r) :
                 sim_stop_messages [r];
-            besm6_debug ("/// %05o%s: %s", PC,
-                         (RUU & RUU_RIGHT_INSTR) ? "п" : "л",
-                         message);
+            besm6_trace_exception (message);
         }
 
         /*
@@ -1971,6 +1965,8 @@ t_stat sim_instr (void)
             op_int_2();
         }
         cpu_one_inst ();                        /* one instr */
+        if (sim_deb && cpu_dev.dctrl)
+            besm6_trace_registers ();           /* show changed registers */
         iintr = 0;
 
         sim_interval -= 1;                      /* count down instructions */

@@ -132,7 +132,7 @@ extern t_value memory [MEMSIZE];
 extern t_value pult [11][8];
 extern unsigned pult_packet_switch; /* selector of hardwired programs */
 
-extern uint32 PC, RAU, RUU;
+extern uint32 PC, RK, Aex, RAU, RUU;
 extern uint32 M[NREGS];
 extern t_value BRZ[8], RP[8], GRP, MGRP;
 extern uint32 PRP, MPRP;
@@ -393,9 +393,19 @@ int pi_read (int num);
  * Отладочная выдача.
  */
 void besm6_fprint_cmd (FILE *of, uint32 cmd);
+void besm6_fprint_insn (FILE *of, uint32 insn);
 void besm6_log (const char *fmt, ...);
 void besm6_log_cont (const char *fmt, ...);
 void besm6_debug (const char *fmt, ...);
+
+/*
+ * Instruction and register tracing (besm6_trace.c), gated by cpu_dev.dctrl.
+ */
+void besm6_trace_reset (void);
+void besm6_trace_instruction (void);
+void besm6_trace_registers (void);
+void besm6_trace_memory (int addr, t_value val, const char *opname);
+void besm6_trace_exception (const char *message);
 t_stat fprint_sym (FILE *of, t_addr addr, t_value *val,
                    UNIT *uptr, int32 sw);
 void besm6_draw_panel (int force);

@@ -404,6 +404,8 @@ void mmu_store (int addr, t_value val)
     addr &= BITS(15);
     if (addr == 0)
         return;
+    if (sim_deb && cpu_dev.dctrl)
+        besm6_trace_memory (addr, val, "Write");
     if (sim_log && mmu_dev.dctrl) {
         fprintf (sim_log, "--- (%05o) запись ", addr);
         fprint_sym (sim_log, 0, &val, 0, 0);
@@ -520,7 +522,10 @@ t_value mmu_load (int addr)
         longjmp(cpu_halt, STOP_RWATCH);
 
     if (!(mmu_unit.flags & CACHE_ENB)) {
-        return mmu_memaccess (addr) & BITS48;
+        val = mmu_memaccess (addr) & BITS48;
+        if (sim_deb && cpu_dev.dctrl)
+            besm6_trace_memory (addr, val, "Read");
+        return val;
     }
 
     matching = mmu_match(addr, -1);
@@ -545,6 +550,8 @@ t_value mmu_load (int addr)
             longjmp (cpu_halt, STOP_CACHE_CHECK);
         }
     }
+    if (sim_deb && cpu_dev.dctrl)
+        besm6_trace_memory (addr, val & BITS48, "Read");
     return val & BITS48;
 }
 
