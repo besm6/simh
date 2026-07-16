@@ -666,6 +666,54 @@ static t_value freadw (FILE *f)
 #define AOUT_RELFLG     1                       /* fully linked, no relocation */
 
 /*
+ * Symbol-table entry fields (see v7besm cross/besm6/b.out.h).
+ * N_TEXT symbols are functions - the only ones we keep for tracing.
+ */
+#define AOUT_N_EXT      040                     /* external (global) bit */
+#define AOUT_N_TYPE     037                     /* mask for the type field */
+#define AOUT_N_TEXT     03                      /* text (code) segment */
+
+/*
+ * Extract the a.out symbol table into the tracer's symbol table.
+ * The file position is expected to sit at the symbol table (right after
+ * the data segment).  Reads at most a_syms bytes; each entry is a byte
+ * stream: 1-byte name length (0 terminates), 1-byte type, 3-byte
+ * big-endian word address, then the raw name.  Keeps only functions.
+ */
+static void besm6_load_symbols (FILE *input, int nbytes)
+{
+    char name [256];
+    int n_len, n_type, i, c;
+    uint32 n_value;
+
+    besm6_sym_clear ();
+    while (nbytes > 0) {
+        n_len = getc (input);
+        if (n_len <= 0)                         /* terminator or EOF */
+            break;
+        n_type = getc (input);
+        n_value = 0;
+        for (i = 0; i < 3; ++i) {
+            c = getc (input);
+            if (c == EOF)
+                return;
+            n_value = (n_value << 8) | (c & 0xff);
+        }
+        for (i = 0; i < n_len; ++i) {
+            c = getc (input);
+            if (c == EOF)
+                return;
+            name[i] = c;
+        }
+        name[n_len] = 0;
+        nbytes -= n_len + 5;
+        if ((n_type & AOUT_N_TYPE) == AOUT_N_TEXT)
+            besm6_sym_add (n_value, name);
+    }
+    besm6_sym_sort ();
+}
+
+/*
  * Load a binary a.out image: header, then the const/text/data segments.
  * The entry point (a_entry) becomes the start address.
  */
@@ -688,7 +736,6 @@ static t_stat besm6_load_aout (FILE *input)
         return SCPE_FMT;
     }
     (void) a_bss;
-    (void) a_syms;
 
     /* Only fully linked images (RELFLG set) can be loaded and run directly. */
     if (! (a_flag & AOUT_RELFLG)) {
@@ -727,6 +774,8 @@ static t_stat besm6_load_aout (FILE *input)
             return SCPE_FMT;
         memory [addr++] = SET_PARITY (word, PARITY_NUMBER);
     }
+    /* symbol table - function names for the call/return trace */
+    besm6_load_symbols (input, (int) a_syms);
     PC = (uint32) a_entry;
     return SCPE_OK;
 }
@@ -753,6 +802,8 @@ t_stat besm6_load (FILE *input)
     }
     rewind (input);
 
+    /* Textual .b6 image carries no symbols: drop any from a prior a.out. */
+    besm6_sym_clear ();
     addr = 1;
     PC = 1;
     for (;;) {

@@ -41,6 +41,89 @@ static t_value prev_RP[8];
 static uint32  prev_M[NREGS], prev_RAU, prev_RUU, prev_PRP, prev_MPRP, prev_RZ;
 
 /*
+ * Symbol table extracted from an a.out image: function names and their
+ * addresses, kept sorted by address so besm6_sym_find() can locate the
+ * function that contains a given PC (nearest preceding symbol).
+ */
+typedef struct {
+    uint32 addr;
+    char  *name;
+} besm6_symbol_t;
+
+static besm6_symbol_t *sym_table;
+static int sym_count, sym_alloc;
+
+/*
+ * Drop the current symbol table.  Called by the loader before parsing a
+ * new image; the table survives CPU reset so names persist across `run'.
+ */
+void besm6_sym_clear ()
+{
+    int i;
+
+    for (i = 0; i < sym_count; i++)
+        free (sym_table[i].name);
+    sym_count = 0;
+}
+
+/*
+ * Append one function symbol.  Names are copied; the array grows as needed.
+ */
+void besm6_sym_add (uint32 addr, const char *name)
+{
+    if (sym_count >= sym_alloc) {
+        sym_alloc = sym_alloc ? sym_alloc * 2 : 64;
+        sym_table = realloc (sym_table, sym_alloc * sizeof (sym_table[0]));
+    }
+    sym_table[sym_count].addr = addr;
+    sym_table[sym_count].name = strdup (name);
+    ++sym_count;
+}
+
+/*
+ * Order two symbols by address, for qsort().
+ */
+static int sym_compare (const void *a, const void *b)
+{
+    uint32 aa = ((const besm6_symbol_t *) a)->addr;
+    uint32 ba = ((const besm6_symbol_t *) b)->addr;
+
+    return (aa > ba) - (aa < ba);
+}
+
+/*
+ * Sort the table by address.  Called once, after the loader has added
+ * every symbol, so that besm6_sym_find() can binary-search it.
+ */
+void besm6_sym_sort ()
+{
+    qsort (sym_table, sym_count, sizeof (sym_table[0]), sym_compare);
+}
+
+/*
+ * Find the function containing the given address: the symbol with the
+ * largest address <= addr.  Sets *at_start when addr is exactly a function
+ * entry.  Returns the name, or NULL if no symbol precedes the address.
+ */
+const char *besm6_sym_find (uint32 addr, int *at_start)
+{
+    int lo = 0, hi = sym_count - 1, found = -1;
+
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (sym_table[mid].addr <= addr) {
+            found = mid;
+            lo = mid + 1;
+        } else
+            hi = mid - 1;
+    }
+    if (found < 0)
+        return 0;
+    *at_start = (addr == sym_table[found].addr);
+    return sym_table[found].name;
+}
+
+/*
  * Print a 48-bit word in octal, as four space-separated groups of four digits.
  */
 static void fprint_word_octal (FILE *of, t_value val)
@@ -198,4 +281,21 @@ void besm6_trace_exception (const char *message)
 {
     fprintf (sim_deb, "----- %05o%c: %s -----\n", PC,
              (RUU & RUU_RIGHT_INSTR) ? 'R' : 'L', message);
+}
+
+/*
+ * Print a separator line naming the function at the new PC, after a call
+ * (пв/vjm) or a register return (пб/uj through a saved link).  When the PC
+ * is not exactly a function entry - i.e. a return landing in the middle of
+ * the caller - the name is prefixed with "back to".
+ */
+void besm6_trace_call_return ()
+{
+    int at_start = 0;
+    const char *name = besm6_sym_find (PC, &at_start);
+
+    fprintf (sim_deb, "--------------------------------------------------");
+    if (name)
+        fprintf (sim_deb, at_start ? " %s" : " back to %s", name);
+    fprintf (sim_deb, "\n");
 }

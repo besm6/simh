@@ -406,6 +406,16 @@ void besm6_trace_instruction (void);
 void besm6_trace_registers (void);
 void besm6_trace_memory (int addr, t_value val, const char *opname);
 void besm6_trace_exception (const char *message);
+void besm6_trace_call_return (void);
+
+/*
+ * Symbol table extracted from an a.out image (besm6_trace.c),
+ * mapping function addresses to names for the call/return trace.
+ */
+void besm6_sym_clear (void);
+void besm6_sym_add (uint32 addr, const char *name);
+void besm6_sym_sort (void);
+const char *besm6_sym_find (uint32 addr, int *at_start);
 t_stat fprint_sym (FILE *of, t_addr addr, t_value *val,
                    UNIT *uptr, int32 sw);
 void besm6_draw_panel (int force);

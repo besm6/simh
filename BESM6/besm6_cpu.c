@@ -1610,6 +1610,9 @@ void cpu_one_inst ()
         }
         PC = Aex;
         RUU &= ~RUU_RIGHT_INSTR;
+        /* uj through a saved link register (reg, 0) is a subroutine return. */
+        if (reg != 0 && addr == 0 && sim_deb && cpu_dev.dctrl)
+            besm6_trace_call_return ();
         delay = 7;
         break;
     case 0310:                                      /* пв, vjm */
@@ -1626,6 +1629,9 @@ void cpu_one_inst ()
         }
         PC = addr;
         RUU &= ~RUU_RIGHT_INSTR;
+        /* пв/vjm is a subroutine call: name the function at the target. */
+        if (sim_deb && cpu_dev.dctrl)
+            besm6_trace_call_return ();
         delay = 7;
         break;
     case 0320:                                      /* выпр, iret */
