@@ -76,7 +76,7 @@ static const char *opname_long_madlen [16] = {
  */
 const char *besm6_opname (int opcode)
 {
-    if (sim_switches & SWMASK ('L')) {
+    if (besm6_latin || (sim_switches & SWMASK ('L'))) {
         /* Latin mnemonics. */
         if (opcode & 0200)
             return opname_long_madlen [(opcode >> 3) & 017];

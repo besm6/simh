@@ -394,6 +394,7 @@ int pi_read (int num);
  */
 void besm6_fprint_cmd (FILE *of, uint32 cmd);
 void besm6_fprint_insn (FILE *of, uint32 insn);
+extern int besm6_latin;
 void besm6_log (const char *fmt, ...);
 void besm6_log_cont (const char *fmt, ...);
 void besm6_debug (const char *fmt, ...);

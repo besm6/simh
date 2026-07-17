@@ -80,6 +80,7 @@ t_uint64 touched[256][1 << (24-6)];
 int corr_stack;
 int redraw_panel;
 int autotime;
+int besm6_latin;        /* persistent Latin (MADLEN) mnemonic mode */
 jmp_buf cpu_halt;
 
 t_stat cpu_examine (t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
@@ -90,6 +91,9 @@ t_stat cpu_set_pult (UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_pult (FILE *st, UNIT *up, int32 v, CONST void *dp);
 t_stat cpu_set_autotime (UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_autotime (FILE *st, UNIT *up, int32 v, CONST void *dp);
+t_stat cpu_set_latin (UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_clr_latin (UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_show_latin (FILE *st, UNIT *up, int32 v, CONST void *dp);
 
 
 /*
@@ -164,6 +168,12 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV|MTAB_VALO,
         0, "PULT",  "PULT",     &cpu_set_pult,      &cpu_show_pult,     NULL,
                                 "Selects a hardwired program or switch reg." },
+    { MTAB_XTD|MTAB_VDV,
+        0, "LATIN", "LATIN",   &cpu_set_latin,  &cpu_show_latin,  NULL,
+                                "Use Latin (MADLEN) instruction mnemonics" },
+    { MTAB_XTD|MTAB_VDV,
+        0, NULL,    "NOLATIN", &cpu_clr_latin,  NULL,             NULL,
+                                "Use Cyrillic (BEMSH) instruction mnemonics" },
     { 0 }
 };
 
@@ -951,6 +961,24 @@ t_stat cpu_set_autotime (UNIT *u, int32 val, CONST char *cptr, void *desc)
 t_stat cpu_show_autotime (FILE *st, UNIT *up, int32 v, CONST void *dp)
 {
     fprintf(st, "Automatic setup is %s", autotime ? "enabled" : "disabled");
+    return SCPE_OK;
+}
+
+t_stat cpu_set_latin (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    besm6_latin = 1;
+    return SCPE_OK;
+}
+
+t_stat cpu_clr_latin (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    besm6_latin = 0;
+    return SCPE_OK;
+}
+
+t_stat cpu_show_latin (FILE *st, UNIT *up, int32 v, CONST void *dp)
+{
+    fprintf (st, "%s mnemonics", besm6_latin ? "Latin" : "Cyrillic");
     return SCPE_OK;
 }
 
