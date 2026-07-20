@@ -134,10 +134,10 @@ void printer_control (int num, uint32 cmd)
     struct acpu_t * dev = acpu + num;
 
     if (printer_dev.dctrl)
-        besm6_debug(">>> АЦПУ%d команда %o", num, cmd);
+        besm6_debug(">>> printer%d command %o", num, cmd);
     if (READY & (PRN1_NOT_READY >> num)) {
         if (printer_dev.dctrl)
-            besm6_debug(">>> АЦПУ%d не готово", num);
+            besm6_debug(">>> printer%d not ready", num);
         return;
     }
     switch (cmd) {
@@ -211,7 +211,7 @@ t_stat printer_event (UNIT *u)
         dev->curchar = 0;
         GRP |= GRP_PRN1_ZERO >> num;
         if (printer_dev.dctrl)
-            besm6_debug(">>> АЦПУ%d 'ноль'", num);
+            besm6_debug(">>> printer%d 'zero'", num);
         /* For first sync after "zero" */
         sim_activate (u, 1000*USEC);
     }

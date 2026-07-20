@@ -931,10 +931,10 @@ sim> run 1
 which prints the decoded exchange:
 
 ```
-### чтение МБ 10 зона 05 память 04000-05777
+### read drum 10 zone 05 mem 04000-05777
 ```
 
-— "чтение" (read) from drum 1 unit 0, zone `05`, into words `04000`–`05777`, matching the control
+— a read from drum 1 unit 0, zone `05`, into words `04000`–`05777`, matching the control
 word field by field.
 
 ---

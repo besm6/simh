@@ -152,10 +152,10 @@ void fs_control (int num, uint32 cmd)
 
     static int bytecnt = 0;
     if (fs_dev.dctrl)
-        besm6_debug("<<< ФС1500-%d команда %o", num, cmd);
+        besm6_debug("<<< punch%d command %o", num, cmd);
     if (! IS_RDY(FS1_READY >> num)) {
         if (fs_dev.dctrl)
-            besm6_debug("<<< ФС1500-%d не готово", num);
+            besm6_debug("<<< punch%d not ready", num);
         return;
     }
     switch (cmd) {
@@ -163,18 +163,18 @@ void fs_control (int num, uint32 cmd)
         sim_cancel (u);
         fs_state[num] = FS_IDLE;
         if (fs_dev.dctrl)
-            besm6_debug("<<<ФС1500-%d ВЫКЛ..", num);
+            besm6_debug("<<<punch%d OFF", num);
         bytecnt = 0;
         break;
     case 4:         /* двигатель без протяжки */
         fs_state[num] = FS_STARTING;
         if (fs_dev.dctrl)
-            besm6_debug("<<<ФС1500-%d ВКЛ.", num);
+            besm6_debug("<<<punch%d ON", num);
         sim_cancel (u);
         break;
     case 5:         /* протяжка */
         if (fs_state[num] == FS_IDLE)
-            besm6_debug("<<< ФС1500-%d протяжка без мотора", num);
+            besm6_debug("<<< punch%d feed with motor off", num);
         else if (fs_state[num] != FS_TAIL) {
             sim_activate (u, FS_RATE);
             bytecnt++;
@@ -186,10 +186,10 @@ void fs_control (int num, uint32 cmd)
         }
         break;
     default:
-        besm6_debug ("<<< ФС1500-%d неизвестная команда %o", num, cmd);
+        besm6_debug ("<<< punch%d unknown command %o", num, cmd);
     }
     if (cmd && fs_dev.dctrl) {
-        besm6_debug("<<<ФС1500-%d: %d симв.", num, bytecnt);
+        besm6_debug("<<<punch%d: %d chars", num, bytecnt);
     }
 }
 
@@ -296,7 +296,7 @@ t_stat fs_event (UNIT *u)
 
 int fs_read(int num) {
     if (fs_dev.dctrl)
-        besm6_debug("<<< ФС1500-%d: байт %03o", num, FS[num]);
+        besm6_debug("<<< punch%d: byte %03o", num, FS[num]);
 
     return FS[num];
 }

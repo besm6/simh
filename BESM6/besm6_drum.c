@@ -149,13 +149,13 @@ static void log_io (UNIT *u)
     data = &memory [drum_memory];
     sysdata = (u == &drum_unit[0]) ? &memory [010] : &memory [020];
     if (drum_nwords == 1024) {
-        fprintf (sim_log, "=== зона МБ %d.%03o:",
+        fprintf (sim_log, "=== drum zone %d.%03o:",
                  (u == &drum_unit[0]) ? 1 : 2, drum_zone);
         for (i=0; i<8; ++i)
             print_word (sysdata[i]);
     } else {
         sysdata += drum_sector*2;
-        fprintf (sim_log, "=== сектор МБ %d.%03o.%o:",
+        fprintf (sim_log, "=== drum sector %d.%03o.%o:",
                  (u == &drum_unit[0]) ? 1 : 2,
                  drum_zone, drum_sector);
         for (i=0; i<2; ++i)
@@ -280,8 +280,8 @@ void drum (int ctlr, uint32 cmd)
         drum_sector = 0;
         drum_memory = (cmd & DRUM_PAGE) >> 2 | (cmd & DRUM_BLOCK) >> 8;
         if (drum_dev.dctrl)
-            besm6_debug ("### %s МБ %c%d зона %02o память %05o-%05o",
-                         (drum_op & DRUM_READ) ? "чтение" : "запись",
+            besm6_debug ("### %s drum %c%d zone %02o mem %05o-%05o",
+                         (drum_op & DRUM_READ) ? "read" : "write",
                          ctlr + '1', (drum_zone >> 5 & 7), drum_zone & 037,
                          drum_memory, drum_memory + drum_nwords - 1);
         if (drum_op & DRUM_READ) {
@@ -296,8 +296,8 @@ void drum (int ctlr, uint32 cmd)
         drum_sector = cmd & DRUM_SECTOR;
         drum_memory = (cmd & (DRUM_PAGE | DRUM_PARAGRAF)) >> 2 | (cmd & DRUM_BLOCK) >> 8;
         if (drum_dev.dctrl)
-            besm6_debug ("### %s МБ %c%d зона %02o сектор %d память %05o-%05o",
-                         (drum_op & DRUM_READ) ? "чтение" : "запись",
+            besm6_debug ("### %s drum %c%d zone %02o sector %d mem %05o-%05o",
+                         (drum_op & DRUM_READ) ? "read" : "write",
                          ctlr + '1', (drum_zone >> 5 & 7), drum_zone & 037,
                          drum_sector & 3,
                          drum_memory, drum_memory + drum_nwords - 1);
@@ -325,7 +325,7 @@ void drum (int ctlr, uint32 cmd)
             drum_read_sector (u);
     } else {
         if (drum_op & DRUM_PARITY_FLAG) {
-            besm6_log ("### запись МБ с неправильной чётностью не реализована");
+            besm6_log ("### drum write with bad parity not implemented");
             longjmp (cpu_halt, SCPE_NOFNC);
         }
         if (u->flags & UNIT_RO) {

@@ -302,7 +302,7 @@ void mmu_protection_check (int addr)
     if (! tmp_prot_disabled && (RZ & (1 << (addr >> 10)))) {
         iintr_data = addr >> 10;
         if (mmu_dev.dctrl)
-            besm6_debug ("--- (%05o) защита числа", addr);
+            besm6_debug ("--- (%05o) operand protection", addr);
         longjmp (cpu_halt, STOP_OPERAND_PROT);
     }
 }
@@ -321,9 +321,9 @@ void mmu_flush (int idx)
     memory[waddr] = BRZ[idx];
     BAZ[idx] = 0;
     if (sim_log && mmu_dev.dctrl) {
-        fprintf (sim_log, "--- (%05o) запись ", waddr);
+        fprintf (sim_log, "--- (%05o) write ", waddr);
         fprint_sym (sim_log, 0, &BRZ[idx], 0, 0);
-        fprintf (sim_log, " из БРЗ[%d]\n", idx);
+        fprintf (sim_log, " from write cache[%d]\n", idx);
     }
 }
 
@@ -407,7 +407,7 @@ void mmu_store (int addr, t_value val)
     if (sim_deb && cpu_dev.dctrl)
         besm6_trace_memory (addr, val, "Write");
     if (sim_log && mmu_dev.dctrl) {
-        fprintf (sim_log, "--- (%05o) запись ", addr);
+        fprintf (sim_log, "--- (%05o) write ", addr);
         fprint_sym (sim_log, 0, &val, 0, 0);
         fprintf (sim_log, "\n");
     }
@@ -471,7 +471,7 @@ t_value mmu_memaccess (int addr)
     } else {
         /* С тумблерных регистров */
         if (mmu_dev.dctrl)
-            besm6_debug("--- (%05o) чтение ТР%o", PC, addr);
+            besm6_debug("--- (%05o) read TR%o", PC, addr);
         if ((pult[pult_packet_switch][0] >> addr) & 1) {
             /* hardwired */
             val = pult[pult_packet_switch][addr];
@@ -481,7 +481,7 @@ t_value mmu_memaccess (int addr)
         }
     }
     if (sim_log && (mmu_dev.dctrl || (cpu_dev.dctrl && sim_deb))) {
-        fprintf (sim_log, "--- (%05o) чтение ", addr & BITS(15));
+        fprintf (sim_log, "--- (%05o) read ", addr & BITS(15));
         fprint_sym (sim_log, 0, &val, 0, 0);
         fprintf (sim_log, "\n");
     }
@@ -489,7 +489,7 @@ t_value mmu_memaccess (int addr)
     /* На тумблерных регистрах контроля числа не бывает */
     if (addr >= 010 && ! IS_NUMBER (val) && (mmu_unit.flags & CHECK_ENB)) {
         iintr_data = addr & 7;
-        besm6_debug ("--- (%05o) контроль числа", addr);
+        besm6_debug ("--- (%05o) operand parity error", addr);
         longjmp (cpu_halt, STOP_RAM_CHECK);
     }
     return val;
@@ -540,13 +540,13 @@ t_value mmu_load (int addr)
             set_wins (matching);
         val = BRZ[matching];
         if (sim_log && (mmu_dev.dctrl || (cpu_dev.dctrl && sim_deb))) {
-            fprintf (sim_log, "--- (%05o) чтение ", addr & BITS(15));
+            fprintf (sim_log, "--- (%05o) read ", addr & BITS(15));
             fprint_sym (sim_log, 0, &val, 0, 0);
-            fprintf (sim_log, " из БРЗ\n");
+            fprintf (sim_log, " from write cache\n");
         }
         if (! IS_NUMBER (val)) {
             iintr_data = matching;
-            besm6_debug ("--- (%05o) контроль числа БРЗ", addr);
+            besm6_debug ("--- (%05o) write cache parity error", addr);
             longjmp (cpu_halt, STOP_CACHE_CHECK);
         }
     }
@@ -596,7 +596,7 @@ void mmu_fetch_check (int addr)
         if (page == 0) {
             iintr_data = addr >> 10;
             if (mmu_dev.dctrl)
-                besm6_debug ("--- (%05o) защита команды", addr);
+                besm6_debug ("--- (%05o) instruction protection", addr);
             longjmp (cpu_halt, STOP_INSN_PROT);
         }
     }
@@ -668,7 +668,7 @@ t_value mmu_fetch (int addr)
 
     if (addr == 0) {
         if (mmu_dev.dctrl)
-            besm6_debug ("--- передача управления на 0");
+            besm6_debug ("--- transfer of control to 0");
         longjmp (cpu_halt, STOP_INSN_CHECK);
     }
 
@@ -685,14 +685,14 @@ t_value mmu_fetch (int addr)
     val = mmu_prefetch(addr, 1);
 
     if (sim_log && mmu_dev.dctrl) {
-        fprintf (sim_log, "--- (%05o) выборка ", addr);
+        fprintf (sim_log, "--- (%05o) fetch ", addr);
         fprint_sym (sim_log, 0, &val, 0, SWMASK ('I'));
         fprintf (sim_log, "\n");
     }
 
     /* Тумблерные регистры пока только с командной сверткой */
     if (addr >= 010 && ! IS_INSN (val)) {
-        besm6_debug ("--- (%05o) контроль команды", addr);
+        besm6_debug ("--- (%05o) instruction parity error", addr);
         longjmp (cpu_halt, STOP_INSN_CHECK);
     }
     return val & BITS48;
@@ -764,7 +764,7 @@ void mmu_print_brz ()
     int i, k;
 
     for (i=7; i>=0; --i) {
-        besm6_log_cont ("БРЗ [%d] = '", i);
+        besm6_log_cont ("write cache [%d] = '", i);
         for (k=47; k>=0; --k)
             besm6_log_cont ("%c", (BRZ[i] >> k & 1) ? '*' : ' ');
         besm6_log ("'");

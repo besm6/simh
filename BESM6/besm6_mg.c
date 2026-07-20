@@ -654,7 +654,7 @@ int mg_errors ()
 {
 #if 0
     if (mg_dev[0].dctrl)
-        sim_printf ("::: КМД: опрос шкалы ошибок = %04o\n", mg_fail);
+        sim_printf ("::: tape ctlr: poll error register = %04o\n", mg_fail);
 #endif
     return mg_fail;
 }

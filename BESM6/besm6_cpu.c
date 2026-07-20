@@ -501,7 +501,7 @@ void besm6_okno (const char *message)
     besm6_log ("_");
 
     /* СчАС, системные индекс-регистры 020-035. */
-    besm6_log ("_    СчАС:%05o  20:%05o  21:%05o  27:%05o  32:%05o  33:%05o  34:%05o  35:%05o",
+    besm6_log ("_      PC:%05o  20:%05o  21:%05o  27:%05o  32:%05o  33:%05o  34:%05o  35:%05o",
                PC, M[020], M[021], M[027], M[032], M[033], M[034], M[035]);
     /* Индекс-регистры 1-7. */
     besm6_log ("_       1:%05o   2:%05o   3:%05o   4:%05o   5:%05o   6:%05o   7:%05o",
@@ -510,7 +510,7 @@ void besm6_okno (const char *message)
     besm6_log ("_      10:%05o  11:%05o  12:%05o  13:%05o  14:%05o  15:%05o  16:%05o  17:%05o",
                M[010], M[011], M[012], M[013], M[014], M[015], M[016], M[017]);
     /* Сумматор, РМР, режимы АУ и УУ. */
-    besm6_log ("_      СМ:%04o %04o %04o %04o  РМР:%04o %04o %04o %04o  РАУ:%02o    РУУ:%03o",
+    besm6_log ("_     ACC:%04o %04o %04o %04o  RMR:%04o %04o %04o %04o  RAU:%02o    RUU:%03o",
                (int) (ACC >> 36) & BITS(12), (int) (ACC >> 24) & BITS(12),
                (int) (ACC >> 12) & BITS(12), (int) ACC & BITS(12),
                (int) (RMR >> 36) & BITS(12), (int) (RMR >> 24) & BITS(12),
@@ -524,7 +524,7 @@ void besm6_okno (const char *message)
 static void cmd_002 ()
 {
 #if 0
-    besm6_debug ("*** рег %03o", Aex & 0377);
+    besm6_debug ("*** reg %03o", Aex & 0377);
 #endif
     switch (Aex & 0377) {
     case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7:
@@ -585,8 +585,8 @@ static void cmd_002 ()
             longjmp (cpu_halt, STOP_UNIMPLEMENTED);
         }
         /* Неиспользуемые адреса */
-        besm6_debug ("*** %05o%s: РЕГ %o - неправильный адрес спец.регистра",
-                     PC, (RUU & RUU_RIGHT_INSTR) ? "п" : "л", Aex);
+        besm6_debug ("*** %05o%s: REG %o - invalid special register address",
+                     PC, (RUU & RUU_RIGHT_INSTR) ? "R" : "L", Aex);
         break;
     }
 }
@@ -610,7 +610,7 @@ static uint32 totreads, totwrites;
 static uint32 readmap[32768], writemap[32768];
 #if 1
     if (Aex & ~04177)
-    besm6_debug ("*** @%05o, увв %05o, СМ[24:1]=%08o",
+    besm6_debug ("*** @%05o, ext %05o, ACC[24:1]=%08o",
                  PC, Aex, (uint32) ACC & BITS(24));
 #endif
     switch (Aex & 04177) {
@@ -653,13 +653,13 @@ static uint32 readmap[32768], writemap[32768];
         break;
     case 030:
         /* Гашение ПРП */
-/*              besm6_debug(">>> гашение ПРП");*/
+/*              besm6_debug(">>> clear PRP");*/
         PRP &= ACC | PRP_WIRED_BITS;
         break;
     case 031:
         /* Имитация сигналов прерывания ГРП */
-        /*besm6_debug ("*** %05o%s: имитация прерываний ГРП %016llo",
-          PC, (RUU & RUU_RIGHT_INSTR) ? "п" : "л", ACC << 24);*/
+        /*besm6_debug ("*** %05o%s: simulated interrupts GRP %016llo",
+          PC, (RUU & RUU_RIGHT_INSTR) ? "R" : "L", ACC << 24);*/
         GRP |= (ACC & BITS(24)) << 24;
         break;
     case 032: case 033:
@@ -668,7 +668,7 @@ static uint32 readmap[32768], writemap[32768];
         break;
     case 034:
         /* Запись в МПРП */
-/*              besm6_debug(">>> запись в МПРП");*/
+/*              besm6_debug(">>> write to MPRP");*/
         MPRP = ACC & 077777777;
 	// besm6_debug("MPRP = %016llo", MPRP);
         break;
@@ -749,7 +749,7 @@ static uint32 readmap[32768], writemap[32768];
         /* управление табло ГПВЦ СО АН СССР */
 	if (tableau != ((uint32) ACC & BITS(24))) {
 	  tableau = (uint32) ACC & BITS(24);
-          // besm6_debug(">>> ТАБЛО: %08o", tableau);
+          // besm6_debug(">>> PANEL: %08o", tableau);
         }
         break;
     case 04001: case 04002:
@@ -868,8 +868,8 @@ static uint32 readmap[32768], writemap[32768];
         } else {
             /* Неиспользуемые адреса */
 /*              if (sim_deb && cpu_dev.dctrl)*/
-            besm6_debug ("*** %05o%s: УВВ %o - неправильный адрес ввода-вывода",
-                         PC, (RUU & RUU_RIGHT_INSTR) ? "п" : "л", Aex);
+            besm6_debug ("*** %05o%s: EXT %o - invalid I/O address",
+                         PC, (RUU & RUU_RIGHT_INSTR) ? "R" : "L", Aex);
             ACC = 0;
         }
     } break;
@@ -1519,14 +1519,14 @@ void cpu_one_inst ()
                  * Пропускаем э75, их обычно слишком много. */
                 t_value word = mmu_load (Aex);
                 fprintf (sim_log, "*** %05o%s: ", PC,
-                         (RUU & RUU_RIGHT_INSTR) ? "п" : "л");
+                         (RUU & RUU_RIGHT_INSTR) ? "R" : "L");
                 besm6_fprint_cmd (sim_log, RK);
-                fprintf (sim_log, "\tАисп=%05o (=", Aex);
+                fprintf (sim_log, "\tAex=%05o (=", Aex);
                 fprint_sym (sim_log, 0, &word, 0, 0);
-                fprintf (sim_log, ")  СМ=");
+                fprintf (sim_log, ")  ACC=");
                 fprint_sym (sim_log, 0, &ACC, 0, 0);
                 if (reg)
-                    fprintf (sim_log, "  М[%o]=%05o", reg, M[reg]);
+                    fprintf (sim_log, "  M[%o]=%05o", reg, M[reg]);
                 fprintf (sim_log, "\n");
             }
             /*besm6_okno ("экстракод");*/

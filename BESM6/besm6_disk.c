@@ -470,7 +470,7 @@ void disk_write (UNIT *u)
     KMD *c = unit_to_ctlr (u);
     int cnum = c - controller;
     if (u->dptr->dctrl & DEB_DAT)
-        besm6_debug ("::: запись МД %02o зона %04o память %05o-%05o",
+        besm6_debug ("::: disk %02o write zone %04o mem %05o-%05o",
                      c->dev, c->zone, c->memory, c->memory + 1023);
     if (fseek (u->fileref, ZONE_SIZE * c->zone * 8, SEEK_SET) == 0) {
         sim_fwrite (c->sysdata, 8, 8, u->fileref);
@@ -492,7 +492,7 @@ void disk_write_track (UNIT *u)
     KMD *c = unit_to_ctlr (u);
     int cnum = c - controller;
     if (u->dptr->dctrl & DEB_DAT)
-        besm6_debug ("::: запись МД %02o полузона %04o.%d память %05o-%05o",
+        besm6_debug ("::: disk %02o write half-zone %04o.%d mem %05o-%05o",
                      c->dev, c->zone, c->track, c->memory, c->memory + 511);
     if (fseek (u->fileref, (ZONE_SIZE*c->zone + 4*c->track) * 8,
                SEEK_SET) == 0) {
@@ -540,12 +540,12 @@ void disk_format (UNIT *u)
     /* Печатаем идентификатор, адрес и контрольную сумму адреса. */
     if (u->dptr->dctrl & DEB_TRC) {
         if (IS_29MB(u))
-            besm6_debug ("::: формат МД %02o зона %04o память %05o skip %02o и-а-кса %010o %010o",
+            besm6_debug ("::: disk %02o format zone %04o mem %05o skip %02o hdr %010o %010o",
                          c->dev, c->zone, c->memory, ptr - memory -c ->memory,
                          (int) (fmtbuf[0] >> 8 & BITS(30)),
                          (int) (fmtbuf[2] >> 14 & BITS(30)));
         else
-            besm6_debug ("::: формат МД %02o полузона %04o.%d память %05o skip %02o и-а-кса %010o %010o",
+            besm6_debug ("::: disk %02o format half-zone %04o.%d mem %05o skip %02o hdr %010o %010o",
                          c->dev, c->zone, c->track, c->memory, (uint32) (ptr - memory -c ->memory),
                          (int) (fmtbuf[0] >> 8 & BITS(30)),
                          (int) (fmtbuf[2] >> 14 & BITS(30)));
@@ -561,8 +561,8 @@ void disk_read (UNIT *u)
     int cnum = c - controller;
     if (u->dptr->dctrl & DEB_DAT)
         besm6_debug ((c->op & DISK_READ_SYSDATA) ?
-                     "::: чтение МД %02o зона %04o служебные слова" :
-                     "::: чтение МД %02o зона %04o память %05o-%05o",
+                     "::: disk %02o read zone %04o system words" :
+                     "::: disk %02o read zone %04o mem %05o-%05o",
                      c->dev, c->zone, c->memory, c->memory + 1023);
     if (fseek (u->fileref, ZONE_SIZE * c->zone * 8, SEEK_SET) != 0 ||
         sim_fread (c->sysdata, 8, 8, u->fileref) != 8) {
@@ -605,8 +605,8 @@ void disk_read_track (UNIT *u)
     int cnum = c - controller;
     if (u->dptr->dctrl & DEB_DAT)
         besm6_debug ((c->op & DISK_READ_SYSDATA) ?
-                     "::: чтение МД %02o полузона %04o.%d служебные слова" :
-                     "::: чтение МД %02o полузона %04o.%d память %05o-%05o",
+                     "::: disk %02o read half-zone %04o.%d system words" :
+                     "::: disk %02o read half-zone %04o.%d mem %05o-%05o",
                      c->dev, c->zone, c->track, c->memory, c->memory + 511);
     if (fseek (u->fileref, (ZONE_SIZE*c->zone + 4*c->track) * 8, SEEK_SET) != 0 ||
         sim_fread (c->sysdata + 4*c->track, 8, 4, u->fileref) != 4) {
@@ -686,7 +686,7 @@ void disk_io (int ctlr, uint32 cmd)
     int cnum = c - controller;
     uint32 rem = cmd & ~(DISK_PAGE_MODE | DISK_PAGE | DISK_BLOCK | DISK_READ | DISK_READ_SYSDATA);
     if (rem && md_dev[ctlr * 4].dctrl & DEB_RWR) {
-        besm6_debug ("::: КМД %c: unknown bits in IO request %08o", ctlr + '3', rem);
+        besm6_debug ("::: disk ctlr %c: unknown bits in IO request %08o", ctlr + '3', rem);
     }
     c->op = cmd;
     c->format = 0;
@@ -698,8 +698,8 @@ void disk_io (int ctlr, uint32 cmd)
         c->memory = (cmd & (DISK_PAGE | DISK_HALFPAGE)) >> 2 | (cmd & DISK_BLOCK) >> 8;
     }
     if (md_dev[ctlr * 4].dctrl & DEB_RWR)
-        besm6_debug ("::: КМД %c: задание на %s %08o RAM @%05o", ctlr + '3',
-                     (c->op & DISK_READ) ? "чтение" : "запись", cmd, c->memory);
+        besm6_debug ("::: disk ctlr %c: request to %s %08o RAM @%05o", ctlr + '3',
+                     (c->op & DISK_READ) ? "read" : "write", cmd, c->memory);
     disk_fail &= ~c->mask_fail;
 
     /* Гасим главный регистр прерываний. */
@@ -722,7 +722,7 @@ void disk_ctl (int ctlr, uint32 cmd)
     UNIT *u = c->dev < 0 ? &md_unit[0] : &md_unit [c->dev];
 
     if (cmd & BBIT(13) && (has_debug(ctlr) || (u && u->dptr->dctrl & DEB_OPS))) {
-        besm6_debug ("::: КМД %c: bit 13 + %04o",
+        besm6_debug ("::: disk ctlr %c: bit 13 + %04o",
                      ctlr + '3', cmd & 07777);
     }
 
@@ -747,10 +747,10 @@ void disk_ctl (int ctlr, uint32 cmd)
 
         if (u->dptr->dctrl & DEB_OPS) {
             if (IS_29MB(u))
-                besm6_debug ("::: КМД %c: cmd %08o = выдача адреса дорожки %04o",
+                besm6_debug ("::: disk ctlr %c: cmd %08o = setting track address %04o",
                          ctlr + '3', cmd, c->zone);
             else
-                besm6_debug ("::: КМД %c: cmd %08o = выдача адреса дорожки %04o.%d",
+                besm6_debug ("::: disk ctlr %c: cmd %08o = setting track address %04o.%d",
                          ctlr + '3', cmd, c->zone, c->track);
         }
         disk_fail &= ~c->mask_fail;
@@ -806,7 +806,7 @@ void disk_ctl (int ctlr, uint32 cmd)
         u = &md_unit[c->dev];
 
         if (u->dptr->dctrl & DEB_OPS)
-            besm6_debug ("::: КМД %c: cmd = %08o, выбор устройства %02o",
+            besm6_debug ("::: disk ctlr %c: cmd = %08o, unit select %02o",
                          ctlr + '3', cmd, c->dev);
 
         if ((u->dptr->flags & DEV_DIS) || ! (u->flags & UNIT_ATT)) {
@@ -825,7 +825,7 @@ void disk_ctl (int ctlr, uint32 cmd)
             c->dev = -1; // (c->dev & ~030) | (c->group << 3);
             // u = &md_unit[c->dev];
             if (has_debug(ctlr))
-                besm6_debug ("::: КМД %c: selected group %d",
+                besm6_debug ("::: disk ctlr %c: selected group %d",
                              ctlr + '3', c->group);
         }
         GRP |= c->mask_grp;
@@ -835,43 +835,43 @@ void disk_ctl (int ctlr, uint32 cmd)
         c->group = 0;
         c->dev = -1;
         if (has_debug(ctlr))
-            besm6_debug ("::: КМД %c: reset group", ctlr + '3');
+            besm6_debug ("::: disk ctlr %c: reset group", ctlr + '3');
         GRP &= ~c->mask_grp;
         sim_activate(&md_unit[(c-controller)*32], 20*USEC); // any unit would do
     } else if (cmd & BBIT(8)) {
-        besm6_debug ("::: КМД %c: cmd = %08o\n",
+        besm6_debug ("::: disk ctlr %c: cmd = %08o\n",
                      ctlr + '3', cmd);
     } else {
         /* Команда, выдаваемая в КМД. */
         switch (cmd & 077) {
         case 000: /* диспак выдаёт эту команду один раз в начале загрузки */
             if (u->dptr->dctrl & DEB_OPS)
-                besm6_debug ("::: КМД %c: недокументированная команда %08o",
+                besm6_debug ("::: disk ctlr %c: undocumented command %08o",
                              ctlr + '3', cmd);
             break;
         case 001: /* сброс на 0 цилиндр */
 #if 1
             if (u->dptr->dctrl & DEB_OPS)
-                besm6_debug ("::: КМД %c: сброс на 0 цилиндр",
+                besm6_debug ("::: disk ctlr %c: seek to cylinder 0",
                              ctlr + '3');
 #endif
             break;
         case 002: /* подвод */
             if (u->dptr->dctrl & DEB_OPS)
-                besm6_debug ("::: КМД %c: подвод", ctlr + '3');
+                besm6_debug ("::: disk ctlr %c: seek", ctlr + '3');
             break;
         case 003: /* чтение (НСМД-МОЗУ) */
         case 043: /* резервной дорожки */
 #if 1
             if (u->dptr->dctrl & DEB_OPS)
-                besm6_debug ("::: КМД %c: чтение", ctlr + '3');
+                besm6_debug ("::: disk ctlr %c: read", ctlr + '3');
 #endif
             break;
         case 004: /* запись (МОЗУ-НСМД) */
         case 044: /* резервной дорожки */
 #if 1
             if (u->dptr->dctrl & DEB_OPS)
-                besm6_debug ("::: КМД %c: запись", ctlr + '3');
+                besm6_debug ("::: disk ctlr %c: write", ctlr + '3');
 #endif
             break;
         case 005: /* разметка */
@@ -880,14 +880,14 @@ void disk_ctl (int ctlr, uint32 cmd)
         case 006: /* сравнение кодов (МОЗУ-НСМД) */
 #if 1
             if (u->dptr->dctrl & DEB_OPS)
-                besm6_debug ("::: КМД %c: сравнение кодов", ctlr + '3');
+                besm6_debug ("::: disk ctlr %c: compare", ctlr + '3');
 #endif
             break;
         case 007: /* чтение заголовка */
         case 047: /* резервной дорожки */
             if (u->dptr->dctrl & DEB_OPS)
-                besm6_debug ("::: КМД %c: чтение %s заголовка", ctlr + '3',
-                             cmd & 040 ? "резервного" : "");
+                besm6_debug ("::: disk ctlr %c: read %sheader", ctlr + '3',
+                             cmd & 040 ? "spare " : "");
             disk_fail &= ~c->mask_fail;
             disk_read_header (u);
 
@@ -897,7 +897,7 @@ void disk_ctl (int ctlr, uint32 cmd)
         case 010: /* гашение PC */
 #if 1
             if (has_debug(ctlr))
-                besm6_debug ("::: КМД %c: гашение регистра состояния",
+                besm6_debug ("::: disk ctlr %c: clear status register",
                              ctlr + '3');
 #endif
             c->status = 0;
@@ -906,7 +906,7 @@ void disk_ctl (int ctlr, uint32 cmd)
             if (c->dev == -1) {
                 c->status = ~0;
                 if (has_debug(ctlr)) {
-                    besm6_debug ("::: КМД %c: status low req with no selection",
+                    besm6_debug ("::: disk ctlr %c: status low req with no selection",
                                  ctlr + '3');
                 }
                 break;
@@ -916,14 +916,14 @@ void disk_ctl (int ctlr, uint32 cmd)
                 c->status = STATUS_READY;
 #if 1
             if (u->dptr->dctrl & DEB_STA)
-                besm6_debug ("::: КМД %c: опрос младших разрядов состояния - %04o",
+                besm6_debug ("::: disk ctlr %c: poll low status bits - %04o",
                              ctlr + '3', c->status);
 #endif
             break;
         case 031: /* опрос 13÷24 разрядов РС */
             if (c->dev == -1) {
                 if (has_debug(ctlr)) {
-                    besm6_debug ("::: КМД %c: status high req with no selection",
+                    besm6_debug ("::: disk ctlr %c: status high req with no selection",
                                  ctlr + '3');
                 }
                 break;
@@ -938,19 +938,19 @@ void disk_ctl (int ctlr, uint32 cmd)
             c->status >>= 12;
 #if 1
             if (u->dptr->dctrl & DEB_STA)
-                besm6_debug ("::: КМД %c: опрос старших разрядов состояния - %04o",
+                besm6_debug ("::: disk ctlr %c: poll high status bits - %04o",
                              ctlr + '3', c->status);
 #endif
             break;
         case 050: /* освобождение НМД */
 #if 1
             if (u->dptr->dctrl & DEB_OPS)
-                besm6_debug ("::: КМД %c: освобождение накопителя",
+                besm6_debug ("::: disk ctlr %c: release drive",
                              ctlr + '3');
 #endif
             break;
         default:
-            besm6_debug ("::: КМД %c: неизвестная команда %02o",
+            besm6_debug ("::: disk ctlr %c: unknown command %02o",
                          ctlr + '3', cmd & 077);
             GRP |= c->mask_grp;     /* чтобы не зависало */
             break;
@@ -968,7 +968,7 @@ int disk_state (int ctlr)
         md_dev[ctlr*4+1].dctrl & DEB_RRD ||
         md_dev[ctlr*4+2].dctrl & DEB_RRD ||
         md_dev[ctlr*4+3].dctrl & DEB_RRD)
-        besm6_debug ("::: КМД %c: линейка %d, опрос состояния = %04o",
+        besm6_debug ("::: disk ctlr %c: row %d, poll status = %04o",
                      ctlr + '3', c->group, c->status);
     return c->status;
 }
@@ -992,7 +992,7 @@ int disk_errors ()
 {
 #if 0
     if (u->dptr->dctrl & DEB_RRD)
-        besm6_debug ("::: КМД: опрос шкалы ошибок = %04o", disk_fail);
+        besm6_debug ("::: disk ctlr: poll error register = %04o", disk_fail);
 #endif
     return disk_fail;
 }
