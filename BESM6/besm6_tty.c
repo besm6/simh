@@ -1481,7 +1481,13 @@ void consul_print (int dev_num, uint32 cmd)
     
     switch (tty_unit[line_num].flags & TTY_STATE_MASK) {
     case TTY_VT340_STATE:
-        vt_send (line_num, cmd & 0177);
+        /* A raw line is a byte pipe: the guest owns the character set (v7besm sends
+         * UTF-8), so all eight bits are data.  The mask stays everywhere else, where
+         * bit 8 is parity and vt_send() indexes a 32-entry KOI-7 table. */
+        if ((tty_unit[line_num].flags & TTY_CHARSET_MASK) == TTY_RAW_CHARSET)
+            vt_send (line_num, cmd & 0377);
+        else
+            vt_send (line_num, cmd & 0177);
         break;
     case TTY_CONSUL_STATE:
         uni = gost_to_unicode(cmd & 0177);
@@ -1510,12 +1516,21 @@ void consul_receive ()
         if (! tty_line[line_num].conn)
             continue;
         c = getsym(line_num);
-        if (c >= 0 && c <= 0177) {
+        if (c < 0)                              /* -1 nothing typed, -128 disconnected */
+            continue;
+        if ((tty_unit[line_num].flags & TTY_CHARSET_MASK) == TTY_RAW_CHARSET) {
+            /* The other half of consul_print(): eight bits of data, no room for a
+             * parity bit and no 7-bit code to compute one from.  vt_fix() is already
+             * a no-op on a raw line. */
+            CONSUL_IN[dev_num] = c & 0377;
+        } else {
+            if (c > 0177)                       /* not a KOI-7 code */
+                continue;
             c = vt_fix(line_num, c);
             CONSUL_IN[dev_num] = odd_parity(c) ? c | 0200 : c;
-            PRP |= CONS_HAS_INPUT[dev_num];
-            vt_idle = 0;
         }
+        PRP |= CONS_HAS_INPUT[dev_num];
+        vt_idle = 0;
     }
 }
 
