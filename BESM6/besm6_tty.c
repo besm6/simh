@@ -169,22 +169,44 @@ REG tty_reg[] = {
 TMLN tty_line [LINES_MAX+1];
 TMXR tty_desc = { LINES_MAX+1, 0, 0, tty_line, tty_lnorder };        /* mux descriptor */
 
+/* The charset field is three bits wide: five encodings, of which two are raw. */
 #define TTY_UNICODE_CHARSET     0
 #define TTY_KOI7_JCUKEN_CHARSET (1<<UNIT_V_UF)
 #define TTY_KOI7_QWERTY_CHARSET (2<<UNIT_V_UF)
 #define TTY_RAW_CHARSET         (3<<UNIT_V_UF)
-#define TTY_CHARSET_MASK        (3<<UNIT_V_UF)
+#define TTY_RAW8_CHARSET        (4<<UNIT_V_UF)
+#define TTY_CHARSET_MASK        (7<<UNIT_V_UF)
 #define TTY_OFFLINE_STATE       0
-#define TTY_TELETYPE_STATE      (1<<(UNIT_V_UF+2))
-#define TTY_VT340_STATE         (2<<(UNIT_V_UF+2))
-#define TTY_CONSUL_STATE        (3<<(UNIT_V_UF+2))
-#define TTY_STATE_MASK          (3<<(UNIT_V_UF+2))
+#define TTY_TELETYPE_STATE      (1<<(UNIT_V_UF+3))
+#define TTY_VT340_STATE         (2<<(UNIT_V_UF+3))
+#define TTY_CONSUL_STATE        (3<<(UNIT_V_UF+3))
+#define TTY_STATE_MASK          (3<<(UNIT_V_UF+3))
 #define TTY_DESTRUCTIVE_BSPACE  0
-#define TTY_AUTHENTIC_BSPACE    (1<<(UNIT_V_UF+4))
-#define TTY_BSPACE_MASK         (1<<(UNIT_V_UF+4))
-#define TTY_CMDLINE_MASK        (1<<(UNIT_V_UF+5))
-#define TTY_INVERSE_READY       (1<<(UNIT_V_UF+6))
-#define TTY_MUX_MODE            (1<<(UNIT_V_UF+7))
+#define TTY_AUTHENTIC_BSPACE    (1<<(UNIT_V_UF+5))
+#define TTY_BSPACE_MASK         (1<<(UNIT_V_UF+5))
+#define TTY_CMDLINE_MASK        (1<<(UNIT_V_UF+6))
+#define TTY_INVERSE_READY       (1<<(UNIT_V_UF+7))
+#define TTY_MUX_MODE            (1<<(UNIT_V_UF+8))
+
+/*
+ * Both raw encodings are byte pipes: no KOI-7 tables, no Videoton control codes,
+ * no Enter/Backspace fix-up.
+ */
+static int tty_raw (int num)
+{
+    int charset = tty_unit[num].flags & TTY_CHARSET_MASK;
+
+    return charset == TTY_RAW_CHARSET || charset == TTY_RAW8_CHARSET;
+}
+
+/*
+ * RAW8 additionally carries all eight bits of a character and computes no parity,
+ * where RAW keeps the authentic 7-bits-plus-parity contract of the hardware.
+ */
+static int tty_raw8 (int num)
+{
+    return (tty_unit[num].flags & TTY_CHARSET_MASK) == TTY_RAW8_CHARSET;
+}
 
 static void reset_line(int num)
 {
@@ -248,7 +270,7 @@ t_stat vt_clk (UNIT * this)
         char buf [80];
         TMLN *t = &tty_line [num];
         /* Sampled BEFORE reset_line(), which clears TTY_CHARSET_MASK. */
-        int raw = (tty_unit[num].flags & TTY_CHARSET_MASK) == TTY_RAW_CHARSET;
+        int charset = tty_unit[num].flags & TTY_CHARSET_MASK;
         besm6_debug ("*** tty%d: a new connection from %s",
                      num, t->ipad);
         reset_line (num);
@@ -256,8 +278,8 @@ t_stat vt_clk (UNIT * this)
          * Without this a "set ttyN raw" issued before the client connected was
          * silently discarded and the line came up UTF-8 -- and the "Encoding is
          * RAW" message a dozen lines below was unreachable code. */
-        if (raw)
-            tty_unit[num].flags |= TTY_RAW_CHARSET;
+        if (charset == TTY_RAW_CHARSET || charset == TTY_RAW8_CHARSET)
+            tty_unit[num].flags |= charset;
         t->rcve = 1;
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_VT340_STATE;
@@ -274,6 +296,9 @@ t_stat vt_clk (UNIT * this)
             break;
         case TTY_RAW_CHARSET:
             tmxr_linemsg (t, "Encoding is RAW\r\n");
+            break;
+        case TTY_RAW8_CHARSET:
+            tmxr_linemsg (t, "Encoding is RAW8\r\n");
             break;
         case TTY_UNICODE_CHARSET:
             tmxr_linemsg (t, "Encoding is UTF-8\r\n");
@@ -294,9 +319,9 @@ t_stat vt_clk (UNIT * this)
                  t->ipad);
         tmxr_linemsg (t, buf);
 
-        /* Entering ^C (ETX) to get a prompt.  Not on a raw line: there the byte is
+        /* Entering ^C (ETX) to get a prompt.  Not on a raw8 line: there the byte is
          * data, not a request, and it reaches the guest as a typed character. */
-        if (!raw)
+        if (charset != TTY_RAW8_CHARSET)
             t->rxb [t->rxbpi++] = '\3';
 	if (old) {
             sprintf (buf, "Type HYC<enter> (no echo is normal)\r\n");
@@ -494,6 +519,7 @@ t_stat tty_setturbo (UNIT *up, int32 v, CONST char *cp, void *dp) {
  * set ttyN jcuken      - selecting KOI-7 encoding, JCUKEN layout
  * set ttyN qwerty      - selecting KOI-7 encoding, QWERTY layout
  * set ttyN raw         - selecting transmission of raw chars
+ * set ttyN raw8        - the same, but eight bits wide and with no parity
  * set ttyN mux         - consider ttyN connected via UART mux
  * set ttyN off         - disconnecting a line
  * set ttyN tt          - a Baudot TTY
@@ -515,8 +541,12 @@ MTAB tty_mod[] = {
       "JCUKEN" },
     { TTY_CHARSET_MASK, TTY_KOI7_QWERTY_CHARSET, "KOI7 (qwerty) input",
       "QWERTY" },
+    /* RAW must precede RAW8: MATCH_CMD() matches a typed prefix against the entry,
+     * so with RAW8 first a "set ttyN raw" would silently select RAW8. */
     { TTY_CHARSET_MASK, TTY_RAW_CHARSET, "RAW input/output",
       "RAW" },
+    { TTY_CHARSET_MASK, TTY_RAW8_CHARSET, "RAW 8-bit input/output",
+      "RAW8" },
     { TTY_STATE_MASK, TTY_OFFLINE_STATE, "offline",
       "OFF", &tty_setmode },
     { TTY_STATE_MASK, TTY_TELETYPE_STATE, "Teletype",
@@ -618,7 +648,7 @@ const char * koi7_rus_to_unicode [32] = {
 /* Videoton-340 employed single byte control codes rather than ESC sequences. */
 void vt_send(int num, uint32 sym)
 {
-    if ((tty_unit[num].flags & TTY_CHARSET_MASK) == TTY_RAW_CHARSET) {
+    if (tty_raw (num)) {
         vt_putc(num, sym);
     } else if (sym < 0x60) {
         switch (sym) {
@@ -856,6 +886,9 @@ static t_stat cmd_set (int32 num, CONST char *cptr)
     } else if (strncmp ("RAW", gbuf, len) == 0) {
         tty_unit[num].flags &= ~TTY_CHARSET_MASK;
         tty_unit[num].flags |= TTY_RAW_CHARSET;
+    } else if (strncmp ("RAW8", gbuf, len) == 0) {
+        tty_unit[num].flags &= ~TTY_CHARSET_MASK;
+        tty_unit[num].flags |= TTY_RAW8_CHARSET;
     } else if (strncmp ("TT", gbuf, len) == 0) {
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_TELETYPE_STATE;
@@ -938,6 +971,7 @@ static CTAB cmd_table[] = {
       "set jcuken               select KOI7 encoding, 'jcuken' keymap\r\n"
       "set qwerty               select KOI7 encoding, 'qwerty' keymap\r\n"
       "set raw                  select no I/O conversions\r\n"
+      "set raw8                 the same, eight bits wide and with no parity\r\n"
       "set tt                   use Teletype mode\r\n"
       "set vt                   use Videoton-340 mode\r\n"
       "set consul               use Consul-254 mode\r\n"
@@ -1291,7 +1325,7 @@ int odd_parity(unsigned char c)
  * unless the mode is RAW.
  */
 int vt_fix(int num, int c) {
-    if ((tty_unit[num].flags & TTY_CHARSET_MASK) != TTY_RAW_CHARSET) {
+    if (! tty_raw (num)) {
         switch (c) {
         case '\r': case '\n':
             return 3;     /* ETX is used as Enter */
@@ -1310,6 +1344,7 @@ int getsym(int num) {
     case TTY_KOI7_JCUKEN_CHARSET:
         return vt_kbd_input_koi7 (num);
     case TTY_RAW_CHARSET:
+    case TTY_RAW8_CHARSET:
     case TTY_KOI7_QWERTY_CHARSET:
         return vt_getc (num);
     case TTY_UNICODE_CHARSET:
@@ -1481,10 +1516,10 @@ void consul_print (int dev_num, uint32 cmd)
     
     switch (tty_unit[line_num].flags & TTY_STATE_MASK) {
     case TTY_VT340_STATE:
-        /* A raw line is a byte pipe: the guest owns the character set (v7besm sends
-         * UTF-8), so all eight bits are data.  The mask stays everywhere else, where
-         * bit 8 is parity and vt_send() indexes a 32-entry KOI-7 table. */
-        if ((tty_unit[line_num].flags & TTY_CHARSET_MASK) == TTY_RAW_CHARSET)
+        /* A raw8 line is a byte pipe: the guest owns the character set (v7besm sends
+         * UTF-8), so all eight bits are data.  The mask stays everywhere else, RAW
+         * included, where bit 8 is parity and vt_send() indexes a KOI-7 table. */
+        if (tty_raw8 (line_num))
             vt_send (line_num, cmd & 0377);
         else
             vt_send (line_num, cmd & 0177);
@@ -1518,7 +1553,7 @@ void consul_receive ()
         c = getsym(line_num);
         if (c < 0)                              /* -1 nothing typed, -128 disconnected */
             continue;
-        if ((tty_unit[line_num].flags & TTY_CHARSET_MASK) == TTY_RAW_CHARSET) {
+        if (tty_raw8 (line_num)) {
             /* The other half of consul_print(): eight bits of data, no room for a
              * parity bit and no 7-bit code to compute one from.  vt_fix() is already
              * a no-op on a raw line. */
@@ -1575,7 +1610,8 @@ void mux_send(uint32 syl)
         return;
     }
     if (line_num <= TTY_MAX) {
-        vt_send (line_num, syl & 0177);
+        /* Bit 8 of the syllable is parity, except on a raw8 line, where it is data. */
+        vt_send (line_num, syl & (tty_raw8 (line_num) ? 0377 : 0177));
         vt_idle = 0;
         sim_activate_after(tty_unit + line_num, 10);
     } else
@@ -1594,15 +1630,24 @@ void mux_receive ()
         if (! tty_line[line_num].conn || !(tty_unit[line_num].flags & TTY_MUX_MODE))
             continue;
         c = getsym(line_num);
-        if (c >= 0 && c <= 0177) {
+        if (c < 0)
+            continue;
+        if (tty_raw8(line_num)) {
+            /* A byte pipe: eight bits of data, echoed as typed and with no parity. */
+            besm6_debug("Got %03o from line %02o", c & 0377, line_num);
+            vt_send(line_num, c & 0377);
+            MUX_SYLLABLE = (line_num << 8) | (c & 0377);
+        } else {
+            if (c > 0177)                       /* not a KOI-7 code */
+                continue;
             besm6_debug("Got %03o from line %02o", c, line_num);
             vt_send(line_num, c == '\177' ? '\b' : c);
             c = vt_fix(line_num, c);
             MUX_SYLLABLE = (line_num << 8) | (odd_parity(c) ? c | 0200 : c);
-            PRP |= PRP_MUX_INPUT;
-            vt_idle = 0;
-            mux_reg_busy = 1;
         }
+        PRP |= PRP_MUX_INPUT;
+        vt_idle = 0;
+        mux_reg_busy = 1;
     }
 }
 

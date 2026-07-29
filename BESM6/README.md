@@ -474,7 +474,8 @@ set together, e.g. `set tty1 unicode,authbs` or `set tty1 qwerty,authbs`.
 | `unicode` | UTF-8 in and out. |
 | `jcuken`  | Type Russian using the standard ЙЦУКЕН keyboard layout mapped onto Latin keys. |
 | `qwerty`  | Type Russian as transliterated Latin letters: `Q`=я, `W`=в, `Y`=ы, `J`=й, `X`=ь, `C`=ц, `V`=ж, `` ` ``=ю, `~`=ч, `{`=ш, `}`=щ, `|`=э. |
-| `raw`     | No conversion; bytes pass through unchanged. |
+| `raw`     | No conversion; bytes pass through unchanged. The authentic seven-bits-plus-parity contract of the hardware still holds: a character above `0177` is dropped on input, output is masked to `0177`, and the Consul and mux lines synthesise the odd-parity bit. |
+| `raw8`    | The same, but eight bits wide: nothing is truncated on output, nothing above `0177` is dropped on input, and no parity bit is synthesised — the guest owns the character set. A connecting client gets no `^C` injected, the byte being data rather than a request. This is what `v7besm`'s kernel uses to carry UTF-8. |
 
 **Terminal type:**
 
