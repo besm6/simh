@@ -1135,7 +1135,15 @@ int vt_getc (int num)
     if (t->rcve) {
         /* A telnet line. */
         c = tmxr_getc_ln (t);
-        if (! (c & TMXR_VALID)) {
+        /* TWO TAGS, NOT ONE.  tmxr_getc_ln() marks a character that came off the
+         * socket with TMXR_VALID, but one injected by the SCP `send TTY:n,"..."'
+         * command with SCPE_KFLAG (sim_send_poll_data(), scp.c) -- and it consumes
+         * the injected character before returning it.  A mux that tests only
+         * TMXR_VALID therefore makes `send' a silent no-op on its lines: the byte
+         * is dequeued and dropped here.  Every other SIMH mux accepts both
+         * (pdp11_dz.c, for one).  The console path below has always been right,
+         * which is why `attach ttyNN console' plus a bare `send "..."' works. */
+        if (! (c & (TMXR_VALID | SCPE_KFLAG))) {
 #ifdef REMOTE_TIMEOUT
             now = sim_get_time (0);
             if (now > tty_last_time[num] + 5*60) {
