@@ -220,7 +220,13 @@ t_stat tty_reset (DEVICE *dptr)
 t_stat vt_clk (UNIT * this)
 {
     int num;
-    int old;
+    /* Whether this line was already in vt_mask when a client connected, i.e. the
+     * guest still believes it is live and it needs re-initializing.  Only the
+     * bit-serial lines can ever be in that state: a mux line and both Consuls
+     * never enter vt_mask, so zero is what they are.  This used to be
+     * uninitialized, and the "Type HYC" hint below was then printed or not on a
+     * garbage value for exactly those lines. */
+    int old = 0;
     GRP |= MGRP & GRP_SERIAL;
 
     if (MPRP & 0200) {
@@ -241,9 +247,17 @@ t_stat vt_clk (UNIT * this)
     if (num > 0 && num <= LINES_MAX) {
         char buf [80];
         TMLN *t = &tty_line [num];
+        /* Sampled BEFORE reset_line(), which clears TTY_CHARSET_MASK. */
+        int raw = (tty_unit[num].flags & TTY_CHARSET_MASK) == TTY_RAW_CHARSET;
         besm6_debug ("*** tty%d: a new connection from %s",
                      num, t->ipad);
         reset_line (num);
+        /* A line the operator explicitly made raw STAYS raw across the connect.
+         * Without this a "set ttyN raw" issued before the client connected was
+         * silently discarded and the line came up UTF-8 -- and the "Encoding is
+         * RAW" message a dozen lines below was unreachable code. */
+        if (raw)
+            tty_unit[num].flags |= TTY_RAW_CHARSET;
         t->rcve = 1;
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_VT340_STATE;
@@ -280,8 +294,10 @@ t_stat vt_clk (UNIT * this)
                  t->ipad);
         tmxr_linemsg (t, buf);
 
-        /* Entering ^C (ETX) to get a prompt. */
-        t->rxb [t->rxbpi++] = '\3';
+        /* Entering ^C (ETX) to get a prompt.  Not on a raw line: there the byte is
+         * data, not a request, and it reaches the guest as a typed character. */
+        if (!raw)
+            t->rxb [t->rxbpi++] = '\3';
 	if (old) {
             sprintf (buf, "Type HYC<enter> (no echo is normal)\r\n");
             tmxr_linemsg (t, buf);
