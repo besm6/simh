@@ -102,6 +102,11 @@ uint32 tt_mask = 0, vt_mask = 0;
 
 uint32 TTY_OUT = 0, TTY_IN = 0, vt_idle = 0;
 uint32 CONSUL_IN[2];
+
+/* Set when a typed character is placed in CONSUL_IN and cleared when the guest reads
+ * the register.  CONSUL_IN is one character deep, so without this consul_receive()
+ * overwrites a character the guest has not taken yet -- see the comment there. */
+static char cons_input_pending[2];
 uint32 MUX_SYLLABLE, mux_reg_busy;
 
 uint32 CONS_CAN_PRINT[2] = { 01000, 00400 };
@@ -225,6 +230,7 @@ t_stat tty_reset (DEVICE *dptr)
     vt_sending = vt_receiving = 0;
     TTY_IN = TTY_OUT = 0;
     CONSUL_IN[0] = CONSUL_IN[1] = 0;
+    cons_input_pending[0] = cons_input_pending[1] = 0;
     reg = rus;
     READY2 |= CONS_READY[0] | CONS_READY[1];
     if (tty_unit[25].flags & TTY_INVERSE_READY)
@@ -1550,6 +1556,14 @@ void consul_receive ()
         }
         if (! tty_line[line_num].conn)
             continue;
+        /* ONE CHARACTER DEEP, SO DO NOT TAKE THE NEXT ONE YET.  CONSUL_IN is a single
+         * register and this used to overwrite it every tick regardless of whether the
+         * guest had read the last character, so anything typed faster than the guest
+         * services its ПРП interrupt was lost.  A human pressing an arrow key sends
+         * three bytes in one instant and the middle one went; the character is left in
+         * the line's own input queue instead, and taken on a later tick. */
+        if (cons_input_pending[dev_num])
+            continue;
         c = getsym(line_num);
         if (c < 0)                              /* -1 nothing typed, -128 disconnected */
             continue;
@@ -1564,6 +1578,7 @@ void consul_receive ()
             c = vt_fix(line_num, c);
             CONSUL_IN[dev_num] = odd_parity(c) ? c | 0200 : c;
         }
+        cons_input_pending[dev_num] = 1;
         PRP |= CONS_HAS_INPUT[dev_num];
         vt_idle = 0;
     }
@@ -1573,6 +1588,8 @@ uint32 consul_read (int num)
 {
     if (tty_dev.dctrl)
         besm6_debug("<<< CONSUL%o: %03o", num+TTY_MAX+1, CONSUL_IN[num]);
+    /* Taken: consul_receive() may fetch the next character now. */
+    cons_input_pending[num] = 0;
     return CONSUL_IN[num];
 }
 
