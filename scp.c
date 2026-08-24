@@ -1821,7 +1821,8 @@ static const char simh_help2[] =
       " %%SIM_GIT_COMMIT_TIME%%, %%SIM_ARCHIVE_GIT_COMMIT_ID%%,\n"
       " %%SIM_ARCHIVE_GIT_COMMIT_TIME%%, %%SIM_RUNLIMIT%%, %%SIM_RUNLIMIT_UNITS%%,\n"
       " %%SIM_HOST_CORE_COUNT%%, %%SIM_HOST_MAX_THREADS%%,\n"
-      " %%SIM_ETHERNET_CAPABILITIES%%, %%SIM_PROCESS_PID%%\n\n"
+      " %%SIM_ETHERNET_CAPABILITIES%%, %%SIM_PROCESS_PID%%,\n"
+      " %%SIM_RUNNING_UNDER_GUI%%\n\n"
       "+Token %%0 expands to the command file name.\n"
       "+Token %%n (n being a single digit) expands to the n'th argument\n"
       "+Token %%* expands to the whole set of arguments (%%1 ... %%9)\n\n"
@@ -7203,6 +7204,8 @@ char vmaj_s[12], vmin_s[12], vpat_s[12], vdelt_s[12];
 const char *cpp = "";
 const char *build = "";
 const char *arch = "";
+static char tarversion[PATH_MAX+1] = "";
+static char curlversion[PATH_MAX+1] = "";
 FILE *saved_st = st;
 t_bool only_reproducible_factors = ((sim_switches & SWMASK ('R')) != 0);
 
@@ -7384,8 +7387,6 @@ if (1) {
         char *proc_arch3264 = getenv ("PROCESSOR_ARCHITEW6432");
         static char osversion[PATH_MAX+1] = "";
         static char cores[64] = "";
-        static char tarversion[PATH_MAX+1] = "";
-        static char curlversion[PATH_MAX+1] = "";
         static char wmicpath[PATH_MAX+1] = "";
         static char powershellpath[PATH_MAX+1] = "";
         static char proc_name[CBUFSIZE] = "";
@@ -7458,27 +7459,13 @@ if (1) {
         if (!only_reproducible_factors) {
             if (proc_name[0] != '\0')
                 fprintf (st, "\n        Processor Name: %s", proc_name);
-            strlcpy (os_type, "Windows", sizeof (os_type));
-            if (tarversion[0] == '\0')
-                strlcpy (tarversion, _get_tool_version ("tar"), sizeof (tarversion));
-            if (tarversion[0] != '\0') {
-                fprintf (st, "\n        tar tool: %s", tarversion);
-                setenv ("SIM_TAR_CMD_AVAILABLE", "TRUE", 1);
-                }
-            if (curlversion[0] == '\0')
-                strlcpy (curlversion, _get_tool_version ("curl"), sizeof (curlversion));
-            if (curlversion[0] != '\0') {
-                fprintf (st, "\n        curl tool: %s", curlversion);
-                setenv ("SIM_CURL_CMD_AVAILABLE", "TRUE", 1);
-                }
             }
+        strlcpy (os_type, "Windows", sizeof (os_type));
         }
 #else
     if (1) {
         char osname[2*PATH_MAX+1] = "";
         char osversion[2*PATH_MAX+1] = "";
-        char tarversion[PATH_MAX+1] = "";
-        char curlversion[PATH_MAX+1] = "";
         FILE *f;
         char *c;
         const char *run_context = "";
@@ -7693,23 +7680,29 @@ if (1) {
                 }
             }
 #endif
-        if (!only_reproducible_factors) {
-            strlcpy (tarversion, _get_tool_version ("tar"), sizeof (tarversion));
-            if (tarversion[0]) {
-                fprintf (st, "\n        tar tool: %s", tarversion);
-                setenv ("SIM_TAR_CMD_AVAILABLE", "TRUE", 1);
-                }
-            strlcpy (curlversion, _get_tool_version ("curl"), sizeof (curlversion));
-            if (curlversion[0]) {
-                fprintf (st, "\n        curl tool: %s", curlversion);
-                setenv ("SIM_CURL_CMD_AVAILABLE", "TRUE", 1);
-                }
-#if !defined(_WIN32)
-            fprintf (st, "\n        %s as root", _sim_running_as_root () ? "Running" : "Not running");
-#endif
-            }
         }
 #endif
+    if (!only_reproducible_factors) {
+        if (tarversion[0] == '\0')
+            strlcpy (tarversion, _get_tool_version ("tar"), sizeof (tarversion));
+        if (tarversion[0]) {
+            fprintf (st, "\n        tar tool: %s", tarversion);
+            setenv ("SIM_TAR_CMD_AVAILABLE", "TRUE", 1);
+            }
+        if (curlversion[0] == '\0')
+            strlcpy (curlversion, _get_tool_version ("curl"), sizeof (curlversion));
+        if (curlversion[0]) {
+            fprintf (st, "\n        curl tool: %s", curlversion);
+            setenv ("SIM_CURL_CMD_AVAILABLE", "TRUE", 1);
+            }
+#if !defined(_WIN32)
+        fprintf (st, "\n        %s as root", _sim_running_as_root () ? "Running" : "Not running");
+#endif
+        if (!only_reproducible_factors) {
+            fprintf (st, "\n        Running under %s", sim_ttguisession () ? "an OS GUI environment" : "a non GUI environment");
+            setenv ("SIM_RUNNING_UNDER_GUI", sim_ttguisession () ? "TRUE" : "FALSE", 1);
+            }
+        }
     if ((!strcmp (os_type, "Unknown")) && (getenv ("OSTYPE")))
         strlcpy (os_type, getenv ("OSTYPE"), sizeof (os_type));
     setenv ("SIM_OSTYPE", os_type, 1);

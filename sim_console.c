@@ -112,6 +112,7 @@
    sim_ttcmd                    called to return terminal to command state
    sim_ttclose                  called once before the simulator exits
    sim_ttisatty                 called to determine if running interactively
+   sim_ttguisession             called to determine if running under an OS GUI
    sim_os_poll_kbd              poll for keyboard input
    _sim_os_putchar              output character to console
    sim_set_noconsole_port       Enable automatic WRU console polling
@@ -153,6 +154,7 @@ static t_stat sim_os_ttrun (void);
 static t_stat sim_os_ttcmd (void);
 static t_stat sim_os_ttclose (void);
 static int sim_os_fd_isatty (int fd);
+static t_bool sim_os_is_running_under_gui (void);
 static t_stat sim_os_connect_telnet (int port);
 
 static t_stat sim_set_rem_telnet (int32 flag, CONST char *cptr);
@@ -3319,6 +3321,15 @@ t_bool sim_fd_isatty (int fd)
 return (sim_os_fd_isatty (fd) != 0);
 }
 
+t_bool sim_ttguisession (void)
+{
+static int answer = -1;
+
+if (answer == -1)
+    answer = sim_os_is_running_under_gui ();
+return (t_bool)answer;
+}
+
 /* Platform specific routine definitions */
 
 /* VMS routines, from Ben Thomas, with fixes from Robert Alan Byer */
@@ -3417,6 +3428,14 @@ return SCPE_OK;
 static int sim_os_fd_isatty (int fd)
 {
 return isatty (fd);
+}
+
+static t_bool sim_os_is_running_under_gui (void)
+{
+return ((getenv ("SSH_CLIENT") == NULL) &&
+        (((getenv ("DISPLAY") != NULL)              || 
+          (getenv ("WAYLAND_DISPLAY") != NULL)      || 
+          (getenv ("__CFBundleIdentifier") != NULL))));
 }
 
 static t_stat sim_os_poll_kbd_data (void)
@@ -3639,6 +3658,38 @@ return (((handle)                         &&
          (GetConsoleMode (handle, &Mode) != 0)) ? 1 : 0);
 }
 
+static t_bool sim_os_is_running_under_gui (void)
+{
+HWINSTA hWinSta = GetProcessWindowStation();
+DWORD lengthNeeded = 0;
+char *StationName = NULL;
+t_bool Result = FALSE;
+
+if (getenv ("SSH_CLIENT") != NULL)
+    return FALSE;       /* A process in an ssh session isn't a GUI */
+
+if (hWinSta == NULL)
+    return FALSE;       /* Not getting the handle, is safely not a GUI session  */
+
+GetUserObjectInformationW(hWinSta, UOI_NAME, NULL, 0, &lengthNeeded);
+    
+if (lengthNeeded == 0)
+    return FALSE;       /* Not getting the name length, is safely not a GUI session  */
+
+StationName = calloc (lengthNeeded + 1, sizeof (*StationName));
+if (!GetUserObjectInformationA(hWinSta, UOI_NAME, StationName, lengthNeeded, &lengthNeeded)) {
+    free (StationName);
+    return FALSE;       /* Can't get the name, is safely not a GUI session  */
+    }
+
+StationName[lengthNeeded] = '\0';
+
+Result = (strcmp (StationName, "WinSta0") == 0);
+
+free (StationName);
+return Result;
+}
+
 static t_stat sim_os_poll_kbd (void)
 {
 int c = -1;
@@ -3763,6 +3814,9 @@ static t_stat sim_os_connect_telnet (int port)
 char gbuf[CBUFSIZE];
 const char *program = sim_get_tool_path ("PuTTY");
 
+if (!sim_os_is_running_under_gui ())
+    return sim_messagef (SCPE_NOFNC, "Can only initiate a telnet session to the local console on port %d from a GUI environment\n", port);
+
 if (program[0] != '\0') {
     snprintf (gbuf, sizeof (gbuf), "start PuTTY telnet://localhost:%d", port);
     return spawn_cmd (0, gbuf);
@@ -3779,7 +3833,7 @@ if (program[0] != '\0') {
     snprintf (gbuf, sizeof (gbuf), "start telnet localhost:%d", port);
     return spawn_cmd (0, gbuf);
     }
-return sim_messagef (SCPE_NOFNC, "Can't find a telnet program to connect to the console in a window\n");
+return sim_messagef (SCPE_NOFNC, "Can not find a telnet program to connect to the console in a window\n");
 }
 
 /* BSD UNIX routines */
@@ -3895,6 +3949,13 @@ return sim_ttcmd ();
 static int sim_os_fd_isatty (int fd)
 {
 return isatty (fd);
+}
+
+static t_bool sim_os_is_running_under_gui (void)
+{
+return ((getenv ("SSH_CLIENT") == NULL) &&
+        (((getenv ("DISPLAY") != NULL)              || 
+          (getenv ("__CFBundleIdentifier") != NULL))));
 }
 
 static t_stat sim_os_poll_kbd (void)
@@ -4266,6 +4327,13 @@ static int sim_os_fd_isatty (int fd)
 return isatty (fd);
 }
 
+static t_bool sim_os_is_running_under_gui (void)
+{
+return ((getenv ("SSH_CLIENT") == NULL) &&
+        (((getenv ("DISPLAY") != NULL)              || 
+          (getenv ("__CFBundleIdentifier") != NULL))));
+}
+
 static t_stat sim_os_poll_kbd (void)
 {
 int status;
@@ -4297,14 +4365,16 @@ static t_stat sim_os_connect_telnet (int port)
 char gbuf[CBUFSIZE];
 const char *program = sim_get_tool_path ("putty");
 
+if (!sim_os_is_running_under_gui ())
+    return sim_messagef (SCPE_NOFNC, "Can only initiate a telnet session to the local console on port %d from a GUI environment\n", port);
 
 if (program[0] != '\0') {
-    snprintf (gbuf, sizeof (gbuf), "nohup putty telnet://localhost:%d 2>/dev/null&", port);
+    snprintf (gbuf, sizeof (gbuf), "export GDK_BACKEND=x11; nohup putty telnet://localhost:%d 2>/dev/null&", port);
     return spawn_cmd (0, gbuf);
     }
 program = sim_get_tool_path ("telnet");
 if (program[0] == '\0') {
-    sim_messagef (SCPE_NOFNC, "Can't find a telnet program to connect to the console in a window\n");
+    sim_messagef (SCPE_NOFNC, "Can not find a telnet program to connect to the console in a window\n");
     return sim_messagef (SCPE_NOFNC, "You likely need to install the telnet client from your OS distribution\n");
     }
 program = sim_get_tool_path ("osascript");
@@ -4332,7 +4402,7 @@ if (program[0] != '\0') {
     snprintf (gbuf, sizeof (gbuf), "nohup konsole -e 'telnet localhost %d' 2>/dev/null&", port);
     return spawn_cmd (0, gbuf);
     }
-return sim_messagef (SCPE_NOFNC, "Can't find a way to create a window to run telnet in on this system\n");
+return sim_messagef (SCPE_NOFNC, "Can not find a way to create a window to run telnet in on this system\n");
 }
 
 #endif
