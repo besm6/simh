@@ -119,7 +119,7 @@
 #
 #   make GCC=cppcheck CC_OUTSPEC= LDFLAGS= CFLAGS_G="--enable=all --template=gcc" CC_STD=--std=c99
 #
-ifeq (0,$(MAKELEVEL))	# recursive individual target build logic is end of this makefile
+ifeq (0,$(if $(findstring 11,$(SUBMODULE)$(MAKELEVEL)),0,$(MAKELEVEL)))	# recursive individual target build logic is end of this makefile
 #
 # CC Command (and platform available options).  (Poor man's autoconf)
 #
@@ -2651,6 +2651,9 @@ ALL = pdp1 pdp4 pdp7 pdp8 pdp9 pdp15 pdp11 pdp10 \
 	scelbi 3b2 3b2-700 i701 i704 i7010 i7070 i7080 i7090 \
 	sigma uc15 pdp10-ka pdp10-ki pdp10-kl pdp10-ks pdp6 i650 \
 	imlac linc tt2500 sel32
+
+#Insert-Extras-Here
+#End-Of-Extras-Insertion
 
 all : ${ALL}
 
