@@ -35,6 +35,9 @@
 				Name="VCXMLDataGeneratorTool"
 			/>
 			<Tool
+				Name="VCWebServiceProxyGeneratorTool"
+			/>
+			<Tool
 				Name="VCMIDLTool"
 			/>
 			<Tool
@@ -116,6 +119,9 @@
 			/>
 			<Tool
 				Name="VCXMLDataGeneratorTool"
+			/>
+			<Tool
+				Name="VCWebServiceProxyGeneratorTool"
 			/>
 			<Tool
 				Name="VCMIDLTool"
@@ -277,6 +283,10 @@
 			</File>
 			<File
 				RelativePath="..\PDP11\pdp11_kmc.c"
+				>
+			</File>
+			<File
+				RelativePath="..\PDP11\pdp11_kwv11.c"
 				>
 			</File>
 			<File
