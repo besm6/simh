@@ -743,7 +743,10 @@ static uint32 readmap[32768], writemap[32768];
     case 0147:
         /* Writing to the power supply control register
          * does not have any observable effect; repurposed
+         * as v7besm's idle hint (its kernel/intr.c).  A guest
+         * that means the panel still gets the fallthrough.
          */
+        sim_idle (0, TRUE);
       // break;
     case 0177:
         /* управление табло ГПВЦ СО АН СССР */
