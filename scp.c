@@ -7322,7 +7322,7 @@ if (1) {
 
     if (!sim_stat (sim_prog_name, &fstat)) {
         if (!only_reproducible_factors)
-            fprintf (st, "\n        Simulator Compiled as %s%s%s on (or downloaded at) %s", cpp, arch, build, ctime (&fstat.st_mtime));
+            fprintf (st, "\n        Simulator Compiled as %s%s%s built on (or downloaded at) %24.24s", cpp, arch, build, ctime (&fstat.st_mtime));
         }
     else
         fprintf (st, "\n        Simulator Compiled as %s%s%s on %s", cpp, arch, build, sim_version_date_stamp);
