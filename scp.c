@@ -7234,6 +7234,10 @@ if (sim_vm_release != NULL) {                           /* if a release string i
     setenv ("SIM_VM_RELEASE", sim_vm_release, 1);
     fprintf (st, " Release %s", sim_vm_release);        /*   then display it */
     }
+#if defined (SUPER_PROJECT_NAME)
+setenv ("SIM_SUPER_PROJECT", __STR(SUPER_PROJECT_NAME), 1);
+fprintf (st, "%s", __STR(SUPER_PROJECT_NAME));          /*   then display it */
+#endif
 #if defined (SIM_VERSION_MODE)
 if (1) {
     char mode[] = __STR(SIM_VERSION_MODE);
@@ -7739,6 +7743,23 @@ if (NULL == strchr (__STR(SIM_ARCHIVE_GIT_COMMIT_TIME), '$')) {
     if (flag)
         fprintf (st, "%sarchive simh git commit time: %s", "\n        ", __STR(SIM_ARCHIVE_GIT_COMMIT_TIME));
     }
+#endif
+#endif
+#endif
+#if defined(SUPER_PROJECT_NAME)
+#if defined(SUPER_PROJECT_GIT_COMMIT_ID)
+if (1) {
+    const char *extras = strchr (__STR(SUPER_PROJECT_GIT_COMMIT_ID), '+');
+    char buf[64];
+
+    snprintf (buf, sizeof (buf), "%8.8s%s", __STR(SUPER_PROJECT_GIT_COMMIT_ID), extras ? extras : "");
+    fprintf (st, "%s%s git commit id: %s", flag ? "\n        " : "        ", __STR(SUPER_PROJECT_NAME), buf);
+    setenv ("SUPER_PROJECT_GIT_COMMIT_ID", buf, 1);
+    }
+#if defined(SUPER_PROJECT_GIT_COMMIT_TIME)
+setenv ("SUPER_PROJECT_GIT_COMMIT_TIME", __STR(SUPER_PROJECT_GIT_COMMIT_TIME), 1);
+if (flag)
+    fprintf (st, "%s%s git commit time: %s", "\n        ", __STR(SUPER_PROJECT__NAME), __STR(SUPER_PROJECT_GIT_COMMIT_TIME));
 #endif
 #endif
 #endif
