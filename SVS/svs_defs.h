@@ -350,6 +350,7 @@ extern t_value mmu_load64(CORE *cpu, int addr, int tag_check);
 extern t_value mmu_fetch(CORE *cpu, int addr, int *paddrp);
 extern void mmu_set_rp(CORE *cpu, int idx, t_value word, int supervisor);
 extern void mmu_setup(CORE *cpu);
+extern int  mmu_iom_pa(int vaddr);
 extern void mmu_set_protection(CORE *cpu, int idx, t_value word);
 
 /*

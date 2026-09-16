@@ -175,11 +175,18 @@ t_stat disk_event(UNIT *u)
  */
 static void disk_word_to_mem(t_value w, int addr)
 {
-    t_value value48  = w & BITS48;          /* младшие 6 байт — значение */
-    unsigned tagbyte = (w >> 48) & 0xFF;    /* 7-й байт — тип слова */
+    t_value value48 = w & BITS48;           /* младшие 6 байт — значение */
+    int pa = mmu_iom_pa(addr);              /* адрес из заявки — виртуальный */
 
-    memory[addr] = value48 << 16;           /* значение в разрядах 17..64, РМР=0 */
-    tag[addr] = (tagbyte == DISK_TAG_INSN) ? TAG_INSN48 : TAG_NUMBER48;
+    memory[pa] = value48 << 16;             /* значение в разрядах 17..64, РМР=0 */
+    /*
+     * Прочитанное с диска всегда метится как КОМАНДА (035).
+     * Тег переносится дальше сам: РАСПАК читает слово через СОП
+     * (mmu_load_with_tag кладёт тег в TagR) и пишет через ЗП/ЗПП, так что
+     * распакованная "вызывалка" остаётся исполнимой. Пометь её числом (036) —
+     * и переход на неё (032245: ПБ 02000) даст контроль команды.
+     */
+    tag[pa] = TAG_INSN48;
 }
 
 /*
@@ -187,8 +194,9 @@ static void disk_word_to_mem(t_value w, int addr)
  */
 static t_value mem_to_disk_word(int addr)
 {
-    t_value value48  = (memory[addr] >> 16) & BITS48;
-    unsigned tagbyte = (tag[addr] == TAG_INSN48) ? DISK_TAG_INSN : DISK_TAG_DATA;
+    int pa = mmu_iom_pa(addr);              /* адрес из заявки — виртуальный */
+    t_value value48  = (memory[pa] >> 16) & BITS48;
+    unsigned tagbyte = (tag[pa] == TAG_INSN48) ? DISK_TAG_INSN : DISK_TAG_DATA;
 
     return value48 | ((t_value)tagbyte << 48);
 }
@@ -219,17 +227,38 @@ t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr)
     for (i = 0; i < 8; ++i)
         disk_word_to_mem(buf[i], sysaddr + i);
 
-    /* Слова данных: свёртка 4:3 (см. комментарий к формату выше). buf[8..775]
-     * — 768 D-слов, buf[776..1031] — 256 S-слов. */
+    /*
+     * Слова данных, свёртка 4:3. Логическая страница лежит на диске В ПОРЯДКЕ:
+     * СНАЧАЛА 256 S-слов (buf[8..263]), ПОТОМ 768 D-слов (buf[264..1031]).
+     *
+     * Так требует РАСПАК, который распаковывает в два прохода:
+     *   ЦИКР (034710) собирает младшие 16 разр. трёх подряд идущих упакованных
+     *     слов в одно слово и кладёт 256 таких слов по 02000-02377 —
+     *     то есть ВОССТАНАВЛИВАЕТ S-слова;
+     *   ОЧМЛ (034716) обнуляет младшие 16 разр. 768 слов по 02400-03777,
+     *     оставляя чистые D-слова.
+     * Точка входа "вызывалки" (02000) — это ПЕРВОЕ S-слово, поэтому S-область
+     * обязана быть началом зоны, а не её хвостом.
+     */
     for (j = 0; j < ZONE_DATA_WORDS / 3; ++j) {
-        t_value s = buf[8 + ZONE_DATA_WORDS + j] & BITS48;
+        /*
+         * Группы кладутся в ОБРАТНОМ порядке: РАСПАК читает упакованные слова
+         * СВЕРХУ ВНИЗ (034711: соп, адреса 03777, 03776, ...), а результат
+         * пишет СНИЗУ ВВЕРХ (034710: зп 2377(1), адреса 02000, 02001, ...).
+         * Значит верхняя тройка обязана нести ПЕРВУЮ логическую группу, иначе
+         * страница получается перевёрнутой и в точке входа 02000 оказывается
+         * последнее слово зоны, а не первое.
+         */
+        int g = (ZONE_DATA_WORDS / 3 - 1) - j;
+        t_value s = buf[8 + g] & BITS48;
         for (k = 0; k < 3; ++k) {
-            t_value d    = buf[8 + 3*j + k] & BITS48;
+            t_value w    = buf[8 + ZONE_DATA_WORDS/3 + 3*g + k];
+            t_value d    = w & BITS48;
             t_value frag = (s >> (32 - 16*k)) & 0xFFFF;
-            int addr = memaddr + 3*j + k;
+            int addr = mmu_iom_pa(memaddr + 3*j + k);
 
             memory[addr] = (d << 16) | frag;
-            tag[addr]    = TAG_BITSET;
+            tag[addr]    = TAG_INSN48;      /* см. disk_word_to_mem */
         }
     }
 
@@ -253,22 +282,21 @@ t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr)
         buf[i] = mem_to_disk_word(sysaddr + i);
 
     /* Развёртка 3:4, обратная свёртке в svs_disk_read: из 768 слов памяти
-     * восстанавливаем 768 D-слов и 256 S-слов. Тип слова (7-й байт) для
-     * восстановленных слов данных не несёт полезной информации — свёрнутое
-     * слово тегировано TAG_BITSET, а не 035/036, — поэтому пишем DISK_TAG_DATA
-     * единообразно. */
+     * восстанавливаем 768 D-слов и 256 S-слов. Тип слова сохраняем: свёрнутое
+     * слово несёт настоящий тег (035/036) из образа диска, и он же переносится
+     * в распакованное слово через TagR (см. комментарий в svs_disk_read). */
     for (j = 0; j < ZONE_DATA_WORDS / 3; ++j) {
         t_value s = 0;
 
         for (k = 0; k < 3; ++k) {
-            t_value word = memory[memaddr + 3*j + k];
+            t_value word = memory[mmu_iom_pa(memaddr + 3*j + k)];
             t_value d    = (word >> 16) & BITS48;
             t_value frag = word & 0xFFFF;
 
-            buf[8 + 3*j + k] = d | ((t_value)DISK_TAG_DATA << 48);
+            buf[8 + ZONE_DATA_WORDS/3 + 3*j + k] = d | ((t_value)DISK_TAG_INSN << 48);
             s = (s << 16) | frag;
         }
-        buf[8 + ZONE_DATA_WORDS + j] = s | ((t_value)DISK_TAG_DATA << 48);
+        buf[8 + j] = s | ((t_value)DISK_TAG_INSN << 48);
     }
 
     if (u->dptr->dctrl & DEB_DAT)
