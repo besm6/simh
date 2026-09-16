@@ -409,6 +409,7 @@ t_value svs_unpack(t_value val, t_value mask);
 void iom_reset(int index);
 void iom_request(int index);
 void iom_service_tvzp(int index);
+void iom_update_intr(int cpu_index);
 
 /*
  * Дисковое устройство (МД).

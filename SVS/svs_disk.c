@@ -32,17 +32,43 @@
 /*
  * Размер зоны на диске: 8 служебных слов + 1024 слова данных = 1 лист.
  */
-#define ZONE_SIZE   (8 + 1024)              /* слов в зоне */
+#define ZONE_SIZE   (8 + 1024)              /* слов в зоне на диске (физический формат) */
 #define DISK_SIZE   (1024 * ZONE_SIZE)      /* слов на устройстве (1024 зоны) */
+
+/*
+ * Число слов данных зоны В ПАМЯТИ после свёртки (см. ниже) — 768, а не 1024.
+ */
+#define ZONE_DATA_WORDS   768
 
 /*
  * Формат слова в образе диска (svs2053.bin и т.п.):
  *
  *   8 байт на слово, little-endian. 48-разрядное слово БЭСМ-6 лежит в МЛАДШИХ
  *   6 байтах; 7-й байт — тип слова: 1 = команда, 2 = число (данные); 8-й байт
- *   не используется. В памяти СВС слово хранится как 64-разрядное: 48 разрядов
- *   значения в старших разрядах (17..64), младшие 16 (РМР) = 0, а тип слова —
- *   в отдельном массиве тегов tag[] (035 = команда, 036 = число).
+ *   не используется.
+ *
+ * Служебные слова зоны (8 шт.) переносятся в память 1:1: значение — в
+ * старших разрядах 17..64, младшие 16 (РМР) = 0, тип слова — в tag[]
+ * (035 = команда, 036 = число). РАСПАК читает их плоским СЧ (см. цикл ПСС
+ * в адап.bemsh), поэтому тег обязан остаться 035/036.
+ *
+ * Слова данных зоны (1024 шт. на диске) реальное железо СВС в память 1:1 НЕ
+ * переносит — канал их сворачивает (см. dispak-svs/tosvs.c, сверено с
+ * процедурой РАСПАК в адап.bemsh/adap.txt): 1024 слова = 768 D-слов
+ * (data[0..767]) + 256 S-слов (data[768..1023]); каждое 48-битное S-слово
+ * режется на три 16-разрядных фрагмента, которые ложатся в РМР (младшие 16
+ * разрядов) трёх последовательных D-слов:
+ *
+ *   out[3j+0] = D[3j+0]<<16 | S[j] разр.48..33
+ *   out[3j+1] = D[3j+1]<<16 | S[j] разр.32..17
+ *   out[3j+2] = D[3j+2]<<16 | S[j] разр.16..1
+ *
+ * В памяти зона данных занимает поэтому не 1024, а 768 слов (ZONE_DATA_WORDS).
+ * РАСПАК читает их командой СЧП (64-битное "чтение полное с тегом БЭСМ"), а
+ * не плоским СЧ — соответственно эти слова тегируются TAG_BITSET, а не
+ * 035/036: тег 035/036 на таком слове означает, что оно ещё не свёрнуто (или
+ * свёртка не выполнена), и провоцирует контроль числа при 64-битном чтении
+ * (см. mmu_load64 в svs_mmu.c).
  */
 #define DISK_TAG_INSN   1                   /* 7-й байт: команда */
 #define DISK_TAG_DATA   2                   /* 7-й байт: число   */
@@ -175,7 +201,7 @@ static t_value mem_to_disk_word(int addr)
 t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr)
 {
     t_value buf[ZONE_SIZE];
-    int i;
+    int i, j, k;
 
     if (!(u->flags & UNIT_ATT))
         return SCPE_UNATT;
@@ -189,10 +215,23 @@ t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr)
         sim_debug(DEB_DAT, u->dptr, "::: чтение МД зона %04o СС@%05o данные@%05o\n",
                   zone, sysaddr, memaddr);
 
+    /* Служебные слова: 1:1, тег из файла (035/036). */
     for (i = 0; i < 8; ++i)
         disk_word_to_mem(buf[i], sysaddr + i);
-    for (i = 0; i < 1024; ++i)
-        disk_word_to_mem(buf[8 + i], memaddr + i);
+
+    /* Слова данных: свёртка 4:3 (см. комментарий к формату выше). buf[8..775]
+     * — 768 D-слов, buf[776..1031] — 256 S-слов. */
+    for (j = 0; j < ZONE_DATA_WORDS / 3; ++j) {
+        t_value s = buf[8 + ZONE_DATA_WORDS + j] & BITS48;
+        for (k = 0; k < 3; ++k) {
+            t_value d    = buf[8 + 3*j + k] & BITS48;
+            t_value frag = (s >> (32 - 16*k)) & 0xFFFF;
+            int addr = memaddr + 3*j + k;
+
+            memory[addr] = (d << 16) | frag;
+            tag[addr]    = TAG_BITSET;
+        }
+    }
 
     return SCPE_OK;
 }
@@ -203,7 +242,7 @@ t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr)
 t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr)
 {
     t_value buf[ZONE_SIZE];
-    int i;
+    int i, j, k;
 
     if (!(u->flags & UNIT_ATT))
         return SCPE_UNATT;
@@ -212,8 +251,25 @@ t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr)
 
     for (i = 0; i < 8; ++i)
         buf[i] = mem_to_disk_word(sysaddr + i);
-    for (i = 0; i < 1024; ++i)
-        buf[8 + i] = mem_to_disk_word(memaddr + i);
+
+    /* Развёртка 3:4, обратная свёртке в svs_disk_read: из 768 слов памяти
+     * восстанавливаем 768 D-слов и 256 S-слов. Тип слова (7-й байт) для
+     * восстановленных слов данных не несёт полезной информации — свёрнутое
+     * слово тегировано TAG_BITSET, а не 035/036, — поэтому пишем DISK_TAG_DATA
+     * единообразно. */
+    for (j = 0; j < ZONE_DATA_WORDS / 3; ++j) {
+        t_value s = 0;
+
+        for (k = 0; k < 3; ++k) {
+            t_value word = memory[memaddr + 3*j + k];
+            t_value d    = (word >> 16) & BITS48;
+            t_value frag = word & 0xFFFF;
+
+            buf[8 + 3*j + k] = d | ((t_value)DISK_TAG_DATA << 48);
+            s = (s << 16) | frag;
+        }
+        buf[8 + ZONE_DATA_WORDS + j] = s | ((t_value)DISK_TAG_DATA << 48);
+    }
 
     if (u->dptr->dctrl & DEB_DAT)
         sim_debug(DEB_DAT, u->dptr, "::: запись МД зона %04o СС@%05o данные@%05o\n",
