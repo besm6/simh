@@ -85,44 +85,50 @@ int mmu_iom_pa(int vaddr)
  */
 static int va_to_pa(CORE *cpu, int vaddr, int is_fetch)
 {
-    int paddr;
+    int vpage  = vaddr >> 10;
+    int offset = vaddr & BITS(10);
+    uint32 physpage;
 
-    (void) is_fetch;
+    if (vaddr < 010)
+        return vaddr;               /* тумблерные регистры — не память */
 
-#if 0   /* правильная модель СВС — включить вместе с mmu_fetch (см. ниже) */
-    {
-        int vpage  = vaddr >> 10;
-        int offset = vaddr & BITS(10);
-        uint32 physpage;
+    if (! IS_SUPERVISOR(cpu->RUU))
+        physpage = cpu->UTLB[vpage];            /* режим пользователя */
+    else if (is_fetch)
+        physpage = cpu->STLB[vpage];            /* команды — по приписке ядра */
+    else
+        /*
+         * Данные в режиме ядра: VТМ выбирает, ЧЬЯ приписка применяется.
+         *
+         * ВНИМАНИЕ: полярность этого разряда ОДНОЙ парой ядро/пользователь
+         * не описывается — два наблюдения противоречат друг другу:
+         *
+         *   - СТЕК. АДАП кладёт адрес возврата и снимает его командой
+         *     МОД (S) (033721). Запись легла в физ. 01540, то есть по
+         *     приписке ПОЛЬЗОВАТЕЛЯ (UTLB[0]=0), а чтение при нынешней
+         *     полярности идёт по приписке ЯДРА (STLB[0]=01600) и даёт мусор
+         *     -> переход на 031260 (данные) и контроль команды.
+         *   - ПЕРЕП (036034). Источник переписи читается при VТМ 1027 и
+         *     обязан быть в приписке ЯДРА: перевернёшь полярность — чтение
+         *     уходит в пустую приписку пользователя и даёт контроль числа.
+         *
+         * Похоже, у СТЕКА своя приписка (слово пульта 7, "приписка стека"),
+         * а не та, что выбирает VТМ. См. ПВВ.md §8.
+         */
+        physpage = (cpu->M[PSW] & PSW_MMAP_DISABLE) ?
+                   cpu->STLB[vpage] : cpu->UTLB[vpage];
 
-        if (vaddr < 010)
-            return vaddr;               /* тумблерные регистры — не память */
+    return (physpage << 10) | offset;
 
-        if (! IS_SUPERVISOR(cpu->RUU))
-            physpage = cpu->UTLB[vpage];            /* режим пользователя */
-        else if (is_fetch)
-            physpage = cpu->STLB[vpage];            /* команды — по ядру */
-        else
-            physpage = (cpu->M[PSW] & PSW_MMAP_DISABLE) ?
-                       cpu->STLB[vpage] : cpu->UTLB[vpage];
-
-        return (physpage << 10) | offset;
+#if 0   /* СТАРАЯ упрощённая модель: "приписка включена/выключена" */
+    if (cpu->M[PSW] & PSW_MMAP_DISABLE) {
+        return vaddr;
+    } else {
+        uint32 pp = IS_SUPERVISOR(cpu->RUU) ?
+                    cpu->STLB[vpage] : cpu->UTLB[vpage];
+        return (pp << 10) | offset;
     }
 #endif
-
-    if (cpu->M[PSW] & PSW_MMAP_DISABLE) {
-        /* Приписка отключена. */
-        paddr = vaddr;
-    } else {
-        /* Приписка работает. */
-        int vpage    = vaddr >> 10;
-        int offset   = vaddr & BITS(10);
-        int physpage = IS_SUPERVISOR(cpu->RUU) ?
-                       cpu->STLB[vpage] : cpu->UTLB[vpage];
-
-        paddr = (physpage << 10) | offset;
-    }
-    return paddr;
 }
 
 /*
@@ -241,7 +247,17 @@ static int mmu_load_with_tag(CORE *cpu, int vaddr, t_value *val64, uint8 *t)
     /* Вычисляем физический адрес слова */
     int paddr = va_to_pa(cpu, vaddr, 0);
 
-    if (paddr >= 010) {
+    /*
+     * Слова 1-7 в режиме ЯДРА читаются из физической памяти 1-7, а не с
+     * тумблерных регистров: приписка на них не действует, но это обычные
+     * ячейки. Именно оттуда АДАП берёт слова пульта — например, номер канала
+     * для МД (разр.22:21 слова 2, проверка ЕСТЬКД 033613; иначе СТОП 40114)
+     * и приписку стека из слова 7. Команда `d 2 …` в .ini кладёт значение
+     * именно в память, так что читать надо её.
+     *
+     * В режиме пользователя за адресами 1-7 остаются тумблерные регистры.
+     */
+    if (paddr >= 010 || IS_SUPERVISOR(cpu->RUU)) {
         /* Из памяти */
         *val64 = memory[paddr];
         *t = tag[paddr];
@@ -361,21 +377,72 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
     if (cpu->M[IBP] == vaddr && ! IS_SUPERVISOR(cpu->RUU))
         longjmp(cpu->exception, STOP_INSN_ADDR_MATCH);
 
-    /* Вычисляем физический адрес слова */
-    /* Старая модель: в режиме супервизора выборка команд идёт БЕЗ приписки.
-     * Правильный вариант — `va_to_pa(cpu, vaddr, 1)` — включать вместе с
-     * блоком #if 0 в va_to_pa(). */
-    int paddr = IS_SUPERVISOR(cpu->RUU) ? vaddr : va_to_pa(cpu, vaddr, 1);
+    /*
+     * Буфер предвыборки команд.
+     *
+     * Окно буфера скользит: после выдачи слова оно ДОЗАПОЛНЯЕТСЯ вперёд, так
+     * что в нём всегда лежат ближайшие PREFETCH_DEPTH слов. Именно поэтому
+     * смена приписки "на ходу" не ломает исполнение: команда РЕГ '60'+РПАД
+     * (036134) переотображает страницы, но слово 036135 к этому моменту уже
+     * выбрано по СТАРОЙ приписке и исполняется из буфера, успевая уйти на
+     * уже переотображённый адрес (ВТБРЗ на АВПВВ).
+     *
+     * Предвыборка НЕ проверяет тег и не трогает защиту — только запоминает
+     * слово и его физический адрес; контроль команды делается ниже, когда
+     * слово реально исполняется. Иначе чтение вперёд по неприписанной
+     * странице давало бы ложное прерывание.
+     *
+     * Переход буфер сбрасывает: слово отдаётся из окна, только если выборка
+     * идёт последовательно (тот же адрес — второй слог — или следующий).
+     */
+    int paddr, i;
 
-    if (paddr >= 010) {
-        /* Из памяти */
-        val = memory[paddr] >> 16;
-        t = tag[paddr];
+    if (vaddr == cpu->pf_last || vaddr == cpu->pf_last + 1) {
+        /* Последовательная выборка: сдвигаем окно к текущему адресу. */
+        if (vaddr >= (int) cpu->pf_base &&
+            vaddr <  (int) cpu->pf_base + cpu->pf_count)
+        {
+            int shift = vaddr - cpu->pf_base;
+
+            for (i = 0; i + shift < cpu->pf_count; ++i) {
+                cpu->pf_va[i]   = cpu->pf_va[i + shift];
+                cpu->pf_pa[i]   = cpu->pf_pa[i + shift];
+                cpu->pf_word[i] = cpu->pf_word[i + shift];
+                cpu->pf_tag[i]  = cpu->pf_tag[i + shift];
+            }
+            cpu->pf_count -= shift;
+            cpu->pf_base   = vaddr;
+        } else {
+            cpu->pf_count = 0;
+            cpu->pf_base  = vaddr;
+        }
     } else {
-        /* from switch regs */
-        val = cpu->pult[paddr];
-        t = TAG_INSN48;
+        /* Переход — сброс буфера. */
+        cpu->pf_count = 0;
+        cpu->pf_base  = vaddr;
     }
+
+    /* Дозаполняем окно вперёд по ТЕКУЩЕЙ приписке. */
+    while (cpu->pf_count < PREFETCH_DEPTH) {
+        uint32 va = (cpu->pf_base + cpu->pf_count) & BITS(15);
+        uint32 pa = va_to_pa(cpu, va, 1);
+
+        cpu->pf_va[cpu->pf_count]   = va;
+        cpu->pf_pa[cpu->pf_count]   = pa;
+        if (pa >= 010) {
+            cpu->pf_word[cpu->pf_count] = memory[pa] >> 16;
+            cpu->pf_tag[cpu->pf_count]  = tag[pa];
+        } else {
+            cpu->pf_word[cpu->pf_count] = cpu->pult[pa];
+            cpu->pf_tag[cpu->pf_count]  = TAG_INSN48;
+        }
+        cpu->pf_count++;
+    }
+
+    paddr = cpu->pf_pa[0];
+    val   = cpu->pf_word[0];
+    t     = cpu->pf_tag[0];
+    cpu->pf_last = vaddr;
 
     if (svs_trace >= TRACE_INSTRUCTIONS && cpu_dev[0].dctrl &&
         ! (cpu->RUU & RUU_RIGHT_INSTR)) {
@@ -415,6 +482,27 @@ void mmu_set_rp(CORE *cpu, int idx, t_value val, int supervisor)
     p1 &= mask;
     p2 &= mask;
     p3 &= mask;
+
+    if (svs_trace >= TRACE_INSTRUCTIONS) {
+        /*
+         * Дамп перепрограммирования приписки. Печатаем и СТАРОЕ, и НОВОЕ
+         * отображение, чтобы сразу видеть, какие виртуальные страницы
+         * переехали. Особенно важна страница 0: в ней лежит стек (вирт.01540),
+         * и её отображение меняться не должно — иначе адрес возврата,
+         * положенный до перенастройки, читается уже из другого слова.
+         */
+        const uint32 *tlb = supervisor ? cpu->STLB : cpu->UTLB;
+        int b = idx * 4;
+
+        fprintf(sim_log,
+            "cpu%d --- Приписка %s: РП%d := %o,%o,%o,%o (было %o,%o,%o,%o)"
+            " => вирт.стр %d->%o %d->%o %d->%o %d->%o%s\n",
+            cpu->index, supervisor ? "ЯДРА  " : "ПОЛЬЗ.", idx,
+            p0, p1, p2, p3,
+            tlb[b], tlb[b+1], tlb[b+2], tlb[b+3],
+            b, p0, b+1, p1, b+2, p2, b+3, p3,
+            (idx == 0 && tlb[0] != p0) ? "   <<< СТРАНИЦА 0 ПЕРЕЕХАЛА!" : "");
+    }
 
     if (supervisor) {
         cpu->RPS[idx] = p0 | p1 << 12 | (t_value)p2 << 24 | (t_value)p3 << 36;
