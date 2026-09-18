@@ -481,7 +481,22 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
     /* Прерывание (контроль команды), если попалась не 48-битная команда.
      * Тумблерные регистры только с командной сверткой. */
     if (paddr >= 010 && ! IS_INSN48(t)) {
-        svs_debug("--- (%05o) контроль команды", vaddr);
+        static int dumped = 0;
+
+        svs_debug("--- (%05o) контроль команды: физ.%07o тег=%03o слово=%016jo",
+            vaddr, paddr, t, (uintmax_t)((memory[paddr] >> 16) & BITS48));
+
+        /* Один раз печатаем окрестность: какие теги вокруг, где граница
+         * между принесённым с устройства кодом и нетронутой памятью. */
+        if (! dumped) {
+            int a, lo = (paddr >= 020) ? paddr - 020 : 0;
+
+            dumped = 1;
+            for (a = lo; a < lo + 050 && a < (int)MEMSIZE; a++)
+                svs_debug("---   %07o тег=%03o %016jo%s", a, tag[a],
+                    (uintmax_t)((memory[a] >> 16) & BITS48),
+                    (a == paddr) ? "  <<< сюда прыгнули" : "");
+        }
         longjmp(cpu->exception, STOP_INSN_CHECK);
     }
 

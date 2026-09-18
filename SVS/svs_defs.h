@@ -434,12 +434,12 @@ void iom_update_intr(int cpu_index);
  * Дисковое устройство (МД).
  */
 extern DEVICE disk_dev;
-t_stat svs_disk_io(int dev, int zone, int sysaddr, int memaddr, int is_write);
+t_stat svs_disk_io(int dev, int zone, int sysaddr, int memaddr, int is_write, int nwords);
 
 extern DEVICE drum_dev;
-t_stat svs_drum_io(int dev, int zone, int sysaddr, int memaddr, int is_write);
-t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr);
-t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr);
+t_stat svs_drum_io(int dev, int zone, int sysaddr, int memaddr, int is_write, int nwords);
+t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
+t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 
 /*
  * Разряды главного регистра прерываний (ГРП)

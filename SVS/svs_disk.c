@@ -28,6 +28,7 @@
  * authorization from Leonid Broukhis and Serge Vakulenko.
  */
 #include "svs_defs.h"
+#include <string.h>
 
 /*
  * Размер зоны на диске: 8 служебных слов + 1024 слова данных = 1 лист.
@@ -39,6 +40,13 @@
  * Число слов данных зоны В ПАМЯТИ после свёртки (см. ниже) — 768, а не 1024.
  */
 #define ZONE_DATA_WORDS   768
+/*
+ * Смещение области данных от НАМ (базы заявки): ПВВ вызывает нас как
+ * svs_disk_io(dev, zone, memaddr, memaddr + 16, ...). Служебные слова лежат
+ * по смещениям 0..7, 8..15 не используются, данные — с 16. Именно эту
+ * раскладку покрывает РАЗМ=784 (=0o1420) полной заявки к МД.
+ */
+#define DISK_DATA_OFFSET  16
 
 /*
  * Формат слова в образе диска (svs2053.bin и т.п.):
@@ -206,7 +214,7 @@ static t_value mem_to_disk_word(int addr)
  * Служебные слова кладутся по адресу sysaddr, данные — по адресу memaddr.
  * Возвращает SCPE_OK либо SCPE_IOERR.
  */
-t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr)
+t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
 {
     t_value buf[ZONE_SIZE];
     int i, j, k;
@@ -223,8 +231,12 @@ t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr)
         sim_debug(DEB_DAT, u->dptr, "::: чтение МД зона %04o СС@%05o данные@%05o\n",
                   zone, sysaddr, memaddr);
 
-    /* Служебные слова: 1:1, тег из файла (035/036). */
-    for (i = 0; i < 8; ++i)
+    /*
+     * Служебные слова: 1:1, тег из файла (035/036).
+     * nwords — поле РАЗМ слова ДО, отсчитывается ОТ НАМ (= sysaddr): у МД
+     * полная заявка РАЗМ=784 покрывает 8 служ. + 8 пропуск + 768 данных.
+     */
+    for (i = 0; i < 8 && i < nwords; ++i)
         disk_word_to_mem(buf[i], sysaddr + i);
 
     /*
@@ -266,8 +278,12 @@ t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr)
             t_value w    = buf[8 + ZONE_DATA_WORDS/3 + 3*j + k];   /* D — по порядку */
             t_value d    = w & BITS48;
             t_value frag = (s >> (32 - 16*k)) & 0xFFFF;
-            int addr = mmu_iom_data_pa(memaddr + 3*j + k);
+            int off  = DISK_DATA_OFFSET + 3*j + k;      /* смещение от НАМ */
+            int addr;
 
+            if (off >= nwords)
+                continue;                   /* за пределами РАЗМ — не наше дело */
+            addr = mmu_iom_data_pa(memaddr + 3*j + k);
             memory[addr] = (d << 16) | frag;
             tag[addr]    = TAG_INSN48;      /* см. disk_word_to_mem */
         }
@@ -279,7 +295,7 @@ t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr)
 /*
  * Запись одной зоны (8 служебных + 1024 слова данных) из ОЗУ на диск.
  */
-t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr)
+t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
 {
     t_value buf[ZONE_SIZE];
     int i, j, k;
@@ -289,7 +305,20 @@ t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr)
     if (u->flags & UNIT_RO)
         return SCPE_RO;
 
-    for (i = 0; i < 8; ++i)
+    /*
+     * ЧАСТИЧНАЯ запись (РАЗМ меньше полной заявки) обязана сохранить всё, чего
+     * заявка не касается: зона на диске пишется целиком, и незатребованные
+     * слова нельзя обнулять — это стёрло бы данные. Поэтому сначала читаем
+     * зону с диска, а потом перекрываем только запрошенное. Если зоны ещё нет
+     * (разреженный файл, чтение за концом) — начинаем с нулей.
+     */
+    if (nwords < DISK_DATA_OFFSET + ZONE_DATA_WORDS) {
+        if (fseek(u->fileref, (long)ZONE_SIZE * zone * 8, SEEK_SET) != 0 ||
+            sim_fread(buf, 8, ZONE_SIZE, u->fileref) != ZONE_SIZE)
+            memset(buf, 0, sizeof(buf));
+    }
+
+    for (i = 0; i < 8 && i < nwords; ++i)
         buf[i] = mem_to_disk_word(sysaddr + i);
 
     /* Развёртка 3:4, обратная свёртке в svs_disk_read: из 768 слов памяти
@@ -299,15 +328,30 @@ t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr)
     for (j = 0; j < ZONE_DATA_WORDS / 3; ++j) {
         t_value s = 0;
 
+        int touched = 0;
+
         for (k = 0; k < 3; ++k) {
-            t_value word = memory[mmu_iom_data_pa(memaddr + 3*j + k)];
-            t_value d    = (word >> 16) & BITS48;
-            t_value frag = word & 0xFFFF;
+            int off = DISK_DATA_OFFSET + 3*j + k;
+            t_value word, d, frag;
+
+            if (off >= nwords) {
+                /* Слово вне заявки — оставляем то, что уже лежит в зоне. */
+                t_value old_d = buf[8 + ZONE_DATA_WORDS/3 + 3*j + k] & BITS48;
+                s = (s << 16) | ((buf[8 + j] >> (32 - 16*k)) & 0xFFFF);
+                buf[8 + ZONE_DATA_WORDS/3 + 3*j + k] =
+                    old_d | ((t_value)DISK_TAG_INSN << 48);
+                continue;
+            }
+            touched = 1;
+            word = memory[mmu_iom_data_pa(memaddr + 3*j + k)];
+            d    = (word >> 16) & BITS48;
+            frag = word & 0xFFFF;
 
             buf[8 + ZONE_DATA_WORDS/3 + 3*j + k] = d | ((t_value)DISK_TAG_INSN << 48);
             s = (s << 16) | frag;
         }
-        buf[8 + j] = s | ((t_value)DISK_TAG_INSN << 48);
+        if (touched)
+            buf[8 + j] = s | ((t_value)DISK_TAG_INSN << 48);
     }
 
     if (u->dptr->dctrl & DEB_DAT)
@@ -329,7 +373,7 @@ t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr)
  * (чтение/запись), номер зоны, адреса служебных слов и данных берутся из
  * описателя обмена (СМ/ДО/СО/СПУ, см. ПВВ.md §5).
  */
-t_stat svs_disk_io(int dev, int zone, int sysaddr, int memaddr, int is_write)
+t_stat svs_disk_io(int dev, int zone, int sysaddr, int memaddr, int is_write, int nwords)
 {
     UNIT *u;
 
@@ -342,6 +386,6 @@ t_stat svs_disk_io(int dev, int zone, int sysaddr, int memaddr, int is_write)
     controller.memory  = memaddr;
     controller.sysarea = sysaddr;
 
-    return is_write ? svs_disk_write(u, zone, sysaddr, memaddr)
-                    : svs_disk_read(u, zone, sysaddr, memaddr);
+    return is_write ? svs_disk_write(u, zone, sysaddr, memaddr, nwords)
+                    : svs_disk_read(u, zone, sysaddr, memaddr, nwords);
 }

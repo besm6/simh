@@ -429,15 +429,37 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
      * плюс 768 слов данных = 776 слов (0o1410), меньше страницы, и 02360+0o1410
      * = 03770 целиком помещается в вирт. странице 1 (→ физ. 0o1601 по RPS0).
      */
-    int memaddr  = (int)(memory[z + 2] & 0xFFFF);
+    /*
+     * НАМ — начальный адрес массива, разр.0..19 слова ДО (№10.170.002 ТОП,
+     * 4.1.5), то есть ДВАДЦАТЬ разрядов, а не шестнадцать.
+     *
+     * Это ровно младшие 20 разр. 64-битной ячейки, потому что АДАП кладёт ДО
+     * так: «СЧИ 8 НОМЕР ЛИСТА / СДА 64-10 АДРЕС / … / ЗАПДО: СДА 64+16;
+     * ЗПП 2(АЗАЯВ)». Сдвиг вправо на 16 уводит младшие 16 разр. в РМР, а ЗПП
+     * складывает обратно (значение48<<16)|РМР — в ячейке лежит исходная
+     * величина целиком. Прежняя маска 0xFFFF брала только РМР и обрезала бы
+     * буфер с адресом ≥ 0200000; разр.16-19 берутся из младших разрядов
+     * значения48. Поле РАЗМ (разр.22-41) выше и в маску не попадает.
+     */
+    int memaddr  = (int)(memory[z + 2] & 0xFFFFF);
+    /*
+     * РАЗМ — размер массива в словах, разр.22..41 слова ДО (4.1.5).
+     * Раньше канал его игнорировал и всегда переносил целую зону. Пока ОС
+     * просила полную зону (МД 784, МБ 1024) это совпадало, но заявка на
+     * 8 слов (чтение одних служебных слов зоны) вываливала в память лишние
+     * 768 слов: они ложились нулями с тегом команды на 050..01447, управление
+     * проходило сквозь них и падало по контролю команды на 01450.
+     */
+    int nwords   = (int)((memory[z + 2] >> 22) & 0xFFFFF);
     t_stat r;
 
     if (svs_trace >= TRACE_DEVICES)
         fprintf(sim_log,
             "iom%d --- обмен: устр=%d заявка@%o %s зона=%o сектор=%d буфер=%o\n"
-            "iom%d ---   ДО=%016jo(РМР %06o) СО=%016jo СПУ=%016jo(РМР %06o)\n",
+            "iom%d ---   ДО=%016jo(НАМ %07o РАЗМ %d) СО=%016jo СПУ=%016jo(РМР %06o)\n",
             iom->index, dev, z, is_read ? "ЧТ" : "ЗП", zone, sector, memaddr,
-            iom->index, (uintmax_t)do_, (unsigned)(memory[z+2] & 0xFFFF),
+            iom->index, (uintmax_t)do_, (unsigned)(memory[z+2] & 0xFFFFF),
+            (unsigned)((memory[z+2] >> 22) & 0xFFFFF),
             (uintmax_t)so, (uintmax_t)spu, (unsigned)(memory[z+4] & 0xFFFF));
 
     /* Зона = 8 служебных слов (в буфер) + 1024 слова данных (буфер+8). */
@@ -481,7 +503,7 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
 
     switch (devclass) {
     case IOM_TUS_CLASS_MD:
-        r = svs_disk_io(dev, zone, memaddr, memaddr + 16, !is_read);
+        r = svs_disk_io(dev, zone, memaddr, memaddr + 16, !is_read, nwords);
         break;
     case IOM_TUS_CLASS_MB:
         /*
@@ -489,7 +511,7 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
          * служебные слова идут с базы, а данные — сразу за ними. Форма вызова
          * та же, что у диска: sysaddr — база зоны, третий аргумент — данные.
          */
-        r = svs_drum_io(dev, zone, memaddr, memaddr + IOM_ZONE_SERVICE, !is_read);
+        r = svs_drum_io(dev, zone, memaddr, memaddr + IOM_ZONE_SERVICE, !is_read, nwords);
         break;
     default:
         r = SCPE_NXDEV;

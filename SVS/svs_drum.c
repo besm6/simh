@@ -177,7 +177,7 @@ t_stat drum_event(UNIT *u)
  * Если зона за концом файла (ещё ни разу не записана), отдаём нули — барабан
  * чистый.
  */
-static t_stat svs_drum_read(UNIT *u, int zone, int sysaddr, int memaddr)
+static t_stat svs_drum_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
 {
     uint8 buf[ZONE_BYTES];
     size_t got = 0;
@@ -236,6 +236,17 @@ static t_stat svs_drum_read(UNIT *u, int zone, int sysaddr, int memaddr)
         for (j = 0; j < 8; ++j)
             word |= (t_value)p[j] << (8*j);
 
+        /*
+         * РАЗМ (nwords) у барабана считает ТОЛЬКО слова данных: полная заявка
+         * ГЕНС-а несёт РАЗМ=1024 = ровно страница, а служебные слова АДАП
+         * гоняет отдельной областью СС1Н (КНАПР КОНД А(СС1Н) в ЗКМБ), вне
+         * массива ДО. Поэтому служебные слова переносим всегда, а данные —
+         * не больше запрошенного. У МД раскладка другая, там РАЗМ=784
+         * покрывает и служебные слова (см. DISK_DATA_OFFSET в svs_disk.c).
+         */
+        if (i >= ZONE_SERVICE_WORDS && (i - ZONE_SERVICE_WORDS) >= nwords)
+            continue;
+
         addr = mmu_iom_data_pa(i < ZONE_SERVICE_WORDS ?
                           sysaddr + i : memaddr + (i - ZONE_SERVICE_WORDS));
         if (addr < 0 || addr >= MEMSIZE)
@@ -251,7 +262,7 @@ static t_stat svs_drum_read(UNIT *u, int zone, int sysaddr, int memaddr)
 /*
  * Запись зоны из памяти на барабан — точная обратная операция.
  */
-static t_stat svs_drum_write(UNIT *u, int zone, int sysaddr, int memaddr)
+static t_stat svs_drum_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
 {
     uint8 buf[ZONE_BYTES];
     int i;
@@ -262,10 +273,28 @@ static t_stat svs_drum_write(UNIT *u, int zone, int sysaddr, int memaddr)
         return SCPE_RO;
 
     memset(buf, 0, sizeof(buf));
+    /*
+     * ЧАСТИЧНАЯ запись обязана сохранить всё, чего заявка не касается: зона
+     * пишется целиком, и обнулять незатребованные слова нельзя. Поэтому при
+     * неполном РАЗМ сначала подтягиваем зону с барабана, а потом перекрываем
+     * только запрошенное. Незаписанной зоны может не быть — тогда нули.
+     */
+    if (nwords < ZONE_WORDS - ZONE_SERVICE_WORDS) {
+        size_t got = 0;
+
+        if (fseek(u->fileref, (long)ZONE_BYTES * zone, SEEK_SET) == 0)
+            got = sim_fread(buf, 1, ZONE_BYTES, u->fileref);
+        if (got < ZONE_BYTES)
+            memset(buf + got, 0, ZONE_BYTES - got);
+    }
+
     for (i = 0; i < ZONE_WORDS; ++i) {
         uint8 *p = buf + (size_t)i * DRUM_WORD_BYTES;
         t_value word;
         int addr, j;
+
+        if (i >= ZONE_SERVICE_WORDS && (i - ZONE_SERVICE_WORDS) >= nwords)
+            continue;           /* вне заявки — сохраняем то, что уже в зоне */
 
         addr = mmu_iom_data_pa(i < ZONE_SERVICE_WORDS ?
                           sysaddr + i : memaddr + (i - ZONE_SERVICE_WORDS));
@@ -293,7 +322,7 @@ static t_stat svs_drum_write(UNIT *u, int zone, int sysaddr, int memaddr)
  * Обмен с барабаном по заявке ПВВ. Форма вызова та же, что у svs_disk_io():
  * sysaddr — база зоны (служебные слова), memaddr — адрес слов данных.
  */
-t_stat svs_drum_io(int dev, int zone, int sysaddr, int memaddr, int is_write)
+t_stat svs_drum_io(int dev, int zone, int sysaddr, int memaddr, int is_write, int nwords)
 {
     UNIT *u;
 
@@ -308,6 +337,6 @@ t_stat svs_drum_io(int dev, int zone, int sysaddr, int memaddr, int is_write)
     controller.memory  = memaddr;
     controller.sysarea = sysaddr;
 
-    return is_write ? svs_drum_write(u, zone, sysaddr, memaddr)
-                    : svs_drum_read(u, zone, sysaddr, memaddr);
+    return is_write ? svs_drum_write(u, zone, sysaddr, memaddr, nwords)
+                    : svs_drum_read(u, zone, sysaddr, memaddr, nwords);
 }
