@@ -203,6 +203,7 @@ extern IOMDATA iom_data[4];         /* состояние ПВВ */
  */
 typedef enum {
     TRACE_NONE = 0,
+    TRACE_DEVICES,                  /* только обмены каналов и устройств */
     TRACE_EXTRACODES,               /* только экстракоды (кроме э75) */
     TRACE_INSTRUCTIONS,             /* только команды процессора */
     TRACE_ALL,                      /* команды, регистры и обращения к памяти */
@@ -433,6 +434,9 @@ void iom_update_intr(int cpu_index);
  */
 extern DEVICE disk_dev;
 t_stat svs_disk_io(int dev, int zone, int sysaddr, int memaddr, int is_write);
+
+extern DEVICE drum_dev;
+t_stat svs_drum_io(int dev, int zone, int sysaddr, int memaddr, int is_write);
 t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr);
 t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr);
 

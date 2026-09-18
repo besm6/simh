@@ -190,7 +190,7 @@ void iom_reset(int index)
     iom->UTA = 0;
     iom->IOQA = 0;
     iom->SQA = 0;
-    if (svs_trace >= TRACE_INSTRUCTIONS)
+    if (svs_trace >= TRACE_DEVICES)
         fprintf(sim_log, "iom%d --- Сброс ПВВ\n", iom->index);
 }
 
@@ -279,16 +279,46 @@ void iom_reset(int index)
  * ТУСЗ 030320-030337 (проверено дампом в точке ИНДБУД, см. dispak.ini).
  */
 #define IOM_TUS_ENTRIES     0160        /* записей в ТУС/ТУСЗ (7 классов по 16) */
-#define IOM_TUS_CLASS_MD    5           /* класс устройства МД в ТУС/ТУСЗ */
+#define IOM_ZONE_SERVICE    8           /* служебных слов в зоне */
+#define IOM_TUS_CLASS_MB    4           /* класс МБ (барабан): ТУСМБ@030460, канал Х'20' */
+#define IOM_TUS_CLASS_MD    5           /* класс МД (диск):    ТУСМД@030500, канал Х'22' */
 #define IOM_TUS_BLOCK       020         /* записей в блоке одного класса */
+
+/* Смещение блока класса в ТУС: класс k лежит по k*16 (МБ 4*16=0100, МД 5*16=0120). */
+#define IOM_TUS_CLASS_BASE(c)   ((c) * IOM_TUS_BLOCK)
+/* Ограничитель обхода очереди ТОЧ — см. цикл в iom_pusk_obmen. */
+#define IOM_QUEUE_MAX_STEPS     256
+#define IOM_NUS_MD_BASE         IOM_TUS_CLASS_BASE(IOM_TUS_CLASS_MD)
+
 /*
- * Смещение блока МД. ВНИМАНИЕ: годится только для дисков — iom_xfer_zaiavka
- * обслуживает исключительно МД (вызывает svs_disk_io). Для заявки другого класса
- * это смещение будет неверным; тогда класс надо определять по записи ТУС
- * (младшее поле записи = номер класса), а адрес самой ТУС канал уже знает —
- * его регистрирует команда БАК КОП=005 в iom->UTA (наблюдалось УТ@030360).
+ * Класс устройства и номер внутри класса по индексу НУС.
+ *
+ * Обе таблицы устройств разбиты на блоки по 16 записей, по блоку на класс, а
+ * МЛАДШЕЕ поле записи ТУС несёт номер класса (…0004 у МБ, …0005 у МД —
+ * проверено дампом ТУС). Адрес самой ТУС канал не угадывает: его регистрирует
+ * команда БАК КОП=005 в iom->UTA (наблюдалось УТ@100360).
+ *
+ * Возвращает номер класса, либо -1, если ТУС недоступна или запись пуста;
+ * в этом случае заявку надо пропустить, а не обслуживать наугад.
  */
-#define IOM_NUS_MD_BASE     (IOM_TUS_CLASS_MD * IOM_TUS_BLOCK)
+static int iom_tus_class(IOMDATA *iom, int nus, int *unit)
+{
+    uint32 a;
+    int cls;
+
+    if (iom->UTA == 0)
+        return -1;
+    a = iom->UTA + nus;
+    if (a >= MEMSIZE)
+        return -1;
+
+    cls = (int)((memory[a] >> 16) & 07777);      /* младшее поле записи ТУС */
+    if (cls <= 0 || IOM_TUS_CLASS_BASE(cls) > nus)
+        return -1;
+
+    *unit = nus - IOM_TUS_CLASS_BASE(cls);
+    return cls;
+}
 
 /*
  * Проверка адреса, вычисленного из командного слова или из очереди.
@@ -302,7 +332,7 @@ static int iom_addr_ok(IOMDATA *iom, const char *what, uint32 addr)
     if (addr != 0 && addr < MEMSIZE)
         return 1;
 
-    if (svs_trace >= TRACE_INSTRUCTIONS)
+    if (svs_trace >= TRACE_DEVICES)
         fprintf(sim_log, "iom%d --- %s: адрес %o вне памяти, команда пропущена\n",
             iom->index, what, addr);
     return 0;
@@ -314,7 +344,7 @@ static int iom_addr_ok(IOMDATA *iom, const char *what, uint32 addr)
  *   сл.4 СПУ — физический адрес зоны. Ответ устройства — в сл.5/6 (ДР/ДРУ).
  * dev — номер устройства МД (из НАПРУС; здесь 0 = канал 0, устройство 0).
  */
-static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int dev)
+static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
 {
     /* Слова данных хранятся как (значение48<<16)|тег: значащие 48 разр. — в
      * СТАРШЕЙ части 64-битного слова, поэтому извлекаем сдвигом вправо на 16
@@ -331,7 +361,30 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int dev)
      * поэтому делим на 2, восстанавливая логическую зону.
      * TODO: брать тип ёмкости из ТУСЗ[НУС] и масштабировать корректно (§5.4).
      */
-    int zone     = (int)((memory[z + 4] & 0xFFFF) >> 1);
+    /*
+     * Номер зоны — в РМР слова СПУ. Деление пополам — свойство МД (тип ёмкости,
+     * зона удвоена); к барабану оно не относится, у него зона берётся как есть.
+     */
+    int zone     = (int)(memory[z + 4] & 0xFFFF);
+    int sector   = 0;
+    if (devclass == IOM_TUS_CLASS_MD) {
+        zone >>= 1;
+    } else if (devclass == IOM_TUS_CLASS_MB) {
+        /*
+         * Барабан: АДАП кладёт в РМР слова СПУ не номер зоны, а физический
+         * адрес = зона*32 + сектор*8. Видно прямо в адап.bemsh (ветка МБ):
+         *   МБ:    СЧМР / СДА 64-2          остаток ДАЙНБ (зона) * 4
+         *          СЧМ СМ                   ... в стек
+         *   ОБСЕК: И =В'3' / СЛЦ -2(S)      + номер абзаца (0-3)
+         *          СДА 64-3                 всё * 8  => зона*32 + сектор*8
+         *   НПР:   СДА 64+16 В МР           младшие 16 разр. -> РМР
+         * Без деления номера зоны раздувало в 32 раза: файл барабана рос
+         * разреженным до сотен мегабайт, а зоны 022300/026400/026440 из
+         * трассы — это зоны 294/360/361, идущие подряд.
+         */
+        sector = (zone >> 3) & 3;
+        zone >>= 5;
+    }
     /*
      * Адрес буфера — в РМР (младшие 16 разр. 64-битной ячейки) слова ДО, как и
      * номер зоны в СПУ (§5.4), а НЕ в значащих 48 разрядах: там лежит длина.
@@ -347,11 +400,11 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int dev)
     int memaddr  = (int)(memory[z + 2] & 0xFFFF);
     t_stat r;
 
-    if (svs_trace >= TRACE_INSTRUCTIONS)
+    if (svs_trace >= TRACE_DEVICES)
         fprintf(sim_log,
-            "iom%d --- обмен: устр=%d заявка@%o %s зона=%o буфер=%o\n"
+            "iom%d --- обмен: устр=%d заявка@%o %s зона=%o сектор=%d буфер=%o\n"
             "iom%d ---   ДО=%016jo(РМР %06o) СО=%016jo СПУ=%016jo(РМР %06o)\n",
-            iom->index, dev, z, is_read ? "ЧТ" : "ЗП", zone, memaddr,
+            iom->index, dev, z, is_read ? "ЧТ" : "ЗП", zone, sector, memaddr,
             iom->index, (uintmax_t)do_, (unsigned)(memory[z+2] & 0xFFFF),
             (uintmax_t)so, (uintmax_t)spu, (unsigned)(memory[z+4] & 0xFFFF));
 
@@ -364,11 +417,28 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int dev)
      * (034716: УИА -767(3); 034717: СЧ 3777(3)), то есть последние 768 слов
      * страницы. При базе 02360 это ровно база+16.
      */
-    r = svs_disk_io(dev, zone, memaddr, memaddr + 16, !is_read);
+    switch (devclass) {
+    case IOM_TUS_CLASS_MD:
+        r = svs_disk_io(dev, zone, memaddr, memaddr + 16, !is_read);
+        break;
+    case IOM_TUS_CLASS_MB:
+        /*
+         * Барабан: слова хранятся буквально, без свёртки 4:3, поэтому
+         * служебные слова идут с базы, а данные — сразу за ними. Форма вызова
+         * та же, что у диска: sysaddr — база зоны, третий аргумент — данные.
+         */
+        r = svs_drum_io(dev, zone, memaddr, memaddr + IOM_ZONE_SERVICE, !is_read);
+        break;
+    default:
+        r = SCPE_NXDEV;
+        break;
+    }
 
-    if (svs_trace >= TRACE_INSTRUCTIONS)
-        fprintf(sim_log, "iom%d ---   svs_disk_io → %s\n",
-            iom->index, (r == SCPE_OK) ? "OK" : "ОШИБКА");
+    if (svs_trace >= TRACE_DEVICES)
+        fprintf(sim_log, "iom%d ---   %s → %s\n", iom->index,
+            (devclass == IOM_TUS_CLASS_MD) ? "svs_disk_io" :
+            (devclass == IOM_TUS_CLASS_MB) ? "svs_drum_io" : "класс не поддержан",
+            (r == SCPE_OK) ? "OK" : "ОШИБКА");
 
     /*
      * Ответ устройства в сл.5/6 (ДР/ДРУ). Как и ДВРПВВ, слово читается через
@@ -396,7 +466,7 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int dev)
      * за 18 итераций — по индексу 17, где 0x22 и стоит.
      */
     memory[z + 5] = ((t_value)((r == SCPE_OK) ? 0 : 1) << 16) |
-        (((t_value)(IOM_NUS_MD_BASE + ((spu >> 38) & 017)) << 2) & 0177777);
+        (((t_value)(IOM_TUS_CLASS_BASE(devclass) + ((spu >> 38) & 017)) << 2) & 0177777);
     memory[z + 6] = 0;
 
     /*
@@ -408,7 +478,7 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int dev)
     if (iom->SQA == 0) {
         /* Таблица ответов не зарегистрирована (не было БАК КОП=007) — связать
          * заявку не с чем; молча писать по адресу 0 нельзя. */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_DEVICES)
             fprintf(sim_log, "iom%d --- ОТВ не зарегистрирована, заявка@%o не связана\n",
                 iom->index, z);
     } else {
@@ -447,8 +517,20 @@ void iom_update_intr(int cpu_index)
 {
     IOMDATA *iom = &iom_data[0];        /* один ПВВ в текущей конфигурации */
 
-    if (iom->SQA != 0 && memory[iom->SQA] == 0)
+    if (iom->SQA != 0 && memory[iom->SQA] == 0 &&
+        (cpu_core[cpu_index].GRVP & GRVP_INTR_IOM))
+    {
+        /*
+         * Момент гашения важен: ГЕНС читает ГРВП (РЕГ '247') не сразу, а
+         * примерно через 15 команд после входа в ВНЕШПР — сначала упрятываются
+         * регистры. Если разряд успевает погаснуть здесь, обработчик видит
+         * ГРВП=0, не совпадает ни с Е4/Е8/Е3/Е6 и уходит в СТОП '00301'.
+         */
+        if (svs_trace >= TRACE_DEVICES)
+            fprintf(sim_log, "iom%d --- гашу ПРПВВ (ДВРПВВ@%o пуст), PC=%05o\n",
+                iom->index, iom->SQA, cpu_core[cpu_index].PC);
         cpu_core[cpu_index].GRVP &= ~GRVP_INTR_IOM;
+    }
 }
 
 /*
@@ -474,7 +556,7 @@ static void iom_pusk_obmen(IOMDATA *iom)
     int nus, found = 0;
 
     if (toch == 0) {
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_DEVICES)
             fprintf(sim_log, "iom%d --- ПУСКОБ: ТОЧ не зарегистрирована\n", iom->index);
         return;
     }
@@ -492,8 +574,19 @@ static void iom_pusk_obmen(IOMDATA *iom)
     for (nus = 0; nus < IOM_TUS_ENTRIES; nus++) {
         t_value head = memory[toch + 2*nus] & BITS48;
         uint32 z;
+        int steps = 0;
 
         if (head == 0)
+            continue;
+
+        /*
+         * Слот очереди может быть ненулевым, но БЕЗ адреса: поле ДАЙМА
+         * (разр.1..15) нулевое. Тогда z вырождается в саму базу ПВВ (0100000),
+         * и канал принимает за заявку то, что там лежит, — наблюдались обмены
+         * "устр=23/54/55 ЗП зона=0 буфер=0" и звенья, замкнутые сами на себя.
+         * Заявки без адреса не существует, слот просто пуст.
+         */
+        if (IOM_DAIMA(head) == 0)
             continue;
 
         /*
@@ -512,19 +605,48 @@ static void iom_pusk_obmen(IOMDATA *iom)
          */
         z = IOM_PVV_BASE + IOM_DAIMA(head) + iom_pvv_base();
 
-        /* Идём по цепочке заявок (связь — 0-е слово). */
-        while (z != 0 && z + 7 < MEMSIZE) {
+        /*
+         * Идём по цепочке заявок (связь — 0-е слово).
+         *
+         * Обход ОБЯЗАН быть ограничен: в памяти встречается звено, чья связь
+         * указывает на него же (наблюдалось заявка@100000 при НУС=82), и без
+         * ограничителя канал крутится в этом звене вечно. Реальная очередь
+         * короче числа записей ТУС, поэтому большего запаса и не нужно.
+         */
+        while (z != 0 && z + 7 < MEMSIZE && steps < IOM_QUEUE_MAX_STEPS) {
             t_value link = memory[z] & BITS48;
             uint32 next = (link == 0) ? 0 :
                           IOM_PVV_BASE + IOM_DAIMA(link) + iom_pvv_base();
 
-            found++;
+            steps++;
+            if (next == z) {
+                if (svs_trace >= TRACE_DEVICES)
+                    fprintf(sim_log, "iom%d --- ТОЧ[%d]: заявка@%o замкнута сама"
+                        " на себя, обход прерван\n", iom->index, nus, z);
+                next = 0;
+            }
+
             /*
-             * nus — индекс записи в ТУС; номер устройства внутри класса МД
-             * получается вычитанием базы блока (§5.3). Он же должен совпасть
-             * с разр.39-42 СПУ, что проверяет ВЫППВВ.
+             * nus — индекс записи в ТУС. И класс устройства, и номер внутри
+             * класса берём из самой таблицы: раньше здесь вычиталась база МД,
+             * и заявка к барабану (НУС=69, класс 4) давала отрицательный номер
+             * устройства и бессмысленную зону.
              */
-            iom_xfer_zaiavka(iom, z, (int)(nus - IOM_NUS_MD_BASE));
+            int unit = 0;
+            int devclass = iom_tus_class(iom, nus, &unit);
+
+            if (devclass < 0) {
+                /* Один раз на очередь: иначе длинная (или зацикленная)
+                 * цепочка заливает трассу гигабайтами одинаковых строк. */
+                if (svs_trace >= TRACE_DEVICES && steps == 1)
+                    fprintf(sim_log, "iom%d --- ТОЧ[%d]: класс по ТУС не определён"
+                        " (ТУС@%o), заявка@%o пропущена\n",
+                        iom->index, nus, iom->UTA, z);
+                z = next;
+                continue;
+            }
+            found++;
+            iom_xfer_zaiavka(iom, z, devclass, unit);
             z = next;
         }
 
@@ -536,10 +658,10 @@ static void iom_pusk_obmen(IOMDATA *iom)
     /* Завершение обмена: внешнее прерывание ПРПВВ исходному СВС (ГРВП разр.3). */
     if (found) {
         cpu_core[0].GRVP |= GRVP_INTR_IOM;
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_DEVICES)
             fprintf(sim_log, "iom%d --- ПУСКОБ: обработано заявок %d, ПРПВВ\n",
                 iom->index, found);
-    } else if (svs_trace >= TRACE_INSTRUCTIONS) {
+    } else if (svs_trace >= TRACE_DEVICES) {
         fprintf(sim_log, "iom%d --- ПУСКОБ: ТОЧ@%o пуста "
             "(заявка обслуживается на звонке ЕСВС из ТВЗП, см. iom_service_tvzp)\n",
             iom->index, toch);
@@ -567,13 +689,39 @@ void iom_service_tvzp(int index)
     z = IOM_DAIMA(parked);
     if (! iom_addr_ok(iom, "заявка из ТВЗП", z) || z + 7 >= MEMSIZE)
         return;
-    if (svs_trace >= TRACE_INSTRUCTIONS)
+    if (svs_trace >= TRACE_DEVICES)
         fprintf(sim_log, "iom%d --- ЕСВС: заявка из ТВЗП@%o → @%o\n",
             iom->index, IOM_TVZP, z);
 
     /* Устройство берём из НАПРУС (см. комментарий у IOM_NAPRUS), а не из
      * константы: это то же самое слово, которым сконфигурирован обмен. */
-    iom_xfer_zaiavka(iom, z, (int)((memory[IOM_NAPRUS] >> 16) & 7));
+    /*
+     * Класс устройства определяем по ТУС, как и на пути ПУСКОБ: зашитый
+     * IOM_TUS_CLASS_MD отправлял бы заявку к барабану на диск. НУС здесь не
+     * приходит отдельным полем (ветка ОТДАЮЗ работает по НУС=0), поэтому
+     * берём его из разр.39-42 слова СПУ — того же места, по которому ВЫППВВ
+     * сверяет ответ (см. сборку ДР ниже).
+     */
+    {
+        t_value spu = (memory[z + 4] >> 16) & BITS48;
+        int nus = (int)((spu >> 38) & 017);
+        int unit = 0;
+        int devclass = iom_tus_class(iom, nus, &unit);
+
+        if (devclass < 0) {
+            /* ТУС не настроена — сохраняем прежнее поведение (диск),
+             * иначе загрузка с системного диска перестала бы идти. */
+            if (svs_trace >= TRACE_DEVICES)
+                fprintf(sim_log, "iom%d --- ТВЗП: класс по ТУС не определён"
+                    " (НУС=%d), беру МД\n", iom->index, nus);
+            devclass = IOM_TUS_CLASS_MD;
+            unit = (int)((memory[IOM_NAPRUS] >> 16) & 7);
+        } else if (svs_trace >= TRACE_DEVICES) {
+            fprintf(sim_log, "iom%d --- ТВЗП: класс %d устр %d по ТУС (НУС=%d)\n",
+                iom->index, devclass, unit, nus);
+        }
+        iom_xfer_zaiavka(iom, z, devclass, unit);
+    }
 
     /* Снимаем СЕМБИТ в слоте ТВЗП — канал освободил заявку (обмен завершён).
      * Данные слова — в старшей части (значение48<<16), поэтому разр.17 значения
@@ -602,7 +750,7 @@ void iom_request(int index)
         int kop = BAK_KOP(ptr);
         iom->BAK = IOM_PHYS(BAK_BLOCK_ADDR(ptr));
 
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_DEVICES)
             fprintf(sim_log, "iom%d --- Инициализация БАК: КОП=%03o, БАКПВВ@%o\n",
                 iom->index, kop, iom->BAK);
 
@@ -629,26 +777,26 @@ void iom_request(int index)
     {
         int kop = BAK_KOP(cmd);
 
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_DEVICES)
             fprintf(sim_log, "iom%d --- Команда БАКПВВ@%o: КОП=%03o, слово=%#jx\n",
                 iom->index, iom->BAK, kop, (intmax_t)cmd);
 
         switch (kop) {
         case BAK_KOP_REG_UT:    /* регистрация таблицы устройств */
             iom->UTA = IOM_PHYS(BAK_BLOCK_ADDR(cmd));
-            if (svs_trace >= TRACE_INSTRUCTIONS)
+            if (svs_trace >= TRACE_DEVICES)
                 fprintf(sim_log, "iom%d ---   УТ@%o\n", iom->index, iom->UTA);
             break;
 
         case BAK_KOP_REG_TOCH:  /* регистрация таблицы очередей ТОЧ */
             iom->IOQA = IOM_PHYS(BAK_BLOCK_ADDR(cmd));
-            if (svs_trace >= TRACE_INSTRUCTIONS)
+            if (svs_trace >= TRACE_DEVICES)
                 fprintf(sim_log, "iom%d ---   ТОЧ@%o\n", iom->index, iom->IOQA);
             break;
 
         case BAK_KOP_REG_ANSW:  /* регистрация таблицы ответов */
             iom->SQA = IOM_PHYS(BAK_BLOCK_ADDR(cmd));
-            if (svs_trace >= TRACE_INSTRUCTIONS)
+            if (svs_trace >= TRACE_DEVICES)
                 fprintf(sim_log, "iom%d ---   ОТВ@%o\n", iom->index, iom->SQA);
             break;
 

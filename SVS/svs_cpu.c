@@ -58,8 +58,23 @@ t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp);
 t_stat cpu_set_trace(UNIT *u, int32 val, CONST char *cptr, void *desc);
+/*
+ * Трасса ТОЛЬКО обменов канала и устройств, без покомандной.
+ *
+ * Нужна для длинных прогонов: с `itrace` трасса растёт ~3 МБ/с и 20 млн команд
+ * дают около гигабайта, так что досмотреть загрузку до конца нельзя. Уровень
+ * TRACE_DEVICES ниже TRACE_EXTRACODES, поэтому `itrace` по-прежнему печатает и
+ * сообщения канала.
+ */
+t_stat cpu_set_dtrace(UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    svs_trace = TRACE_DEVICES;
+    return SCPE_OK;
+}
+
 t_stat cpu_set_itrace(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_etrace(UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_set_dtrace(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_trace(FILE *st, UNIT *up, int32 v, CONST void *dp);
 t_stat cpu_clr_trace(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 
@@ -165,6 +180,9 @@ MTAB cpu_mod[] = {
         0, "TRACE", "TRACE",    &cpu_set_trace,     &cpu_show_trace,    NULL,
                                 "Enables full tracing of processor state" },
     { MTAB_XTD|MTAB_VDV,
+        0, NULL,    "DTRACE",   &cpu_set_dtrace,    NULL,               NULL,
+                                "Enables device/channel tracing only" },
+    { MTAB_XTD|MTAB_VDV,
         0, NULL,    "ITRACE",   &cpu_set_itrace,    NULL,               NULL,
                                 "Enables instruction tracing" },
     { MTAB_XTD|MTAB_VDV,
@@ -242,6 +260,7 @@ DEVICE *sim_devices[] = {
 
     &tty_dev,           /* терминалы */
     &disk_dev,          /* магнитные диски */
+    &drum_dev,          /* магнитные барабаны */
     0
 };
 
@@ -466,6 +485,7 @@ t_stat cpu_show_trace(FILE *st, UNIT *up, int32 v, CONST void *dp)
 {
     switch (svs_trace) {
     case TRACE_NONE:         break;
+    case TRACE_DEVICES:      fprintf(st, "trace devices"); break;
     case TRACE_EXTRACODES:   fprintf(st, "trace extracodes"); break;
     case TRACE_INSTRUCTIONS: fprintf(st, "trace instructions"); break;
     case TRACE_ALL:          fprintf(st, "trace all"); break;
@@ -666,7 +686,8 @@ static void cmd_002(CORE *cpu)
     case 0247:
         /* Чтение регистра внешних прерываний */
         if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Чтение РВП\n", cpu->index);
+            fprintf(sim_log, "cpu%d --- Чтение РВП: ГРВП=%04jo ГРМ=%04jo PC=%05o\n",
+                cpu->index, (uintmax_t)cpu->GRVP, (uintmax_t)cpu->GRM, cpu->PC);
         cpu->ACC = cpu->GRVP;
         break;
 
@@ -1852,10 +1873,20 @@ ret:        return r;
             iom_update_intr(cpu->index);
 
             if (cpu->GRVP & cpu->GRM) {
-                /* external interrupt */
+                /*
+                 * external interrupt.
+                 * ГЕНС разбирает ГРВП в ВНЕШПР (генс.bemsh:1194) по разрядам
+                 * Е4=010 (таймер), Е8=0200 (СВС), Е3=004 (ПВВ), Е6=040;
+                 * всё остальное, прошедшее маску, уходит в СТОП '00301'
+                 * "НЕОБРАБАТЫВАЕМОЕ ВНЕШНЕЕ ПРЕРЫВАНИЕ". Печатаем значение
+                 * целиком, чтобы видеть, какой разряд реально доставлен и
+                 * доживает ли он до РЕГ '247' внутри обработчика.
+                 */
                 if (svs_trace >= TRACE_INSTRUCTIONS) {
-                    fprintf(sim_log, "cpu%d --- Внешнее прерывание\n",
-                        cpu->index);
+                    fprintf(sim_log, "cpu%d --- Внешнее прерывание:"
+                        " ГРВП=%04jo ГРМ=%04jo (доставлено %04jo) PC=%05o\n",
+                        cpu->index, (uintmax_t)cpu->GRVP, (uintmax_t)cpu->GRM,
+                        (uintmax_t)(cpu->GRVP & cpu->GRM), cpu->PC);
                 }
                 op_int_2(cpu);
             }
