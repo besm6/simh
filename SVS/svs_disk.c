@@ -176,7 +176,7 @@ t_stat disk_event(UNIT *u)
 static void disk_word_to_mem(t_value w, int addr)
 {
     t_value value48 = w & BITS48;           /* младшие 6 байт — значение */
-    int pa = mmu_iom_pa(addr);              /* адрес из заявки — виртуальный */
+    int pa = mmu_iom_data_pa(addr);              /* адрес из заявки — физический */
 
     memory[pa] = value48 << 16;             /* значение в разрядах 17..64, РМР=0 */
     /*
@@ -194,7 +194,7 @@ static void disk_word_to_mem(t_value w, int addr)
  */
 static t_value mem_to_disk_word(int addr)
 {
-    int pa = mmu_iom_pa(addr);              /* адрес из заявки — виртуальный */
+    int pa = mmu_iom_data_pa(addr);              /* адрес из заявки — физический */
     t_value value48  = (memory[pa] >> 16) & BITS48;
     unsigned tagbyte = (tag[pa] == TAG_INSN48) ? DISK_TAG_INSN : DISK_TAG_DATA;
 
@@ -266,7 +266,7 @@ t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr)
             t_value w    = buf[8 + ZONE_DATA_WORDS/3 + 3*j + k];   /* D — по порядку */
             t_value d    = w & BITS48;
             t_value frag = (s >> (32 - 16*k)) & 0xFFFF;
-            int addr = mmu_iom_pa(memaddr + 3*j + k);
+            int addr = mmu_iom_data_pa(memaddr + 3*j + k);
 
             memory[addr] = (d << 16) | frag;
             tag[addr]    = TAG_INSN48;      /* см. disk_word_to_mem */
@@ -300,7 +300,7 @@ t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr)
         t_value s = 0;
 
         for (k = 0; k < 3; ++k) {
-            t_value word = memory[mmu_iom_pa(memaddr + 3*j + k)];
+            t_value word = memory[mmu_iom_data_pa(memaddr + 3*j + k)];
             t_value d    = (word >> 16) & BITS48;
             t_value frag = word & 0xFFFF;
 

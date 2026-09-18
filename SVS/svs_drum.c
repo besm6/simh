@@ -172,7 +172,7 @@ t_stat drum_event(UNIT *u)
  *
  * Служебные слова кладутся по адресу sysaddr, данные — по адресу memaddr.
  * Адреса ВИРТУАЛЬНЫЕ (приходят из заявки), поэтому каждое обращение к памяти
- * идёт через mmu_iom_pa(), как и в svs_disk.c.
+ * идёт через mmu_iom_data_pa(), как и в svs_disk.c.
  *
  * Если зона за концом файла (ещё ни разу не записана), отдаём нули — барабан
  * чистый.
@@ -236,7 +236,7 @@ static t_stat svs_drum_read(UNIT *u, int zone, int sysaddr, int memaddr)
         for (j = 0; j < 8; ++j)
             word |= (t_value)p[j] << (8*j);
 
-        addr = mmu_iom_pa(i < ZONE_SERVICE_WORDS ?
+        addr = mmu_iom_data_pa(i < ZONE_SERVICE_WORDS ?
                           sysaddr + i : memaddr + (i - ZONE_SERVICE_WORDS));
         if (addr < 0 || addr >= MEMSIZE)
             return SCPE_NXM;
@@ -267,7 +267,7 @@ static t_stat svs_drum_write(UNIT *u, int zone, int sysaddr, int memaddr)
         t_value word;
         int addr, j;
 
-        addr = mmu_iom_pa(i < ZONE_SERVICE_WORDS ?
+        addr = mmu_iom_data_pa(i < ZONE_SERVICE_WORDS ?
                           sysaddr + i : memaddr + (i - ZONE_SERVICE_WORDS));
         if (addr < 0 || addr >= MEMSIZE)
             return SCPE_NXM;

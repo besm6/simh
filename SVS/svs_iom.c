@@ -46,8 +46,16 @@
  * Пример (наблюдается при ВЫЗОС): слово 0x40000e8040 → КОП=004 (разр.39,
  * чтение/обмен), адрес блока = 0xe8040 = 3500100₈.
  */
-#define BAK_BLOCK_ADDR(v)   ((uint32)((v) & 000777777777777LL)) /* разр.1..36: адрес блока БАКПВВ */
-#define BAK_KOP(v)          ((int)(((v) >> 36) & 0377))         /* разр.37..44: поле КОП, база М36 */
+/*
+ * Раскладка слова БАК по заводскому описанию (№10.170.002 ТОП, 4.2.1-4.2.9;
+ * см. ПВВ.md §7Б). Все коды операций перечислены там ТЕТРАДАМИ, поэтому КОП —
+ * ровно 4 разряда; прежняя маска 0377 захватывала соседние поля, и посторонние
+ * разряды читались как несуществующие команды (в трассе — КОП=027/017/257).
+ */
+#define BAK_BLOCK_ADDR(v)   ((uint32)((v) & 03777777LL))        /* разр.0..19: адрес */
+#define BAK_KOP(v)          ((int)(((v) >> 36) & 017))          /* разр.36..39: КОП */
+#define BAK_SEM(v)          ((int)(((v) >> 32) & 1))            /* разр.32: семафорный бит */
+#define BAK_NUS(v)          ((int)(((v) >> 54) & 01777))        /* разр.54..63: НУС (до 1024 устр.) */
 
 #define BAK_KOP_EXCHANGE1   001     /* разряд 37 (=М36В'1') — вариант обмена */
 #define BAK_KOP_EXCHANGE3   003     /* разряды 37-38 (=М36В'3') — вариант обмена */
@@ -83,6 +91,30 @@
  * а физический переезжает вместе с АДАП-ом.
  */
 #define IOM_ADRES_CELL      032102          /* вирт. адрес ячейки АДРЕС */
+
+/*
+ * Имена команд ПВВ (№10.170.002 ТОП, 4.2). Нужны в трассе: без них мусор,
+ * попавший в БАКПВВ, неотличим от настоящей команды.
+ */
+static const char *bak_kop_name(int kop)
+{
+    switch (kop) {
+    case 001: return "ПОБ";
+    case 002: return "ЗК/ЗРК";
+    case 003: return "ОК/ОРК";
+    case 004: return "ИБАК";
+    case 005: return "ИТУС";
+    case 006: return "ИТОЧ";
+    case 007: return "ИДВР";
+    case 010: return "ГРС";
+    case 011: return "ГПС";
+    case 012: return "ПОБР";
+    case 014: return "ЦРВ";
+    case 015: return "АРВ";
+    case 016: return "МОП/МКФ";
+    default:  return "?";
+    }
+}
 
 static uint32 iom_pvv_base(void)
 {
@@ -392,7 +424,7 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
      * (0o1420<<6)|0o16 — то же поле длины, что в константе ДОМЛМД@032140
      * (М22В'1420'В'360'), а 02360 — адрес, по которому РАСПАК и читает зону.
      *
-     * Адрес ВИРТУАЛЬНЫЙ, в пространстве АДАП-а: перевод делает mmu_iom_pa()
+     * Адрес ФИЗИЧЕСКИЙ (лист*1024): см. mmu_iom_data_pa()
      * при каждом обращении (svs_disk.c). Упакованная зона — 8 служебных слов
      * плюс 768 слов данных = 776 слов (0o1410), меньше страницы, и 02360+0o1410
      * = 03770 целиком помещается в вирт. странице 1 (→ физ. 0o1601 по RPS0).
@@ -417,6 +449,36 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
      * (034716: УИА -767(3); 034717: СЧ 3777(3)), то есть последние 768 слов
      * страницы. При базе 02360 это ровно база+16.
      */
+    /*
+     * ДИАГНОСТИКА: не затирает ли обмен служебные структуры АДАП-а?
+     * Гипотеза: образ ОС, читаемый ЧТГП на страницы 11-30, ложится поверх
+     * области АДАП-а, и после этого канал читает в БАКПВВ мусор. Проверяем
+     * ФИЗИЧЕСКИЕ адреса приёмника против зарегистрированных таблиц.
+     */
+    if (svs_trace >= TRACE_DEVICES && !is_read) {
+        /* запись на устройство память не портит — проверяем только чтение */
+    } else if (svs_trace >= TRACE_DEVICES) {
+        static const char *what[] = { "БАКПВВ", "ТУС", "ТОЧ", "ДВРПВВ" };
+        uint32 cell[4];
+        int w, k;
+
+        cell[0] = iom->BAK;  cell[1] = iom->UTA;
+        cell[2] = iom->IOQA; cell[3] = iom->SQA;
+
+        for (w = 0; w < IOM_ZONE_SERVICE + 1024; w++) {
+            uint32 pa = mmu_iom_data_pa(memaddr + w);
+
+            for (k = 0; k < 4; k++) {
+                if (cell[k] != 0 && pa == cell[k]) {
+                    fprintf(sim_log, "iom%d --- !!! ЧТЕНИЕ ЗАТРЁТ %s@%o:"
+                        " слово %d буфера %o (вирт.%o) ложится туда же\n",
+                        iom->index, what[k], cell[k], w, memaddr, memaddr + w);
+                    cell[k] = 0;        /* сообщаем один раз на обмен */
+                }
+            }
+        }
+    }
+
     switch (devclass) {
     case IOM_TUS_CLASS_MD:
         r = svs_disk_io(dev, zone, memaddr, memaddr + 16, !is_read);
@@ -550,7 +612,7 @@ void iom_update_intr(int cpu_index)
  * ТОЧ), поэтому ТОЧ при КОП=016 пуста и этот обход — пока холостой. Чтобы обмен
  * пошёл через ТОЧ, нужна настройка таблиц устройств (НУС≠0) и подключённый диск.
  */
-static void iom_pusk_obmen(IOMDATA *iom)
+static void iom_pusk_obmen(IOMDATA *iom, int cmd_nus)
 {
     uint32 toch = iom->IOQA;
     int nus, found = 0;
@@ -571,7 +633,28 @@ static void iom_pusk_obmen(IOMDATA *iom)
     if (! iom_addr_ok(iom, "ТОЧ", toch) || toch + 2*IOM_TUS_ENTRIES >= MEMSIZE)
         return;
 
-    for (nus = 0; nus < IOM_TUS_ENTRIES; nus++) {
+    /*
+     * По документу (№10.170.002 ТОП, 4.2.1 и 4.4) команда ПОБ НАЗЫВАЕТ
+     * устройство: «считывается слово ТУС по адресу БАТУС + НУС, слово ТОЧ по
+     * адресу БАТОЧ + 2НУС». Тогда обходить всю таблицу не нужно.
+     *
+     * Но АДАП этой формой не пользуется: во всех 953 командах ПОБ нашего
+     * прогона НУС=0 (слово = КОП|СБ и больше ничего), а работа лежит в ТОЧ[69]
+     * (барабан, устр.5) и ТОЧ[81] (диск, устр.1). Нулевой номер по 4.1.2 — не
+     * устройство, а служебный блок У ПВВ, так что это именно «просто поищи
+     * работу»: в автоматическом режиме (АРВ) канал разбирает очереди сам,
+     * без участия ЦП (4.1). Поэтому НУС=0 — обход всей таблицы, ненулевой —
+     * ровно одна очередь, как написано в документе.
+     */
+    if (cmd_nus > 0 && cmd_nus < IOM_TUS_ENTRIES) {
+        if (svs_trace >= TRACE_DEVICES)
+            fprintf(sim_log, "iom%d --- ПУСКОБ: команда назвала НУС=%d,"
+                " обслуживаю только эту очередь\n", iom->index, cmd_nus);
+    }
+
+    for (nus = (cmd_nus > 0 && cmd_nus < IOM_TUS_ENTRIES) ? cmd_nus : 0;
+         nus < IOM_TUS_ENTRIES;
+         nus++) {
         t_value head = memory[toch + 2*nus] & BITS48;
         uint32 z;
         int steps = 0;
@@ -646,6 +729,9 @@ static void iom_pusk_obmen(IOMDATA *iom)
                 continue;
             }
             found++;
+            if (svs_trace >= TRACE_DEVICES)
+                fprintf(sim_log, "iom%d --- ПУСКОБ: работа найдена в ТОЧ[%d]"
+                    " (НУС из команды %d)\n", iom->index, nus, cmd_nus);
             iom_xfer_zaiavka(iom, z, devclass, unit);
             z = next;
         }
@@ -653,6 +739,9 @@ static void iom_pusk_obmen(IOMDATA *iom)
         /* Очередь обработана — гасим НОЧ/КОЧ. */
         memory[toch + 2*nus]     = 0;
         memory[toch + 2*nus + 1] = 0;
+
+        if (cmd_nus > 0 && cmd_nus < IOM_TUS_ENTRIES)
+            break;                      /* команда назвала устройство — и всё */
     }
 
     /* Завершение обмена: внешнее прерывание ПРПВВ исходному СВС (ГРВП разр.3). */
@@ -778,8 +867,28 @@ void iom_request(int index)
         int kop = BAK_KOP(cmd);
 
         if (svs_trace >= TRACE_DEVICES)
-            fprintf(sim_log, "iom%d --- Команда БАКПВВ@%o: КОП=%03o, слово=%#jx\n",
-                iom->index, iom->BAK, kop, (intmax_t)cmd);
+            fprintf(sim_log, "iom%d --- Команда БАКПВВ@%o: КОП=%02o %s"
+                " СБ=%d НУС=%d адрес=%o слово=%#jx\n",
+                iom->index, iom->BAK, kop, bak_kop_name(kop),
+                BAK_SEM(cmd), BAK_NUS(cmd), BAK_BLOCK_ADDR(cmd), (intmax_t)cmd);
+
+        /*
+         * Перерегистрация базы — по документу законна («могут быть изменены в
+         * процессе работы»), но в середине прогона почти всегда означает, что в
+         * БАКПВВ попал мусор: КОП теперь 4-разрядный, и посторонние разряды
+         * складываются в ПРАВДОПОДОБНУЮ команду (в трассе — ИДВР адрес=170163
+         * после того, как образ ОС лёг поверх АДАП-а). Молча переставлять
+         * указатель нельзя — это надо видеть.
+         */
+        if (kop >= BAK_KOP_REG_UT && kop <= BAK_KOP_REG_ANSW) {
+            uint32 was = (kop == BAK_KOP_REG_UT)   ? iom->UTA :
+                         (kop == BAK_KOP_REG_TOCH) ? iom->IOQA : iom->SQA;
+            uint32 now = IOM_PHYS(BAK_BLOCK_ADDR(cmd));
+
+            if (was != 0 && was != now && svs_trace >= TRACE_DEVICES)
+                fprintf(sim_log, "iom%d --- ВНИМАНИЕ: %s переставляет базу"
+                    " %o -> %o\n", iom->index, bak_kop_name(kop), was, now);
+        }
 
         switch (kop) {
         case BAK_KOP_REG_UT:    /* регистрация таблицы устройств */
@@ -803,15 +912,50 @@ void iom_request(int index)
         case BAK_KOP_EXCHANGE1: /* обмен (вариант 1): АДАП уже поставил заявку в ТОЧ */
         case BAK_KOP_EXCHANGE3: /* обмен (вариант 3) */
         case BAK_KOP_PUSKOB:    /* ПУСКОБ: пуск обмена по очереди ТОЧ */
-            iom_pusk_obmen(iom);
+            iom_pusk_obmen(iom, BAK_NUS(cmd));
             break;
 
-        default:
+        default: {
+            /*
+             * ДИАГНОСТИКА: неизвестный КОП означает, что в БАКПВВ лежит не то,
+             * что туда клал АДАП. Проверяем гипотезу "АДАП пишет БАКПВВ по
+             * своему виртуальному адресу, а канал читает другую физическую
+             * ячейку": печатаем состояние и ищем по памяти слова, похожие на
+             * настоящие команды БАК (КОП=004..007 с осмысленным адресом).
+             */
+            if (svs_trace >= TRACE_DEVICES) {
+                uint32 a, found = 0;
+
+                fprintf(sim_log, "iom%d --- ДИАГ БАК: БАКПВВ@%o сл0=%016jo сл1=%016jo"
+                    " АДРЕС=%o\n", iom->index, iom->BAK,
+                    (uintmax_t)memory[iom->BAK], (uintmax_t)memory[iom->BAK + 1],
+                    iom_pvv_base());
+
+                for (a = 1; a < MEMSIZE && found < 12; a++) {
+                    t_value w = memory[a] & BITS48;
+                    int k = BAK_KOP(w);
+                    uint32 blk;
+
+                    if (k < 4 || k > 7)
+                        continue;
+                    blk = BAK_BLOCK_ADDR(w);
+                    if (blk == 0 || blk >= MEMSIZE)
+                        continue;
+                    fprintf(sim_log, "iom%d ---   кандидат@%o: КОП=%03o адрес=%o"
+                        " (смещение от БАКПВВ %+d)\n",
+                        iom->index, a, k, blk, (int)a - (int)iom->BAK);
+                    found++;
+                }
+                if (! found)
+                    fprintf(sim_log, "iom%d ---   команд БАК в памяти не найдено\n",
+                        iom->index);
+            }
             /*
              * Прочие управляющие команды (МКФ, ППД, сброс канала, реконфигурация) —
              * без передачи данных, только подтверждаем.
              */
             break;
+        }
         }
     }
 
