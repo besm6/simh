@@ -60,6 +60,16 @@
 #define ZONE_WORDS          (ZONE_SERVICE_WORDS + ZONE_DATA_WORDS)
 
 /*
+ * Зона барабана делится на ЧЕТЫРЕ сектора по 256 слов: сектор 3 — последняя
+ * четверть зоны. Номер сектора АДАП кладёт в тот же физический адрес, что и
+ * зону: РМР слова СПУ = зона*32 + сектор*8 (см. svs_iom.c, ветка МБ).
+ * Замерено: полная заявка несёт РАЗМ=1024 и сектор 0, секторная — РАЗМ=256
+ * и РМР 024530 = 0512*32 + 3*8.
+ */
+#define ZONE_SECTORS        4
+#define SECTOR_WORDS        (ZONE_DATA_WORDS / ZONE_SECTORS)
+
+/*
  * Формат записи слова в образе барабана — 16 байт:
  *   байты 0-7   полное 64-разрядное слово memory[] (little-endian);
  *   байт  8     тег tag[];
@@ -168,17 +178,68 @@ t_stat drum_event(UNIT *u)
 }
 
 /*
+ * Перенос одного слова между образом зоны и памятью.
+ *
+ * В образе слово лежит по индексу idx (служебные слова 0-7, дальше данные),
+ * в памяти — по ВИРТУАЛЬНОМУ адресу addr, который переводится через
+ * mmu_iom_data_pa(), как и в svs_disk.c. Слово и тег переносятся буквально,
+ * без свёртки 4:3 и без перевода тегов.
+ */
+static t_stat drum_word_to_mem(const uint8 *buf, int idx, int addr)
+{
+    const uint8 *p = buf + (size_t)idx * DRUM_WORD_BYTES;
+    t_value word = 0;
+    int pa, j;
+
+    pa = mmu_iom_data_pa(addr);
+    if (pa < 0 || pa >= MEMSIZE)
+        return SCPE_NXM;
+
+    for (j = 0; j < 8; ++j)
+        word |= (t_value)p[j] << (8*j);
+
+    memory[pa] = word;
+    tag[pa] = p[8];
+    return SCPE_OK;
+}
+
+static t_stat drum_word_from_mem(uint8 *buf, int idx, int addr)
+{
+    uint8 *p = buf + (size_t)idx * DRUM_WORD_BYTES;
+    t_value word;
+    int pa, j;
+
+    pa = mmu_iom_data_pa(addr);
+    if (pa < 0 || pa >= MEMSIZE)
+        return SCPE_NXM;
+
+    word = memory[pa];
+    for (j = 0; j < 8; ++j)
+        p[j] = (uint8)(word >> (8*j));
+    p[8] = tag[pa];
+    return SCPE_OK;
+}
+
+/*
  * Чтение зоны барабана в память.
  *
- * Служебные слова кладутся по адресу sysaddr, данные — по адресу memaddr.
+ * Массив обмена ДО у барабана содержит ТОЛЬКО слова данных: они кладутся с
+ * адреса memaddr, и первое же слово заявки — это слово данных, а не служебное.
+ * Служебные слова зоны АДАП читает отдельной заявкой («чтение СС», разр.21
+ * КУС, своя длина ДЛССД) и держит в области СС1Н (КНАПР КОНД А(СС1Н) в ЗКМБ),
+ * поэтому в массив ДО они не попадают. У МД раскладка другая: там РАЗМ=784
+ * покрывает и служебные слова (см. DISK_DATA_OFFSET в svs_disk.c).
+ *
  * Адреса ВИРТУАЛЬНЫЕ (приходят из заявки), поэтому каждое обращение к памяти
  * идёт через mmu_iom_data_pa(), как и в svs_disk.c.
  *
  * Если зона за концом файла (ещё ни разу не записана), отдаём нули — барабан
  * чистый.
  */
-static t_stat svs_drum_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
+static t_stat svs_drum_read(UNIT *u, int zone, int sector,
+                            int memaddr, int nwords)
 {
+    int base = sector * SECTOR_WORDS;   /* начало сектора в словах данных */
     uint8 buf[ZONE_BYTES];
     size_t got = 0;
     int i;
@@ -193,8 +254,8 @@ static t_stat svs_drum_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwo
         memset(buf + got, 0, ZONE_BYTES - got);
 
     if (u->dptr->dctrl & DEB_DAT)
-        sim_debug(DEB_DAT, u->dptr, "::: чтение МБ зона %04o СС@%05o данные@%05o\n",
-                  zone, sysaddr, memaddr);
+        sim_debug(DEB_DAT, u->dptr, "::: чтение МБ зона %04o данные@%05o\n",
+                  zone, memaddr);
 
     if (got == 0) {
         /*
@@ -228,33 +289,15 @@ static t_stat svs_drum_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwo
                       zone);
     }
 
-    for (i = 0; i < ZONE_WORDS; ++i) {
-        const uint8 *p = buf + (size_t)i * DRUM_WORD_BYTES;
-        t_value word = 0;
-        int addr, j;
-
-        for (j = 0; j < 8; ++j)
-            word |= (t_value)p[j] << (8*j);
-
-        /*
-         * РАЗМ (nwords) у барабана считает ТОЛЬКО слова данных: полная заявка
-         * ГЕНС-а несёт РАЗМ=1024 = ровно страница, а служебные слова АДАП
-         * гоняет отдельной областью СС1Н (КНАПР КОНД А(СС1Н) в ЗКМБ), вне
-         * массива ДО. Поэтому служебные слова переносим всегда, а данные —
-         * не больше запрошенного. У МД раскладка другая, там РАЗМ=784
-         * покрывает и служебные слова (см. DISK_DATA_OFFSET в svs_disk.c).
-         */
-        if (i >= ZONE_SERVICE_WORDS && (i - ZONE_SERVICE_WORDS) >= nwords)
-            continue;
-
-        addr = mmu_iom_data_pa(i < ZONE_SERVICE_WORDS ?
-                          sysaddr + i : memaddr + (i - ZONE_SERVICE_WORDS));
-        if (addr < 0 || addr >= MEMSIZE)
+    /*
+     * Данные: заявка покрывает nwords слов, начиная с СЕКТОРА, а не с начала
+     * зоны. Индекс в образе и адрес в памяти здесь расходятся — в этом вся
+     * разница между полной и секторной заявкой.
+     */
+    for (i = 0; i < nwords; ++i) {
+        if (drum_word_to_mem(buf, ZONE_SERVICE_WORDS + base + i,
+                             memaddr + i) != SCPE_OK)
             return SCPE_NXM;
-
-        /* Слово и тег — буквально, без свёртки и без перевода тегов. */
-        memory[addr] = word;
-        tag[addr] = p[8];
     }
     return SCPE_OK;
 }
@@ -262,9 +305,11 @@ static t_stat svs_drum_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwo
 /*
  * Запись зоны из памяти на барабан — точная обратная операция.
  */
-static t_stat svs_drum_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
+static t_stat svs_drum_write(UNIT *u, int zone, int sector,
+                             int memaddr, int nwords)
 {
     uint8 buf[ZONE_BYTES];
+    int base = sector * SECTOR_WORDS;   /* начало сектора в словах данных */
     int i;
 
     if (!(u->flags & UNIT_ATT))
@@ -279,7 +324,7 @@ static t_stat svs_drum_write(UNIT *u, int zone, int sysaddr, int memaddr, int nw
      * неполном РАЗМ сначала подтягиваем зону с барабана, а потом перекрываем
      * только запрошенное. Незаписанной зоны может не быть — тогда нули.
      */
-    if (nwords < ZONE_WORDS - ZONE_SERVICE_WORDS) {
+    if (base != 0 || nwords < ZONE_DATA_WORDS) {
         size_t got = 0;
 
         if (fseek(u->fileref, (long)ZONE_BYTES * zone, SEEK_SET) == 0)
@@ -288,28 +333,16 @@ static t_stat svs_drum_write(UNIT *u, int zone, int sysaddr, int memaddr, int nw
             memset(buf + got, 0, ZONE_BYTES - got);
     }
 
-    for (i = 0; i < ZONE_WORDS; ++i) {
-        uint8 *p = buf + (size_t)i * DRUM_WORD_BYTES;
-        t_value word;
-        int addr, j;
-
-        if (i >= ZONE_SERVICE_WORDS && (i - ZONE_SERVICE_WORDS) >= nwords)
-            continue;           /* вне заявки — сохраняем то, что уже в зоне */
-
-        addr = mmu_iom_data_pa(i < ZONE_SERVICE_WORDS ?
-                          sysaddr + i : memaddr + (i - ZONE_SERVICE_WORDS));
-        if (addr < 0 || addr >= MEMSIZE)
+    /* Слова вне сектора заявки сохраняются такими, какими были в зоне. */
+    for (i = 0; i < nwords; ++i) {
+        if (drum_word_from_mem(buf, ZONE_SERVICE_WORDS + base + i,
+                               memaddr + i) != SCPE_OK)
             return SCPE_NXM;
-
-        word = memory[addr];
-        for (j = 0; j < 8; ++j)
-            p[j] = (uint8)(word >> (8*j));
-        p[8] = tag[addr];
     }
 
     if (u->dptr->dctrl & DEB_DAT)
-        sim_debug(DEB_DAT, u->dptr, "::: запись МБ зона %04o СС@%05o данные@%05o\n",
-                  zone, sysaddr, memaddr);
+        sim_debug(DEB_DAT, u->dptr, "::: запись МБ зона %04o данные@%05o\n",
+                  zone, memaddr);
 
     if (fseek(u->fileref, (long)ZONE_BYTES * zone, SEEK_SET) != 0 ||
         sim_fwrite(buf, 1, ZONE_BYTES, u->fileref) != ZONE_BYTES) {
@@ -319,10 +352,11 @@ static t_stat svs_drum_write(UNIT *u, int zone, int sysaddr, int memaddr, int nw
 }
 
 /*
- * Обмен с барабаном по заявке ПВВ. Форма вызова та же, что у svs_disk_io():
- * sysaddr — база зоны (служебные слова), memaddr — адрес слов данных.
+ * Обмен с барабаном по заявке ПВВ. В отличие от svs_disk_io(), отдельного
+ * адреса служебных слов нет: массив ДО у барабана — это только данные.
  */
-t_stat svs_drum_io(int dev, int zone, int sysaddr, int memaddr, int is_write, int nwords)
+t_stat svs_drum_io(int dev, int zone, int sector,
+                   int memaddr, int is_write, int nwords)
 {
     UNIT *u;
 
@@ -330,13 +364,20 @@ t_stat svs_drum_io(int dev, int zone, int sysaddr, int memaddr, int is_write, in
         return SCPE_NXDEV;
     if (zone < 0)
         return SCPE_NXM;
+    /*
+     * Сектор и РАЗМ обязаны укладываться в зону: иначе перенос вышел бы за
+     * буфер образа. Это память эмулятора, а не гостя, — отвергаем заявку.
+     */
+    if (sector < 0 || sector >= ZONE_SECTORS ||
+        nwords < 0 || sector * SECTOR_WORDS + nwords > ZONE_DATA_WORDS)
+        return SCPE_NXM;
     u = &drum_unit[dev];
 
     controller.dev     = dev;
     controller.zone    = zone;
     controller.memory  = memaddr;
-    controller.sysarea = sysaddr;
+    controller.sysarea = 0;         /* у барабана служебные слова вне ДО */
 
-    return is_write ? svs_drum_write(u, zone, sysaddr, memaddr, nwords)
-                    : svs_drum_read(u, zone, sysaddr, memaddr, nwords);
+    return is_write ? svs_drum_write(u, zone, sector, memaddr, nwords)
+                    : svs_drum_read(u, zone, sector, memaddr, nwords);
 }

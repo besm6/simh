@@ -369,6 +369,8 @@ extern void mmu_set_rp(CORE *cpu, int idx, t_value word, int supervisor);
 extern void mmu_setup(CORE *cpu);
 extern int  mmu_iom_pa(int vaddr);
 extern int  mmu_iom_data_pa(int addr);
+int svs_disk_zone_scale(int dev);
+int svs_disk_napr(int dev);
 extern void mmu_set_protection(CORE *cpu, int idx, t_value word);
 
 /*
@@ -437,7 +439,8 @@ extern DEVICE disk_dev;
 t_stat svs_disk_io(int dev, int zone, int sysaddr, int memaddr, int is_write, int nwords);
 
 extern DEVICE drum_dev;
-t_stat svs_drum_io(int dev, int zone, int sysaddr, int memaddr, int is_write, int nwords);
+t_stat svs_drum_io(int dev, int zone, int sector,
+                   int memaddr, int is_write, int nwords);
 t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 

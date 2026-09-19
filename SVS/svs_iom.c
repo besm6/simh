@@ -240,6 +240,10 @@ void iom_reset(int index)
 #define BAK_KOP_REG_UT      0005    /* регистрация таблицы устройств  → UTA  */
 #define BAK_KOP_REG_TOCH    0006    /* регистрация таблицы очередей ТОЧ → IOQA */
 #define BAK_KOP_REG_ANSW    0007    /* регистрация таблицы ответов    → SQA  */
+#define BAK_KOP_IBAK        0004    /* ИБАК: регистрация указателя на БАКПВВ    */
+#define BAK_KOP_POBR        0012    /* ПОБР: разовый пуск объекта (режим ЦРВ)   */
+/* Ячейка слова состояния для ПОБР: её опрашивает ВЫЗПВВ (СЧП '105'). */
+#define IOM_POBR_STATUS     0105
 #define BAK_KOP_PUSKOB      0016    /* ПУСКОБ: пуск обмена по очереди ТОЧ      */
 
 /*
@@ -376,7 +380,7 @@ static int iom_addr_ok(IOMDATA *iom, const char *what, uint32 addr)
  *   сл.4 СПУ — физический адрес зоны. Ответ устройства — в сл.5/6 (ДР/ДРУ).
  * dev — номер устройства МД (из НАПРУС; здесь 0 = канал 0, устройство 0).
  */
-static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
+static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
 {
     /* Слова данных хранятся как (значение48<<16)|тег: значащие 48 разр. — в
      * СТАРШЕЙ части 64-битного слова, поэтому извлекаем сдвигом вправо на 16
@@ -400,7 +404,14 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
     int zone     = (int)(memory[z + 4] & 0xFFFF);
     int sector   = 0;
     if (devclass == IOM_TUS_CLASS_MD) {
-        zone >>= 1;
+        /*
+         * Делим пополам только при типе ёмкости 7,25 МБ: там АДАП удваивает
+         * номер зоны (ветка ДИСК в адап.bemsh, СДА 64-1). При 29 МБ номер
+         * настоящий — так его шлёт ВЫЗПВВ (зона 0747 у АДАП-а).
+         * Переключается командой `set DISKn 29MB` / `set DISKn 7MB`.
+         */
+        if (svs_disk_zone_scale(dev) == 2)
+            zone >>= 1;
     } else if (devclass == IOM_TUS_CLASS_MB) {
         /*
          * Барабан: АДАП кладёт в РМР слова СПУ не номер зоны, а физический
@@ -453,11 +464,44 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
     int nwords   = (int)((memory[z + 2] >> 22) & 0xFFFFF);
     t_stat r;
 
+    /*
+     * ВРЕМЕННАЯ ДИАГНОСТИКА зацикливания. Загрузка бесконечно перечитывает одну
+     * и ту же зону в тот же буфер (наблюдалось 2,6 млн чтений зоны 0462).
+     * Журнала заявок для разбора мало: все обмены выдаются из одной точки
+     * АДАП-а (PC=34377), кто заказчик — не видно. Поэтому ловим момент, когда
+     * заявка повторилась N раз подряд, и включаем ПОКОМАНДНУЮ трассу ровно на
+     * две итерации: этого хватает, чтобы увидеть тело цикла, и трасса остаётся
+     * маленькой.
+     */
+    {
+        static int last_dev = -1, last_zone = -1, last_addr = -1, same = 0;
+
+        if (dev == last_dev && zone == last_zone && memaddr == last_addr) {
+            same++;
+            if (same == 200) {
+                fprintf(sim_log, "iom%d === заявка повторилась %d раз —"
+                    " включаю покомандную трассу на 2 итерации\n", iom->index, same);
+                svs_trace = TRACE_INSTRUCTIONS;
+            } else if (same == 202) {
+                fprintf(sim_log, "iom%d === хватит\n", iom->index);
+                svs_trace = TRACE_DEVICES;
+            }
+        } else {
+            same = 0;
+            last_dev = dev; last_zone = zone; last_addr = memaddr;
+        }
+    }
+
     if (svs_trace >= TRACE_DEVICES)
         fprintf(sim_log,
-            "iom%d --- обмен: устр=%d заявка@%o %s зона=%o сектор=%d буфер=%o\n"
+            "iom%d --- обмен: устр=%d(напр %d/устр %d) заявка@%o %s"
+            " зона=%o сектор=%d буфер=%o PC=%05o\n"
             "iom%d ---   ДО=%016jo(НАМ %07o РАЗМ %d) СО=%016jo СПУ=%016jo(РМР %06o)\n",
-            iom->index, dev, z, is_read ? "ЧТ" : "ЗП", zone, sector, memaddr,
+            iom->index, dev,
+            (devclass == IOM_TUS_CLASS_MD) ? svs_disk_napr(dev) : 0,
+            (devclass == IOM_TUS_CLASS_MD) ? dev % 8 : dev,
+            z, is_read ? "ЧТ" : "ЗП", zone, sector, memaddr,
+            cpu_core[0].PC,
             iom->index, (uintmax_t)do_, (unsigned)(memory[z+2] & 0xFFFFF),
             (unsigned)((memory[z+2] >> 22) & 0xFFFFF),
             (uintmax_t)so, (uintmax_t)spu, (unsigned)(memory[z+4] & 0xFFFF));
@@ -507,11 +551,12 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
         break;
     case IOM_TUS_CLASS_MB:
         /*
-         * Барабан: слова хранятся буквально, без свёртки 4:3, поэтому
-         * служебные слова идут с базы, а данные — сразу за ними. Форма вызова
-         * та же, что у диска: sysaddr — база зоны, третий аргумент — данные.
+         * Барабан: слова хранятся буквально, без свёртки 4:3, и массив ДО —
+         * это ТОЛЬКО данные, начиная прямо с НАМ. Служебные слова зоны АДАП
+         * возит отдельной заявкой в СС1Н, в массив обмена они не входят,
+         * поэтому сдвигать данные на 8 слов нельзя (это уводило всю страницу).
          */
-        r = svs_drum_io(dev, zone, memaddr, memaddr + IOM_ZONE_SERVICE, !is_read, nwords);
+        r = svs_drum_io(dev, zone, sector, memaddr, !is_read, nwords);
         break;
     default:
         r = SCPE_NXDEV;
@@ -588,6 +633,8 @@ static void iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
      * завершения; воспроизводим это здесь.
      */
     memory[z + 7] |= ((t_value)IOM_AKTZ) << 16;
+
+    return r;
 }
 
 /*
@@ -844,6 +891,80 @@ void iom_service_tvzp(int index)
 }
 
 /*
+ * ПОБР: разовый обмен по блоку БВВ, названному прямо в команде.
+ *
+ * Отличие от ПУСКОБ — никаких очередей: ни ТОЧ, ни ДВР ещё не
+ * зарегистрированы (ЦРВ — режим инициализации). Класс устройства взять
+ * неоткуда: ТУС тоже нет, поэтому если её нет, считаем устройство диском —
+ * загрузчик читает АДАП именно с МД. Номер устройства внутри класса берём из
+ * разр.39-42 слова СПУ, как и на пути ПУСКОБ.
+ */
+static void iom_pobr(IOMDATA *iom, uint32 z, int nus)
+{
+    int unit = 0, devclass;
+    t_value spu;
+    t_stat r;
+
+    if (! iom_addr_ok(iom, "БВВ по ПОБР", z) || z + 7 >= MEMSIZE)
+        return;
+
+    devclass = iom_tus_class(iom, nus, &unit);
+    if (devclass < 0) {
+        devclass = IOM_TUS_CLASS_MD;
+        spu = (memory[z + 4] >> 16) & BITS48;
+        unit = (int)((spu >> 38) & 017);
+    }
+
+    if (svs_trace >= TRACE_DEVICES)
+        fprintf(sim_log, "iom%d --- ПОБР: БВВ@%o класс %d устр %d\n",
+            iom->index, z, devclass, unit);
+
+    r = iom_xfer_zaiavka(iom, z, devclass, unit);
+
+    /*
+     * Слово состояния по ячейке 0105 (IOM_POBR_STATUS).
+     *
+     * Формат — дескриптор результата УД из заводской инструкции на УБД
+     * (ИБЗ.057.008 ИЭ, «Дескриптор результата», см. responses.md):
+     *     разр.0     УСБ  — указатель сбоя, «1» при любой ошибке;
+     *     разр.2-5   НУС  — номер внешнего устройства;
+     *     разр.8-31  АФСБ — файловый адрес при сбое;
+     *     тег        битовый набор полный.
+     *
+     * ВЫЗПВВ ждёт именно этого: после звонка он читает 0105, маскирует
+     * младшие 4 разр. (`и D02377`, 017) и, пока там ноль, уходит на повтор.
+     * То есть НУС обязан быть НЕнулевым — номер устройства и есть признак
+     * того, что обмен кому-то достался.
+     */
+    {
+        /*
+         * Разряды документа считаются по ВСЕМУ 64-разрядному слову, а у нас
+         * слово хранится как (значение48<<16)|младшие16. Значит УСБ (разр.0) и
+         * НУС (разр.2-5) ложатся в МЛАДШИЕ 16 разр., а не в значение48:
+         * команда СЧП кладёт как раз эти младшие 16 разр. в старшую половину
+         * РМР, откуда ВЫЗПВВ их и достаёт (`счмр; сда 64+32`).
+         *
+         * Проверок у ВЫЗПВВ две, и обе сходятся на этой раскладке:
+         *   `и D02377` (017) — ответил ли канал вообще (НУС либо УСБ ненулевые);
+         *   `и D02400` (разр.33 = разр.1 младшего поля) — это ровно УСБ,
+         *      то есть признак неудачи обмена.
+         */
+        uint32 low = ((uint32)(unit & 017) << 2) | ((r == SCPE_OK) ? 0 : 1);
+
+        memory[IOM_POBR_STATUS] = low;
+        tag[IOM_POBR_STATUS] = TAG_BITSET;
+
+        if (svs_trace >= TRACE_DEVICES)
+            fprintf(sim_log, "iom%d --- ПОБР: состояние@%o младш.16=%06o"
+                " (НУС=%d УСБ=%d)\n", iom->index, IOM_POBR_STATUS,
+                low, unit & 017, (r == SCPE_OK) ? 0 : 1);
+    }
+
+    /* В ЦРВ каждый обмен сопровождается взаимными прерываниями ЦП и ПВВ. */
+    cpu_core[0].GRVP |= GRVP_INTR_IOM;
+}
+
+/*
  * Запрос от процессора через регистр ПП.
  */
 void iom_request(int index)
@@ -859,11 +980,33 @@ void iom_request(int index)
     t_value ptr = memory[iom->HA] & BITS48;
     if (ptr != 0) {
         int kop = BAK_KOP(ptr);
-        iom->BAK = IOM_PHYS(BAK_BLOCK_ADDR(ptr));
+        uint32 blk = IOM_PHYS(BAK_BLOCK_ADDR(ptr));
 
         if (svs_trace >= TRACE_DEVICES)
-            fprintf(sim_log, "iom%d --- Инициализация БАК: КОП=%03o, БАКПВВ@%o\n",
-                iom->index, kop, iom->BAK);
+            fprintf(sim_log, "iom%d --- СТБАК: КОП=%02o %s СБ=%d НУС=%d"
+                " адрес=%o слово=%#jx\n",
+                iom->index, kop, bak_kop_name(kop), BAK_SEM(ptr), BAK_NUS(ptr),
+                BAK_BLOCK_ADDR(ptr), (uintmax_t)ptr);
+
+        if (kop == BAK_KOP_POBR) {
+            /*
+             * ПОБР — «пуск объекта разовый» (№10.170.002 ТОП, 4.2.2):
+             * «используется при инициализации вычислительного комплекса и
+             * может выполняться только в циклическом режиме работы ПВВ (ЦРВ)…
+             * Номер устройства; номер канала и адрес блока ввода-вывода
+             * задаются непосредственно в полях команды».
+             *
+             * Так работает первичный загрузчик ВЫЗПВВ: таблиц ТУС/ТОЧ/ДВР ещё
+             * нет, он просто кладёт блок БВВ по 070000 и даёт ПОБР с этим
+             * адресом. Очередей здесь нет — обслуживаем ровно одну заявку.
+             */
+            iom_pobr(iom, blk, BAK_NUS(ptr));
+            memory[iom->HA] = 0;
+            return;
+        }
+
+        /* Прочее (в первую очередь ИБАК, КОП=004) — регистрация указателя. */
+        iom->BAK = blk;
 
         /*
          * Подтверждение: гасим СТБАК. Цикл ожидания в процессоре

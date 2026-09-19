@@ -96,9 +96,41 @@ static DISKCTL controller;      /* один контроллер КМД */
 
 t_stat disk_event(UNIT *u);
 
-#define NUM_DISK_UNITS 8
+/*
+ * Нумерация накопителей МД совпадает с адресацией ВЫЗПВВ и АДАП-а.
+ *
+ * В заявке номер устройства лежит в слове СПУ, разр.39-42 — ЧЕТЫРЕ разряда
+ * (эмулятор: (spu>>38)&017; сам АДАП проверяет так же, ВЫППВВ: СДА 64+38 …
+ * И =В'17'). Значит адресуются устройства 0..15, и столько же UNIT-ов.
+ *
+ * ВЫЗПВВ хранит этот же номер в НАПРУС (030115), разбирая его командой
+ * РЗБ по маске D02363 = 0070000000001600 на две тройки разрядов:
+ *      разр.40-42 — НАПРАВЛЕНИЕ = номер/8
+ *      разр.8-10  — УСТРОЙСТВО  = номер%8
+ * Измерено: DISK1 -> НАПРУС 0000…0200 (напр 0, устр 1), DISK5 -> 0000…1200
+ * (напр 0, устр 5), DISK9 -> 0010…0200 (напр 1, устр 1), DISK13 -> 0010…1200
+ * (напр 1, устр 5).
+ *
+ * Поэтому `attach DISKn` — это ровно устройство n в терминах ВЫЗПВВ/АДАП-а,
+ * а его направление равно n/8. Отдельной настройки направления не нужно и
+ * быть не может: направление — это старшая тройка того же номера.
+ *
+ * (Табл.2 инструкции на УБД, ИБЗ.057.008 ИЭ, даёт 4 ВУ на направление — это
+ * про другой контроллер; по прогонам ВЫЗПВВ здесь выходит 8.)
+ */
+#define NUM_DISK_UNITS 16
+#define DISK_NAPR(dev)  ((dev) / 8)
+#define DISK_UNIT_IN_NAPR(dev)  ((dev) % 8)
 
 UNIT disk_unit[NUM_DISK_UNITS] = {
+    { UDATA(disk_event, UNIT_FIX+UNIT_ATTABLE+UNIT_ROABLE+UNIT_DISABLE, DISK_SIZE) },
+    { UDATA(disk_event, UNIT_FIX+UNIT_ATTABLE+UNIT_ROABLE+UNIT_DISABLE, DISK_SIZE) },
+    { UDATA(disk_event, UNIT_FIX+UNIT_ATTABLE+UNIT_ROABLE+UNIT_DISABLE, DISK_SIZE) },
+    { UDATA(disk_event, UNIT_FIX+UNIT_ATTABLE+UNIT_ROABLE+UNIT_DISABLE, DISK_SIZE) },
+    { UDATA(disk_event, UNIT_FIX+UNIT_ATTABLE+UNIT_ROABLE+UNIT_DISABLE, DISK_SIZE) },
+    { UDATA(disk_event, UNIT_FIX+UNIT_ATTABLE+UNIT_ROABLE+UNIT_DISABLE, DISK_SIZE) },
+    { UDATA(disk_event, UNIT_FIX+UNIT_ATTABLE+UNIT_ROABLE+UNIT_DISABLE, DISK_SIZE) },
+    { UDATA(disk_event, UNIT_FIX+UNIT_ATTABLE+UNIT_ROABLE+UNIT_DISABLE, DISK_SIZE) },
     { UDATA(disk_event, UNIT_FIX+UNIT_ATTABLE+UNIT_ROABLE+UNIT_DISABLE, DISK_SIZE) },
     { UDATA(disk_event, UNIT_FIX+UNIT_ATTABLE+UNIT_ROABLE+UNIT_DISABLE, DISK_SIZE) },
     { UDATA(disk_event, UNIT_FIX+UNIT_ATTABLE+UNIT_ROABLE+UNIT_DISABLE, DISK_SIZE) },
@@ -118,7 +150,24 @@ static REG disk_reg[] = {
     { 0 }
 };
 
+/*
+ * Тип ёмкости МД. От него зависит, удвоен ли номер зоны в слове СПУ:
+ * АДАП читает тип из ТУСЗ и при «не 29 МГБ» делает СДА 64-1 (ветка ДИСК),
+ * то есть удваивает номер. Первичный загрузчик ВЫЗПВВ таблиц не имеет и
+ * шлёт НАСТОЯЩИЙ номер зоны (например 0747 — зона АДАП-а), поэтому делить
+ * его пополам нельзя.
+ *
+ * По умолчанию 7,25 МБ (зона удвоена) — так ведёт себя конфигурация
+ * dispak.ini, где ТУСЗ не настроена.
+ */
+#define UNIT_V_29MB     (UNIT_V_UF + 0)
+#define UNIT_29MB       (1u << UNIT_V_29MB)
+
 static MTAB disk_mod[] = {
+    { UNIT_29MB, 0,         "7MB",  "7MB",  NULL, NULL, NULL,
+      "тип ёмкости 7,25 МБ: номер зоны в СПУ удвоен" },
+    { UNIT_29MB, UNIT_29MB, "29MB", "29MB", NULL, NULL, NULL,
+      "тип ёмкости 29 МБ: номер зоны в СПУ настоящий" },
     { 0 }
 };
 
@@ -238,6 +287,22 @@ t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
      */
     for (i = 0; i < 8 && i < nwords; ++i)
         disk_word_to_mem(buf[i], sysaddr + i);
+
+    /*
+     * Что ОС увидит в служебных словах. ДИСКИ сверяет N зоны из СС[0] со
+     * своим КУС (ПРЗОНЫ, физ.073503; в листинге diski.txt 73477) и при
+     * несовпадении уходит в ПЛОХО с кодом ОШЗОНЫ. Сходится, когда СС[0]
+     * равно номеру зоны образа: ОС сама так его и пишет (диски.bemsh, ОБ4А).
+     * В исходном svs2053.bin там лежит удвоенный номер — отсюда зацикливание
+     * на зоне 0462; лечит tools/makeSVS2053.py (svs2053-fixed.bin).
+     */
+    if (svs_trace >= TRACE_DEVICES) {
+        t_value ss0 = (memory[mmu_iom_data_pa(sysaddr)] >> 16) & BITS48;
+
+        if ((ss0 >> 36) != (t_value)zone)
+            fprintf(sim_log, "disk ---   зона %04o: СС[0]=%016jo — ОС ждёт"
+                " %04o, будет ОШЗОНЫ\n", zone, (uintmax_t)ss0, zone);
+    }
 
     /*
      * Слова данных, свёртка 4:3. Логическая страница лежит на диске В ПОРЯДКЕ:
@@ -373,6 +438,28 @@ t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
  * (чтение/запись), номер зоны, адреса служебных слов и данных берутся из
  * описателя обмена (СМ/ДО/СО/СПУ, см. ПВВ.md §5).
  */
+/*
+ * Во сколько раз номер зоны в слове СПУ больше настоящего:
+ * 2 — тип ёмкости 7,25 МБ (АДАП удваивает), 1 — 29 МБ (номер как есть).
+ */
+/*
+ * Направление (номер тракта), к которому подключён накопитель.
+ * По табл.2 инструкции на УБД оно однозначно задаётся номером ВУ: ВУ/4.
+ */
+int svs_disk_napr(int dev)
+{
+    if (dev < 0 || dev >= NUM_DISK_UNITS)
+        return -1;
+    return DISK_NAPR(dev);
+}
+
+int svs_disk_zone_scale(int dev)
+{
+    if (dev < 0 || dev >= NUM_DISK_UNITS)
+        return 2;
+    return (disk_unit[dev].flags & UNIT_29MB) ? 1 : 2;
+}
+
 t_stat svs_disk_io(int dev, int zone, int sysaddr, int memaddr, int is_write, int nwords)
 {
     UNIT *u;
