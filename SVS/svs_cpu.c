@@ -78,6 +78,22 @@ t_stat cpu_set_etrace(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_dtrace(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_trace(FILE *st, UNIT *up, int32 v, CONST void *dp);
 t_stat cpu_clr_trace(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_set_window(UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_clr_window(UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_show_window(FILE *st, UNIT *up, int32 v, CONST void *dp);
+
+/*
+ * Окно трассы по PC: покомандная трасса печатается, только пока PC внутри
+ * [svs_trace_lo, svs_trace_hi]. Задаётся `set cpu0 window=lo:hi`, снимается
+ * `set cpu0 nowindow`. Пока окно не задано, трасса печатается везде.
+ * Макрос TRACE_IN_WINDOW — в svs_defs.h, им пользуется и svs_mmu.c.
+ */
+t_value svs_clock = 0;                  /* регистр часов 056, 44 разр., 1 мкс */
+t_value svs_timer = 0;                  /* регистр таймера 057, 32 разр., 1 мкс */
+static int svs_timer_run = 0;           /* счёт идёт после записи в регистр */
+
+int svs_trace_window = 0;
+t_addr svs_trace_lo = 0, svs_trace_hi = 0;
 
 /*
  * CPU data structures
@@ -160,6 +176,8 @@ REG cpu0_reg[] = {
     { ORDATA   (GRM,    cpu_core[0].GRM,        24) },  /* mask of the above */
     { ORDATAVM (PP,     cpu_core[0].PP,         48) },  /* requests to processors */
     { ORDATAVM (OPP,    cpu_core[0].OPP,        48) },  /* responds to processors */
+    { ORDATAVM (CLOCK,  svs_clock,              44) },  /* регистр часов 056, 1 мкс */
+    { ORDATAVM (TIMER,  svs_timer,              32) },  /* регистр таймера 057 */
     { ORDATAVM (POP,    cpu_core[0].POP,        48) },  /* interrupts from processors */
     { ORDATAVM (OPOP,   cpu_core[0].OPOP,       48) },  /* responds from processors */
     { ORDATAVM (RKP,    cpu_core[0].RKP,        48) },  /* configuration of processors */
@@ -192,6 +210,12 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV,
         0, NULL,    "NOTRACE",  &cpu_clr_trace,     NULL,               NULL,
                                 "Disables tracing" },
+    { MTAB_XTD|MTAB_VDV|MTAB_VALR,
+        0, "WINDOW", "WINDOW",  &cpu_set_window,    &cpu_show_window,   NULL,
+                                "Limits instruction tracing to a PC range" },
+    { MTAB_XTD|MTAB_VDV,
+        0, NULL,    "NOWINDOW", &cpu_clr_window,    NULL,               NULL,
+                                "Removes the tracing PC range limit" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALO|MTAB_QUOTE,
         0, "PANEL", "PANEL{=fontfilename}", &svs_init_panel, &svs_show_panel, NULL,
                                 "Enable Display of graphical panel optionally specifying font name" },
@@ -489,6 +513,47 @@ t_stat cpu_clr_trace (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
     return SCPE_OK;
 }
 
+/*
+ * `set cpu0 window=lo:hi` — ограничить покомандную трассу диапазоном адресов.
+ * Границы восьмеричные, разделитель «:» или «-», включительно с обеих сторон.
+ */
+t_stat cpu_set_window(UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    unsigned lo, hi;
+    char sep;
+
+    if (! cptr || sscanf(cptr, "%o%c%o", &lo, &sep, &hi) != 3 ||
+        (sep != ':' && sep != '-')) {
+        sim_printf("Usage: set cpu0 window=lo:hi (octal addresses)\n");
+        return SCPE_ARG;
+    }
+    if (lo > hi) {
+        sim_printf("Empty window: %05o > %05o\n", lo, hi);
+        return SCPE_ARG;
+    }
+    svs_trace_lo = lo;
+    svs_trace_hi = hi;
+    svs_trace_window = 1;
+    sim_printf("Trace window %05o:%05o\n", lo, hi);
+    return SCPE_OK;
+}
+
+t_stat cpu_clr_window(UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    svs_trace_window = 0;
+    return SCPE_OK;
+}
+
+t_stat cpu_show_window(FILE *st, UNIT *up, int32 v, CONST void *dp)
+{
+    if (svs_trace_window)
+        fprintf(st, "trace window %05o:%05o",
+            (unsigned) svs_trace_lo, (unsigned) svs_trace_hi);
+    else
+        fprintf(st, "no trace window");
+    return SCPE_OK;
+}
+
 t_stat cpu_show_trace(FILE *st, UNIT *up, int32 v, CONST void *dp)
 {
     switch (svs_trace) {
@@ -572,35 +637,35 @@ static void cmd_002(CORE *cpu)
     case 020: case 021: case 022: case 023:
     case 024: case 025: case 026: case 027:
         /* Запись в регистры приписки режима пользователя */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Установка приписки пользователя\n", cpu->index);
         mmu_set_rp(cpu, cpu->Aex & 7, cpu->ACC, 0);
         break;
 
     case 030: case 031: case 032: case 033:
         /* Запись в регистры защиты */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Запись в регистр защиты\n", cpu->index);
         mmu_set_protection(cpu, cpu->Aex & 3, cpu->ACC);
         break;
 
     case 034:
         /* Запись в регистр конфигурации оперативной памяти */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Запись конфигурации оперативной памяти\n", cpu->index);
         /* игнорируем */
         break;
 
     case 035:
         /* Запись в сигнал контроля оперативной памяти */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Запись в сигнал контроля оперативной памяти\n", cpu->index);
         /* игнорируем */
         break;
 
     case 0235:
         /* Чтение сигнала контроля от оперативной памяти */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Чтение сигнала контроля оперативной памяти\n", cpu->index);
         cpu->ACC = 0;
         break;
@@ -628,7 +693,7 @@ static void cmd_002(CORE *cpu)
          * тождественной начальной приписке это НЕ сдвигает страницу 0, где
          * лежит стек, — что и требуется.
          */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Чтение ЗЗ (секции памяти, запретов нет)\n",
                 cpu->index);
         cpu->ACC = 0;
@@ -636,49 +701,49 @@ static void cmd_002(CORE *cpu)
 
     case 037:
         /* Гашение регистра внутренних прерываний */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Гашение РПР\n", cpu->index);
         cpu->RPR &= cpu->ACC | RPR_WIRED_BITS;
         break;
 
     case 0237:
         /* Чтение главного регистра прерываний */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Чтение ГРП\n", cpu->index);
         cpu->ACC = cpu->RPR;
         break;
 
     case 044:
         /* Запись в регистр тега */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Установка тега\n", cpu->index);
         cpu->TagR = cpu->ACC;
         break;
 
     case 0244:
         /* Чтение регистра тега */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Чтение регистра тега\n", cpu->index);
         cpu->ACC = cpu->TagR;
         break;
 
     case 0245:
         /* Чтение регистра ТЕГБРЧ */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Чтение ТЕГБРЧ\n", cpu->index);
         cpu->ACC = 0; //TODO
         break;
 
     case 046:
         /* Запись маски внешних прерываний */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Установка ГРМ\n", cpu->index);
         cpu->GRM = cpu->ACC;
         break;
 
     case 0246:
         /* Чтение маски внешних прерываний */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Чтение ГРМ\n", cpu->index);
         cpu->ACC = cpu->GRM;
         break;
@@ -686,14 +751,14 @@ static void cmd_002(CORE *cpu)
     case 047:
         /* Clearing the external interrupt register: */
         /* it is impossible to clear wired (stateless) bits this way */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Гашение РВП\n", cpu->index);
         cpu->GRVP &= cpu->ACC | GRVP_WIRED_BITS;
         break;
 
     case 0247:
         /* Чтение регистра внешних прерываний */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Чтение РВП: ГРВП=%04jo ГРМ=%04jo PC=%05o\n",
                 cpu->index, (uintmax_t)cpu->GRVP, (uintmax_t)cpu->GRM, cpu->PC);
         cpu->ACC = cpu->GRVP;
@@ -701,7 +766,7 @@ static void cmd_002(CORE *cpu)
 
     case 050:
         /* Запись в регистр прерываний процессорам */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Запись в ПП\n", cpu->index);
         cpu->PP = cpu->ACC & (CONF_IOM_MASK | CONF_CPU_MASK | CONF_DATA_MASK);
         if (cpu->ACC & CONF_MT) {
@@ -735,7 +800,7 @@ static void cmd_002(CORE *cpu)
              * РКП должен перечислять этот процессор — см. `d RKP` в
              * dispak.ini. См. ПВВ.md §7.6.
              */
-            if (svs_trace >= TRACE_INSTRUCTIONS)
+            if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
                 fprintf(sim_log, "cpu%d --- Прерывание процессорам, маска %#jo\n",
                     cpu->index, (uintmax_t)(cpu->ACC & CONF_CPU_MASK));
             cpu->POP |= cpu->ACC & CONF_CPU_MASK;
@@ -755,7 +820,7 @@ static void cmd_002(CORE *cpu)
          * процессор 9 — разряд 33.
          * Номер берётся из cpu_svs_number (регистр NSVS), а не из индекса
          * процессора: эмулятор гоняет одну машину, но её номер выбирается. */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Чтение номера процессора (СВС %d)\n",
                 cpu->index, cpu_svs_number);
         cpu->ACC = (0x3ffLL << 32) & ~(1LL << (41 - cpu_svs_number));
@@ -763,7 +828,7 @@ static void cmd_002(CORE *cpu)
 
     case 051:
         /* Запись в регистр ответов процессорам */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Запись в ОПП\n", cpu->index);
         cpu->OPP = cpu->ACC & (CONF_IOM_MASK | CONF_CPU_MASK | CONF_DATA_MASK);
         if (cpu->ACC & CONF_MT) {
@@ -778,7 +843,7 @@ static void cmd_002(CORE *cpu)
 
     case 052:
         /* Гашение регистра прерываний от процессоров */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Гашение ПОП\n", cpu->index);
         /* Оставляем бит передачи МПД. */
         cpu->POP &= cpu->ACC | CONF_MT;
@@ -786,85 +851,92 @@ static void cmd_002(CORE *cpu)
 
     case 0252:
         /* Чтение регистра прерываний от процессоров */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Чтение ПОП\n", cpu->index);
         cpu->ACC = cpu->POP;
         break;
 
     case 053:
         /* Гашение регистра ответов от процессоров */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Гашение ОПОП\n", cpu->index);
         cpu->OPOP &= cpu->ACC;
         break;
 
     case 0253:
         /* Чтение регистра ответов от процессоров */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Чтение ОПОП\n", cpu->index);
         cpu->ACC = cpu->OPOP;
         break;
 
     case 054:
         /* Запись в регистр конфигурации процессора */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Установка конфигурации процессора\n", cpu->index);
         cpu->RKP = cpu->ACC & (CONF_IOM_MASK | CONF_CPU_MASK | CONF_MR | CONF_MT);
         break;
 
     case 0254:
         /* Чтение регистра конфигурации процессора */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Чтение регистра конфигурации процессора\n", cpu->index);
         cpu->ACC = cpu->RKP;
         break;
 
     case 055:
         /* Запись в регистр аварии процессоров */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Запись в регистр аварии процессоров\n", cpu->index);
         /* игнорируем */
         break;
 
     case 0255:
         /* Чтение регистра аварии процессоров */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Чтение регистра аварии процессоров\n", cpu->index);
         cpu->ACC = 0;
         break;
 
     case 056:
-        /* Запись в регистр часов */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Установка часов\n", cpu->index);
-        //TODO
+        /* Запись в регистр часов: разр.44-1 сумматора. */
+        svs_clock = cpu->ACC & BITS44;
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
+            fprintf(sim_log, "cpu%d --- Установка часов: %015jo\n",
+                cpu->index, (uintmax_t)svs_clock);
         break;
 
     case 0256:
-        /* Чтение регистра часов */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Чтение регистра часов\n", cpu->index);
-        cpu->ACC = 0; //TODO
+        /* Чтение регистра часов: разр.44-1 в сумматор. */
+        cpu->ACC = svs_clock & BITS44;
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
+            fprintf(sim_log, "cpu%d --- Чтение регистра часов: %015jo\n",
+                cpu->index, (uintmax_t)cpu->ACC);
         break;
 
     case 057:
-        /* Запись в регистр таймера */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Установка таймера\n", cpu->index);
-        //TODO
+        /* Запись в регистр таймера: разр.32-1 сумматора, счёт пошёл. */
+        svs_timer = cpu->ACC & BITS(32);
+        svs_timer_run = 1;
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
+            fprintf(sim_log, "cpu%d --- Установка таймера: %011jo"
+                " (прерывание через %ju мкс)\n", cpu->index,
+                (uintmax_t)svs_timer,
+                (uintmax_t)((1ULL << 32) - svs_timer) & 0xffffffff);
         break;
 
     case 0257:
-        /* Чтение регистра таймера */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- Чтение регистра таймера\n", cpu->index);
-        cpu->ACC = 0; //TODO
+        /* Чтение регистра таймера: разр.32-1 в сумматор. */
+        cpu->ACC = svs_timer & BITS(32);
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
+            fprintf(sim_log, "cpu%d --- Чтение регистра таймера: %011jo\n",
+                cpu->index, (uintmax_t)cpu->ACC);
         break;
 
     case 060: case 061: case 062: case 063:
     case 064: case 065: case 066: case 067:
         /* Запись в регистры приписки супервизора */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Установка приписки супервизора\n", cpu->index);
         mmu_set_rp(cpu, cpu->Aex & 7, cpu->ACC, 1);
         break;
@@ -876,7 +948,7 @@ static void cmd_002(CORE *cpu)
          * Биты 2 и 3 - признаки формирования контрольных
          * разрядов (ПКП и ПКЛ).
          */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Установка режимов УУ\n", cpu->index);
 
         if (cpu->Aex & 1) cpu->RUU |= RUU_AVOST_DISABLE;
@@ -891,7 +963,7 @@ static void cmd_002(CORE *cpu)
 
     case 0140:
         /* Сброс контрольных признаков (СКП). */
-        if (svs_trace >= TRACE_INSTRUCTIONS)
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
             fprintf(sim_log, "cpu%d --- Сброс контрольных признаков\n",
                 cpu->index);
         //TODO
@@ -966,8 +1038,9 @@ void cpu_one_instr(CORE *cpu)
     }
 
     /* Трассировка команды: адрес, код и мнемоника. */
-    if (svs_trace >= TRACE_INSTRUCTIONS ||
-        (svs_trace == TRACE_EXTRACODES && is_extracode(opcode))) {
+    if ((svs_trace >= TRACE_INSTRUCTIONS ||
+        (svs_trace == TRACE_EXTRACODES && is_extracode(opcode))) &&
+        TRACE_IN_WINDOW(cpu->PC)) {
         svs_trace_opcode(cpu, paddr);
     }
 
@@ -1643,7 +1716,7 @@ branch_zero:
     }
 
     /* Трассировка изменённых регистров. */
-    if (svs_trace == TRACE_ALL) {
+    if (svs_trace == TRACE_ALL && TRACE_IN_WINDOW(cpu->PC)) {
         svs_trace_registers(cpu);
     }
 #if 0
@@ -1709,7 +1782,7 @@ t_stat sim_instr(void)
     int iintr = 0;
 
     /* Трассировка начального состояния. */
-    if (svs_trace == TRACE_ALL) {
+    if (svs_trace == TRACE_ALL && TRACE_IN_WINDOW(cpu->PC)) {
         svs_trace_registers(cpu);
     }
 
@@ -1724,7 +1797,7 @@ t_stat sim_instr(void)
             scp_errors[r - SCPE_BASE] :
             sim_stop_messages[r];
 
-        if (svs_trace >= TRACE_INSTRUCTIONS) {
+        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC)) {
             fprintf(sim_log, "cpu%d --- %s\n",
                 cpu->index, message);
         }
@@ -1915,7 +1988,7 @@ ret:        svs_draw_panel(1);
         {
             if (cpu->RPR) {
                 /* internal interrupt */
-                if (svs_trace >= TRACE_INSTRUCTIONS) {
+                if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC)) {
                     fprintf(sim_log, "cpu%d --- Внутреннее прерывание\n",
                         cpu->index);
                 }
@@ -1944,7 +2017,7 @@ ret:        svs_draw_panel(1);
                  * целиком, чтобы видеть, какой разряд реально доставлен и
                  * доживает ли он до РЕГ '247' внутри обработчика.
                  */
-                if (svs_trace >= TRACE_INSTRUCTIONS) {
+                if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC)) {
                     fprintf(sim_log, "cpu%d --- Внешнее прерывание:"
                         " ГРВП=%04jo ГРМ=%04jo (доставлено %04jo) PC=%05o\n",
                         cpu->index, (uintmax_t)cpu->GRVP, (uintmax_t)cpu->GRM,
@@ -1957,31 +2030,28 @@ ret:        svs_draw_panel(1);
         iintr = 0;
 
         sim_interval -= 1;                      /* count down instructions */
+
     }
 }
 
 /*
- * A 250 Hz clock as per the original documentation,
- * and matching the available software binaries.
- * Some installations used 50 Hz with a modified OS
- * for a better user time/system time ratio.
+ * Тактовый агрегат на 250 Гц: перерисовка пульта и калибровка часов SIMH.
+ *
+ * Разряд 4 ГРВП (GRVP_TIMER) взводит регистр таймера 057 — так описано в
+ * документации, §16.15, и так его программирует ОС: АДАП грузит `ВРЕМЯТ
+ * КОНД В'37777750000'` = 2^32 - 12288, то есть прерывание через 12288 мкс,
+ * и на каждом прерывании перезаводит регистр (`ПРВРЕМ РЕГ '57' ПОДЗАВОД
+ * БУДИЛЬНИКА`, адап.bemsh:1530).
  */
 t_stat fast_clk(UNIT *this)
 {
     static unsigned counter;
-    static unsigned tty_counter;
 
-    if (svs_trace >= TRACE_INSTRUCTIONS) {
+    if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu_core[0].PC)) {
         fprintf(sim_log, "---- --- Timer\n");
     }
 
     ++counter;
-    ++tty_counter;
-
-    CORE *cpu;
-    for (cpu = &cpu_core[0]; cpu < &cpu_core[NUM_CORES]; cpu++) {
-        cpu->GRVP |= GRVP_TIMER;
-    }
 
     /* Request a panel sample every 32 ms
      * (a redraw actually happens at every other sample). */
@@ -1993,8 +2063,31 @@ t_stat fast_clk(UNIT *this)
     return sim_activate_after(this, 1000000/TICKS_PER_SEC);   /* reactivate unit */
 }
 
+/*
+ * Ход часов 056 и таймера 057 — одна микросекунда реального времени.
+ * Механизм тот же, что у fast_clk: агрегат перевзводит сам себя через
+ * sim_activate_after(), так что темп задаёт калибровка SIMH, а не число
+ * выполненных команд.
+ */
+t_stat usec_tick(UNIT *this)
+{
+    svs_clock = (svs_clock + 1) & BITS44;
+
+    if (svs_timer_run) {
+        svs_timer = (svs_timer + 1) & BITS(32);
+        if (svs_timer == 0) {
+            CORE *cpu;
+
+            for (cpu = &cpu_core[0]; cpu < &cpu_core[NUM_CORES]; cpu++)
+                cpu->GRVP |= GRVP_TIMER;
+        }
+    }
+    return sim_activate_after(this, 1);                 /* 1 мкс */
+}
+
 UNIT clocks[] = {
-    { UDATA(fast_clk, UNIT_IDLE, 0), INSN_PER_TICK },   /* Bit 40 of the RPR, 250 Hz */
+    { UDATA(fast_clk, UNIT_IDLE, 0), INSN_PER_TICK },   /* пульт и калибровка, 250 Гц */
+    { UDATA(usec_tick, UNIT_IDLE, 0), 1 },              /* часы 056 и таймер 057, 1 мкс */
 };
 
 t_stat clk_reset(DEVICE *dev)
@@ -2006,13 +2099,14 @@ t_stat clk_reset(DEVICE *dev)
     if (!sim_is_running) {                              /* RESET (not IORESET)? */
         tmr_poll = sim_rtcn_init(clocks[0].wait, 0);    /* init timer */
         sim_activate(&clocks[0], tmr_poll);             /* activate unit */
+        sim_activate_after(&clocks[1], 1);              /* ход часов и таймера */
     }
     return SCPE_OK;
 }
 
 DEVICE clock_dev = {
     "CLK", clocks, NULL, NULL,
-    1, 0, 0, 0, 0, 0,
+    2, 0, 0, 0, 0, 0,
     NULL, NULL, &clk_reset,
     NULL, NULL, NULL, NULL,
     DEV_DEBUG

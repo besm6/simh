@@ -172,7 +172,7 @@ static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val64, uint8 t)
         /* Приписка отключена. */
         if (vaddr < 010) {
             /* Игнорируем запись в тумблерные регистры. */
-            if (svs_trace >= TRACE_INSTRUCTIONS) {
+            if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC)) {
                 fprintf(sim_log, "cpu%d --- Ignore write to pult register %d\n",
                     cpu->index, vaddr);
             }
@@ -478,7 +478,7 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
     t     = cpu->pf_tag[0];
     cpu->pf_last = vaddr;
 
-    if (svs_trace >= TRACE_INSTRUCTIONS && cpu_dev[0].dctrl &&
+    if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC) && cpu_dev[0].dctrl &&
         ! (cpu->RUU & RUU_RIGHT_INSTR)) {
         // When both trace and cpu debug enabled,
         // print the fetch information.
@@ -532,7 +532,7 @@ void mmu_set_rp(CORE *cpu, int idx, t_value val, int supervisor)
     p2 &= mask;
     p3 &= mask;
 
-    if (svs_trace >= TRACE_INSTRUCTIONS) {
+    if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC)) {
         /*
          * Дамп перепрограммирования приписки. Печатаем и СТАРОЕ, и НОВОЕ
          * отображение, чтобы сразу видеть, какие виртуальные страницы
