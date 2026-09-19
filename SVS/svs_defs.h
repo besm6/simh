@@ -395,6 +395,7 @@ int vt_is_idle(void);
 void mpd_reset(CORE *cpu);
 void mpd_send_nibble(CORE *cpu, int data);
 void mpd_receive_update(CORE *cpu);
+void tty_strobe(CORE *cpu);
 
 /*
  * Отладочная выдача.

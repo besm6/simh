@@ -1269,19 +1269,45 @@ int odd_parity(unsigned char c)
     return c & 1;
 }
 
-#if 0
-//TODO
-void tty_strobe()
+/*
+ * Приём из МПД. Протокол целиком — в МПД.md.
+ *
+ * Слог передаётся двумя байтами, старшим вперёд, по байту на строб: первый
+ * байт — номер линии, второй — данные. Младший полубайт байта лежит в поле
+ * данных ПОП (разр.38-35), старший — в том же поле ОПОП; признак приёма —
+ * разр.34 ПОП, признак свободного передатчика — разр.33.
+ *
+ * Так их и читает МОТТ (мотт.bemsh, блок ПСЛ, физ.076252-076266): две
+ * итерации (`уиа -1(М14)`), на каждой `сда 70` сдвигает R влево на 8 и
+ * подмешивает байт из `рег 253`/`сда 136` и `рег 252`/`сда 142`, затем
+ * `рег 52`/`рег 53` гасят регистры и `рег 50` даёт СТРОБ ПРИЕМА.
+ *
+ * `receive_state`: 0 — отдавать нечего, 2 — очередь старшего байта,
+ * 3 — очередь младшего.
+ *
+ * Поля данных ставятся через `CONF_SET_DATA`: в ПОП живут ещё и разряды
+ * межпроцессорных прерываний.
+ */
+static int receive_state = 0;
+static uint32 receive_syllable = 0;
+static int mpd_answered = 0;        /* ответ на служебный слог уже отдан */
+
+void tty_strobe(CORE *cpu)
 {
-    if (receive_state == 2) {
-        REQUEST = ((syllable >> 0) & 0xFLL) << 34;
-        RESPONSE = ((syllable >> 4) & 0xFLL) << 34;
-        REQUEST |= BIT(33)|BIT(34);
-        receive_state = 3;
-    } else if (receive_state == 3)
+    int byte;
+
+    switch (receive_state) {
+    case 2: byte = (receive_syllable >> 8) & 0xff; break;   /* старший */
+    case 3: byte = receive_syllable & 0xff; break;          /* младший */
+    default:
         receive_state = 0;
+        return;
+    }
+    cpu->POP  = CONF_SET_DATA(cpu->POP,  byte);
+    cpu->OPOP = CONF_SET_DATA(cpu->OPOP, byte >> 4);
+    cpu->POP |= CONF_MT | CONF_MR;
+    receive_state++;
 }
-#endif
 
 /*
  * Handling input from all connected terminals.
@@ -1393,6 +1419,9 @@ void mpd_reset(CORE *cpu)
 {
     cpu->mpd_nbits = 0;
     cpu->mpd_data = 0;
+    receive_state = 0;
+    receive_syllable = 0;
+    mpd_answered = 0;
 
     /* Готов к передаче. */
     cpu->POP |= CONF_MT;
@@ -1420,6 +1449,16 @@ void mpd_send_nibble(CORE *cpu, int data)
         if (cpu->mpd_data & 0x8000) {
             /* Служебный слог */
             printf("<Т%d-ЭВМ%d>", (cpu->mpd_data >> 8) & 0177, cpu->mpd_data & 3);
+            /*
+             * Отвечаем нулевым байтом на линии этого слога, однократно:
+             * следующий слог от МОТТ-а — эхо принятого байта.
+             */
+            if (! mpd_answered) {
+                mpd_answered = 1;
+                receive_syllable = ((cpu->mpd_data >> 8) & 0177) << 8;
+                receive_state = 2;
+                tty_strobe(cpu);
+            }
         } else {
             /* Игнорируем номер линии. */
             int sym = cpu->mpd_data & 0177;
@@ -1447,7 +1486,8 @@ void mpd_send_nibble(CORE *cpu, int data)
  */
 void mpd_receive_update(CORE *cpu)
 {
-    //TODO
+    /* СТРОБ ПРИЕМА от процессора. */
+    tty_strobe(cpu);
 #if 0
     /* Приняли очередной байт. */
     cpu->POP |= CONF_MR;
