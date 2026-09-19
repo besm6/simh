@@ -64,6 +64,7 @@ enum {
     STOP_LOAD_ADDR_MATCH,               /* Останов по считыванию */
     STOP_STORE_ADDR_MATCH,              /* Останов по записи */
     STOP_UNIMPLEMENTED,                 /* Не реализовано */
+    STOP_VALUE_KIND,                    /* Неверный вид значения (СОП) */
 };
 
 /*
@@ -382,10 +383,6 @@ extern int odd_parity(unsigned char);
 /*
  * Терминалы.
  */
-void tty_send(uint32 mask);
-int tty_query(void);
-void vt_print(void);
-void tt_print(void);
 void vt_receive(CORE *cpu);
 int vt_is_idle(void);
 
@@ -451,6 +448,7 @@ t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
  */
 #define RPR_WATCHDOG    00000000000002000LL /* 11 */
 /* Внутренние: */
+#define RPR_BAD_VALUE   00000000040000000LL /* 24 */
 #define RPR_DIVZERO     00000000034000000LL /* 23-21 */
 #define RPR_OVERFLOW    00000000014000000LL /* 22-21 */
 #define RPR_CHECK       00000000004000000LL /* 21 */

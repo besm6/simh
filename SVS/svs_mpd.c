@@ -57,41 +57,6 @@
 #define TTY_MAX         24          /* Serial TTY lines */
 #define LINES_MAX       TTY_MAX     /* Including parallel "Consul" typewriters */
 
-/*
- * According to a table in http://ru.wikipedia.org/wiki/МТК-2
- */
-char * rus[] = { 0, "Т", "\r", "О", " ", "Х", "Н", "М", "\n", "Л", "Р", "Г", "И", "П", "Ц", "Ж",
-                 "Е", "З", "Д", "Б", "С", "Ы", "Ф", "Ь", "А", "В", "Й", 0, "У", "Я", "К", 0 };
-
-char * lat[] = { 0, "T", "\r", "O", " ", "H", "N", "M", "\n", "L", "R", "G", "I", "P", "C", "V",
-                 "E", "Z", "D", "B", "S", "Y", "F", "X", "A", "W", "J", 0, "U", "Q", "K", 0 };
-
-/* $ = Кто там? */
-char * dig[] = { 0, "5", "\r", "9", " ", "Щ", ",", ".", "\n", ")", "4", "Ш", "8", "0", ":", "=",
-                 "3", "+", "$", "?", "'", "6", "Э", "/", "-", "2", "Ю", 0, "7", "1", "(", 0 };
-
-char ** reg = 0;
-
-char *process(int sym)
-{
-    /* Inversion is required for Baudot TTYs */
-    sym ^= 31;
-    switch (sym) {
-    case 0:
-        reg = rus;
-        break;
-    case 27:
-        reg = dig;
-        break;
-    case 31:
-        reg = lat;
-        break;
-    default:
-        return reg[sym];
-    }
-    return "";
-}
-
 /* For serial lines */
 int tty_active[TTY_MAX+1], tty_sym[TTY_MAX+1];
 int tty_typed[TTY_MAX+1], tty_instate[TTY_MAX+1];
@@ -110,14 +75,17 @@ uint32 tt_sending, tt_receiving;
 // Attachments survive the reset
 uint32 tt_mask = 0, vt_mask = 0;
 
-uint32 TTY_OUT = 0, TTY_IN = 0, vt_idle = 0;
+uint32 TTY_IN = 0, vt_idle = 0;
 
 /* Command line buffers for TELNET mode. */
 char vt_cbuf[CBUFSIZE][LINES_MAX+1];
 char *vt_cptr[LINES_MAX+1];
 
-void tt_print();
 t_stat vt_clk(UNIT *);
+static void mpd_console_input(CORE *cpu);
+
+/* Линия, с которой в МПД приходят символы консоли SIMH. */
+#define MPD_CONSOLE_LINE    61
 extern const char *get_sim_sw(const char *cptr);
 
 int attached_console;
@@ -200,8 +168,7 @@ t_stat tty_reset(DEVICE *dptr)
     memset(tty_typed, 0, sizeof(tty_typed));
     memset(tty_instate, 0, sizeof(tty_instate));
     vt_sending = vt_receiving = 0;
-    TTY_IN = TTY_OUT = 0;
-    reg = rus;
+    TTY_IN = 0;
     vt_idle = 1;
     tty_line[0].conn = 1;                   /* faked, always busy */
 
@@ -221,8 +188,8 @@ t_stat vt_clk(UNIT * this)
     /* Polling receiving from sockets */
     tmxr_poll_rx(&tty_desc);
 
-    vt_print();
     vt_receive(cpu);
+    mpd_console_input(cpu);
 
     /* Are there any new network connections? */
     num = tmxr_poll_conn(&tty_desc);
@@ -517,62 +484,16 @@ DEVICE tty_dev = {
     NULL, DEV_NET|DEV_DEBUG
 };
 
-void tty_send(uint32 mask)
-{
-    /* svs_debug("--- TTY: transmit %08o", mask); */
-    //TODO
-    TTY_OUT = mask;
-#if 0
-void tty_send (t_value mask, int high_nibble)
-{
-    static int state = 0;
-    static uint32 syllable = 0;
-    int num;
-    // besm6_debug ("*** МПД: передача %016llo", mask);
-    mask >>= 34;
-    mask &= 0xf;
-    syllable = (syllable << 4) | mask;
-    switch (state) {
-    case 0: case 2:
-        if (high_nibble == 0)
-            besm6_debug ("*** МПД: РЕГ 51 out of order");
-        break;
-    case 3:
-        // besm6_debug("*** МПД: сформирован слог %4x", syllable);
-        if (syllable & 0x8000) {
-            if ((syllable & 0xff) == 0)
-                fresh = (syllable >> 8) & 0x7f;
-            else
-                besm6_debug("*** МПД: служебный слог %4x проигнорирован", syllable);
-        } else {
-            int sym = syllable & 0x7f;
-            num = syllable >> 8;
-            if (sym < ' ' && sym != '\r' && sym != '\n') {
-                vt_send(num, '^', 0);
-                vt_send(num, sym + '@', 0);
-            }
-            vt_send (num, syllable & 0x7f,
-                (tty_unit[num].flags & TTY_BSPACE_MASK) == TTY_DESTRUCTIVE_BSPACE);
-        }
-        state = -1;
-        syllable = 0;
-    case 1:
-        if (high_nibble == 1)
-            besm6_debug ("*** МПД: РЕГ 50  out of order");
-                break;
-
-    }
-    ++state;
-#endif
-}
-
 /*
  * Sending a character to a terminal with the given number.
  */
 void vt_putc(int num, int c)
 {
     TMLN *t = &tty_line[num];
-
+    if (num == MPD_CONSOLE_LINE) {
+        sim_putchar(c);
+        return;
+    }
     if (! t->conn)
         return;
     if (t->rcve) {
@@ -590,7 +511,12 @@ void vt_putc(int num, int c)
 void vt_puts(int num, const char *s)
 {
     TMLN *t = &tty_line[num];
-
+    if (num == MPD_CONSOLE_LINE) {
+        /* Console output. */
+        while (*s)
+            sim_putchar(*s++);
+        return;
+    }
     if (! t->conn)
         return;
     if (t->rcve) {
@@ -680,97 +606,6 @@ void vt_send(int num, uint32 sym)
             vt_putc(num, sym);
     } else
         vt_puts(num, koi7_rus_to_unicode[sym - 0x60]);
-}
-
-/*
- * Handling output to all connected terminals.
- */
-void vt_print()
-{
-    uint32 workset = (TTY_OUT & vt_mask) | vt_sending;
-    int num;
-
-    if (workset == 0) {
-        ++vt_idle;
-        return;
-    }
-    for (num = svs_highest_bit(workset) - TTY_MAX;
-         workset; num = svs_highest_bit(workset) - TTY_MAX) {
-        int mask = 1 << (TTY_MAX - num);
-        int c = (TTY_OUT & mask) != 0;
-        switch (tty_active[num]*2+c) {
-        case 0: /* idle */
-            svs_debug("Warning: inactive ttys should have been screened");
-            continue;
-        case 1: /* start bit */
-            vt_sending |= mask;
-            tty_active[num] = 1;
-            break;
-        case 18: /* stop bit */
-            tty_sym[num] = ~tty_sym[num] & 0x7f;
-            vt_send(num, tty_sym[num]);
-            tty_active[num] = 0;
-            tty_sym[num] = 0;
-            vt_sending &= ~mask;
-            break;
-        case 19: /* framing error */
-            vt_putc(num, '#');
-            break;
-        default:
-            /* little endian ordering */
-            if (c) {
-                tty_sym[num] |= 1 << (tty_active[num]-1);
-            }
-            ++tty_active[num];
-            break;
-        }
-        workset &= ~mask;
-    }
-    vt_idle = 0;
-}
-
-/* Input from Baudot TTYs not implemented. Output may require some additional work.
- */
-void tt_print()
-{
-    uint32 workset = (TTY_OUT & tt_mask) | tt_sending;
-    int num;
-
-    if (workset == 0) {
-        return;
-    }
-
-    for (num = svs_highest_bit(workset) - TTY_MAX;
-         workset; num = svs_highest_bit(workset) - TTY_MAX) {
-        int mask = 1 << (TTY_MAX - num);
-        int c = (TTY_OUT & mask) != 0;
-        switch (tty_active[num]*2+c) {
-        case 0: /* idle */
-            break;
-        case 1: /* start bit */
-            tt_sending |= mask;
-            tty_active[num] = 1;
-            break;
-        case 12: /* stop bit */
-            vt_puts(num, process(tty_sym[num]));
-            tty_active[num] = 0;
-            tty_sym[num] = 0;
-            tt_sending &= ~mask;
-            break;
-        case 13: /* framing error */
-            vt_putc(num, '#');
-            break;
-        default:
-            /* big endian ordering */
-            if (c) {
-                tty_sym[num] |= 1 << (5-tty_active[num]);
-            }
-            ++tty_active[num];
-            break;
-        }
-        workset &= ~mask;
-    }
-    vt_idle = 0;
 }
 
 /*
@@ -1292,6 +1127,37 @@ static int receive_state = 0;
 static uint32 receive_syllable = 0;
 static int mpd_answered = 0;        /* ответ на служебный слог уже отдан */
 
+/*
+ * Символ с консоли SIMH подаётся в МПД слогом с линии MPD_CONSOLE_LINE.
+ *
+ * Разр.8 байта — дополнение до ЧЁТНОСТИ: `odd_parity()` даёт 1, когда в
+ * разр.7-1 нечётное число единиц, и этот разряд достраивает байт до чётного.
+ *
+ * Пока предыдущий слог не забран (`receive_state != 0`), клавиатура не
+ * опрашивается: символ останется в очереди SIMH до следующего раза.
+ */
+static void mpd_console_input(CORE *cpu)
+{
+    int c;
+
+    if (receive_state != 0)
+        return;
+
+    c = sim_poll_kbd();
+    if (c == SCPE_STOP)
+        stop_cpu = 1;
+    if (! (c & SCPE_KFLAG))
+        return;
+
+    c &= 0177;
+    receive_syllable = (MPD_CONSOLE_LINE << 8) | c | (odd_parity(c) << 7);
+    receive_state = 2;
+    if (svs_trace >= TRACE_DEVICES)
+        fprintf(sim_log, "cpu%d --- МПД приём слога 0x%04x с консоли\n",
+            cpu->index, receive_syllable);
+    tty_strobe(cpu);
+}
+
 void tty_strobe(CORE *cpu)
 {
     int byte;
@@ -1406,12 +1272,6 @@ int vt_is_idle()
     return (tt_mask ? vt_idle > 300 : vt_idle > 10);
 }
 
-int tty_query()
-{
-    /*svs_debug ("--- TTY: query");*/
-    return TTY_IN;
-}
-
 /*
  * Сброс МПД в исходное состояние.
  */
@@ -1450,22 +1310,25 @@ void mpd_send_nibble(CORE *cpu, int data)
             /* Служебный слог */
             printf("<Т%d-ЭВМ%d>", (cpu->mpd_data >> 8) & 0177, cpu->mpd_data & 3);
             /*
-             * Отвечаем нулевым байтом на линии этого слога, однократно:
+             * Отвечаем переводом строки на линии этого слога, однократно:
              * следующий слог от МОТТ-а — эхо принятого байта.
              */
             if (! mpd_answered) {
+                int sym = '\n';
+
                 mpd_answered = 1;
-                receive_syllable = ((cpu->mpd_data >> 8) & 0177) << 8;
+                receive_syllable = (((cpu->mpd_data >> 8) & 0177) << 8) |
+                                   sym | (odd_parity(sym) << 7);
                 receive_state = 2;
                 tty_strobe(cpu);
             }
-        } else {
-            /* Игнорируем номер линии. */
+        } else if (((cpu->mpd_data >> 8) & 0177) == MPD_CONSOLE_LINE) {
+            /*
+             * Слог данных на консольную линию: разр.7-1 — символ КОИ-7,
+             * разр.8 — чётность, в вывод не идёт.
+             */
             int sym = cpu->mpd_data & 0177;
-            if (sym < 0x60)
-                putchar(sym);
-            else
-                fputs(koi7_rus_to_unicode[sym - 0x60], stdout);
+            vt_send (MPD_CONSOLE_LINE, sym);
         }
         fflush(stdout);
 #endif

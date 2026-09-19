@@ -286,6 +286,7 @@ const char *sim_stop_messages[] = {
     "Останов по считыванию",              /* Load watchpoint */
     "Останов по записи",                  /* Store watchpoint */
     "Не реализовано",                     /* Unimplemented I/O or special reg. access */
+    "Неверный вид значения",              /* Wrong value kind (СОП тег БЭСМ) */
 };
 
 /*
@@ -1373,15 +1374,51 @@ transfer_modifier:
         cpu->M[0] = 0;
         delay = 6;
         break;
-    case 046:                                       /* cоп, специальное обращение к памяти */
+    case 046:                                       /* соп, специальное обращение к памяти */
+        /*
+         * Номер индекс-регистра выбирает операцию в ОП; адрес — только
+         * 12-разрядная адресная часть (+ИА/ИК через MOD), без M[reg].
+         * См. cmd046.md.
+         */
         cpu->Aex = addr;
         if (! IS_SUPERVISOR(cpu->RUU))
             longjmp(cpu->exception, STOP_BADCMD);
-//svs_debug("--- соп %05o", cpu->Aex);
-        cpu->ACC = mmu_load64(cpu, cpu->Aex, 0);
-        cpu->RMR = (cpu->ACC & BITS(16)) << 32;
-        cpu->ACC >>= 16;
-        delay = 6;
+        switch (reg) {
+        case 00: {                                  /* а) запись старшего полуслова */
+            t_value old = mmu_load64(cpu, cpu->Aex, 0);
+            t_value word = (old & BITS(32)) |
+                ((cpu->ACC & BITS(16)) << 48) |
+                (((cpu->RMR >> 32) & BITS(16)) << 32);
+            mmu_store64(cpu, cpu->Aex, word);
+            break;
+        }
+        case 01: {                                  /* б) считывание синхронизационное */
+            t_value word = mmu_load64(cpu, cpu->Aex, 1);
+            cpu->RMR = (word & BITS(16)) << 32;
+            cpu->ACC = word >> 16;
+            /* Наложение «1» в разряд, который проверяет читающий: СЕМБИТ
+             * у АДАП-а — это разр.17 сумматора (М16В'1'), а ACC = word>>16,
+             * то есть разряд 32 ячейки. */
+            mmu_store64(cpu, cpu->Aex, word | (1LL << 32));
+            break;
+        }
+        case 04:                                    /* д) запись полноразрядная (=032) */
+            mmu_store64(cpu, cpu->Aex, (cpu->ACC << 16) |
+                ((cpu->RMR >> 32) & BITS(16)));
+            break;
+        case 05: {                                  /* е) считывание с тегом БЭСМ */
+            t_value word = mmu_load64(cpu, cpu->Aex, 0);
+            cpu->RMR = (word & BITS(16)) << 32;
+            cpu->ACC = word >> 16;
+            /* Слово БЭСМ — тег 035/036; иначе прерывание 24РПР и 21РПР. */
+            if (! IS_48BIT(cpu->TagR))
+                longjmp(cpu->exception, STOP_VALUE_KIND);
+            break;
+        }
+        default:
+            longjmp(cpu->exception, STOP_UNIMPLEMENTED);
+        }
+        delay = MEAN_TIME(2, 2);
         break;
     case 047:                                       /* э47, x47 */
         cpu->Aex = addr;
@@ -1817,6 +1854,13 @@ ret:        return r;
             op_int_1(cpu, sim_stop_messages[r]);
             cpu->RPR |= RPR_DIVZERO|RPR_RAM_CHECK;
             break;
+        case STOP_VALUE_KIND:
+            /* СОП с тегом БЭСМ: неверный вид значения — 24РПР и 21РПР. */
+            if (cpu->M[PSW] & PSW_CHECK_HALT)       /* ПоК */
+                goto ret;
+            op_int_1(cpu, sim_stop_messages[r]);
+            cpu->RPR |= RPR_BAD_VALUE | RPR_CHECK;
+            break;
         }
         ++iintr;
     }
@@ -1919,14 +1963,6 @@ t_stat fast_clk(UNIT *this)
     CORE *cpu;
     for (cpu = &cpu_core[0]; cpu < &cpu_core[NUM_CORES]; cpu++) {
         cpu->GRVP |= GRVP_TIMER;
-    }
-
-    /* Baudot TTYs are synchronised to the main timer rather than the
-     * serial line clock. Their baud rate is 50.
-     */
-    if (tty_counter == TICKS_PER_SEC/50) {
-        tt_print();
-        tty_counter = 0;
     }
 
     tmr_poll = sim_rtcn_calb(TICKS_PER_SEC, 0);               /* calibrate clock */
