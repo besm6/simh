@@ -36,6 +36,7 @@ t_value memory[MEMSIZE];                /* physical memory */
 uint8 tag[MEMSIZE];                     /* tags */
 
 CORE cpu_core[10];                      /* state of all processors */
+int redraw_panel;                       /* request graphical panel refresh */
 
 int32 tmr_poll = INSN_PER_TICK;         /* pgm timer poll */
 
@@ -191,6 +192,12 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV,
         0, NULL,    "NOTRACE",  &cpu_clr_trace,     NULL,               NULL,
                                 "Disables tracing" },
+    { MTAB_XTD|MTAB_VDV|MTAB_VALO|MTAB_QUOTE,
+        0, "PANEL", "PANEL{=fontfilename}", &svs_init_panel, &svs_show_panel, NULL,
+                                "Enable Display of graphical panel optionally specifying font name" },
+    { MTAB_XTD|MTAB_VDV,
+        0, NULL,    "NOPANEL",  &svs_close_panel,   NULL,               NULL,
+                                "Closes graphical panel" },
 
     //TODO: Разрешить/запретить контроль числа.
     //{ 2, 0, "NOCHECK", "NOCHECK" },
@@ -1733,7 +1740,8 @@ t_stat sim_instr(void)
          */
         switch (r) {
         default:
-ret:        return r;
+ret:        svs_draw_panel(1);
+            return r;
         case STOP_RWATCH:
         case STOP_WWATCH:
             /* Step back one insn to reexecute it */
@@ -1866,6 +1874,7 @@ ret:        return r;
     }
 
     if (iintr > 1) {
+        svs_draw_panel(1);
         return STOP_DOUBLE_INTR;
     }
 
@@ -1874,6 +1883,7 @@ ret:        return r;
         if (sim_interval <= 0) {                /* check clock queue */
             r = sim_process_event();
             if (r) {
+                svs_draw_panel(1);
                 return r;
             }
         }
@@ -1883,13 +1893,21 @@ ret:        return r;
              * Runaway instruction execution in supervisor mode
              * warrants attention.
              */
+            svs_draw_panel(1);
             return STOP_RUNOUT;                 /* stop simulation */
         }
 
         if ((sim_brk_summ & SWMASK('E')) &&     /* breakpoint? */
             sim_brk_test(cpu->PC, SWMASK('E')) &&
             ! (cpu->RUU & RUU_RIGHT_INSTR)) {
+            svs_draw_panel(1);
             return STOP_IBKPT;                  /* stop simulation */
+        }
+
+        if (redraw_panel) {
+            /* Periodic panel redraw is not forcing */
+            svs_draw_panel(0);
+            redraw_panel = 0;
         }
 
         if (! iintr && ! (cpu->RUU & RUU_RIGHT_INSTR) &&
@@ -1963,6 +1981,12 @@ t_stat fast_clk(UNIT *this)
     CORE *cpu;
     for (cpu = &cpu_core[0]; cpu < &cpu_core[NUM_CORES]; cpu++) {
         cpu->GRVP |= GRVP_TIMER;
+    }
+
+    /* Request a panel sample every 32 ms
+     * (a redraw actually happens at every other sample). */
+    if ((counter & 7) == 0) {
+        redraw_panel = 1;
     }
 
     tmr_poll = sim_rtcn_calb(TICKS_PER_SEC, 0);               /* calibrate clock */

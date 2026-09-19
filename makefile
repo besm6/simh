@@ -213,6 +213,11 @@ ifneq (3,${SIM_MAJOR})
     VIDEO_USEFUL = true
     BESM6_BUILD = true
   endif
+  # building the svs needs the same SDL2 + TTF panel support as besm6
+  ifneq (,$(findstring svs,${MAKECMDGOALS}))
+    VIDEO_USEFUL = true
+    BESM6_BUILD = true
+  endif
   # building the Imlac needs video support
   ifneq (,$(findstring imlac,${MAKECMDGOALS}))
     VIDEO_USEFUL = true
@@ -2471,8 +2476,9 @@ BESM6_OPT = -I ${BESM6D} -DUSE_INT64 $(VIDEO_TTF_OPT)
 SVSD = ${SIMHD}/SVS
 SVS = ${SVSD}/svs_cpu.c ${SVSD}/svs_sys.c ${SVSD}/svs_mmu.c \
         ${SVSD}/svs_arith.c ${SVSD}/svs_trace.c ${SVSD}/svs_mpd.c \
-        ${SVSD}/svs_iom.c ${SVSD}/svs_disk.c ${SVSD}/svs_drum.c
-SVS_OPT = -I ${SVSD} -DUSE_INT64 -DNUM_CORES=4
+        ${SVSD}/svs_iom.c ${SVSD}/svs_disk.c ${SVSD}/svs_drum.c \
+        ${SVSD}/svs_panel.c
+SVS_OPT = -I ${SVSD} -DUSE_INT64 -DNUM_CORES=4 $(VIDEO_TTF_OPT)
 
 PDP6D = ${SIMHD}/PDP10
 ifneq (,${DISPLAY_OPT})

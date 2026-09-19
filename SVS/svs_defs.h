@@ -111,6 +111,7 @@ enum {
 
 extern UNIT tty_unit[];
 extern UNIT clocks[];
+extern UNIT cpu_unit[];
 extern t_value memory[MEMSIZE];     /* основная память (64-битная) */
 extern uint8 tag[MEMSIZE];          /* тег для каждого слова основной памяти */
 extern DEVICE cpu_dev[];
@@ -377,6 +378,10 @@ extern void mmu_set_protection(CORE *cpu, int idx, t_value word);
 /*
  * Utility functions
  */
+void svs_draw_panel(int force);
+t_stat svs_init_panel(UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat svs_close_panel(UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat svs_show_panel(FILE *st, UNIT *up, int32 v, CONST void *dp);
 extern void gost_putc(unsigned char, FILE *);
 extern int odd_parity(unsigned char);
 
