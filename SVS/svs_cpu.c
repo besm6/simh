@@ -1719,14 +1719,12 @@ branch_zero:
     if (svs_trace == TRACE_ALL && TRACE_IN_WINDOW(cpu->PC)) {
         svs_trace_registers(cpu);
     }
-#if 0
-    //TODO: обнаружение цикла "ЖДУ" диспака
+
     /* Не находимся ли мы в цикле "ЖДУ" диспака? */
-    if (cpu->RUU == 047 && cpu->PC == 04440 && cpu->RK == 067704440) {
-        //check_initial_setup();
+    // 05016 (уиа 3, цикл 5015(15)
+    if (IS_SUPERVISOR(cpu->RUU) && cpu->PC == 05016 && cpu->RK == 02400003) {
         sim_idle(0, TRUE);
     }
-#endif
 }
 
 /*
