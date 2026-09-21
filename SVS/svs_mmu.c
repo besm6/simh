@@ -171,7 +171,12 @@ static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val64, uint8 t)
     if (cpu->M[PSW] & PSW_MMAP_DISABLE) {
         /* Приписка отключена. */
         if (vaddr < 010) {
-            /* Игнорируем запись в тумблерные регистры. */
+            /*
+             * Физические адреса 1-7 — тумблерные регистры пульта.
+             * Программе они недоступны на запись ни в каком режиме;
+             * значения туда кладёт только пульт, в эмуляторе — команда
+             * `d 2 …` из .ini через cpu_deposit(), мимо этого пути.
+             */
             if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC)) {
                 fprintf(sim_log, "cpu%d --- Ignore write to pult register %d\n",
                     cpu->index, vaddr);

@@ -1331,7 +1331,7 @@ void mpd_send_nibble(CORE *cpu, int data)
                     (cmd & 010)  ? "ВЫДАЧА" :   /* разр.4 — линию на выдачу */
                                    "ПРИЕМ";     /* иначе — линию на приём */
 
-                printf("<Т%d %s ЭВМ%d>", line, name, cmd & 7);
+                printf("<Т%o %s ЭВМ%d>", line, name, cmd & 7);
             }
             /*
              * Ответ на служебный слог — тоже СЛУЖЕБНЫЙ слог.
@@ -1385,10 +1385,26 @@ void mpd_send_nibble(CORE *cpu, int data)
         } else if (((cpu->mpd_data >> 8) & 0177) == MPD_CONSOLE_LINE) {
             /*
              * Слог данных на консольную линию: разр.7-1 — символ КОИ-7,
-             * разр.8 — чётность, в вывод не идёт.
+             * разр.8 дополняет байт до ЧЁТНОСТИ (§2).
+             *
+             * Показываем ВСЕ символы: непечатаемый — восьмеричным кодом в
+             * угловых скобках, а символ со сбитой чётностью помечаем
+             * апострофом слева. Перевод строки и возврат каретки печатаются
+             * как есть.
              */
             int sym = cpu->mpd_data & 0177;
-            vt_send (MPD_CONSOLE_LINE, sym);
+
+            if (odd_parity(cpu->mpd_data & 0377))
+                sim_putchar('`');
+
+            if ((sym < 040 && sym != 012 && sym != 015) || sym == 0177) {
+                char buf[8], *b;
+
+                sprintf(buf, "<%03o>", sym);
+                for (b = buf; *b; ++b)
+                    sim_putchar(*b);
+            } else
+                vt_send (MPD_CONSOLE_LINE, sym);
         }
         fflush(stdout);
 #endif
