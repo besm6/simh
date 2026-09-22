@@ -1314,6 +1314,9 @@ void cpu_one_instr(CORE *cpu)
         cpu->ACC = mmu_load64(cpu, cpu->Aex, 1);
         cpu->RMR = (cpu->ACC & BITS(16)) << 32;
         cpu->ACC >>= 16;
+        /* Считывание — режим АУ логический, иначе следующая СЧМР
+         * попадёт в арифметическую ветвь и испортит младшие разряды. */
+        cpu->RAU = SET_LOGICAL(cpu->RAU);
         delay = MEAN_TIME(3, 8);
         break;
     case 034:                                       /* слпа, e+n */
@@ -1435,6 +1438,7 @@ transfer_modifier:
             t_value word = mmu_load64(cpu, cpu->Aex, 1);
             cpu->RMR = (word & BITS(16)) << 32;
             cpu->ACC = word >> 16;
+            cpu->RAU = SET_LOGICAL(cpu->RAU);
             /* Наложение «1» в разряд, который проверяет читающий: СЕМБИТ
              * у АДАП-а — это разр.17 сумматора (М16В'1'), а ACC = word>>16,
              * то есть разряд 32 ячейки. */
@@ -1449,6 +1453,7 @@ transfer_modifier:
             t_value word = mmu_load64(cpu, cpu->Aex, 0);
             cpu->RMR = (word & BITS(16)) << 32;
             cpu->ACC = word >> 16;
+            cpu->RAU = SET_LOGICAL(cpu->RAU);
             /* Слово БЭСМ — тег 035/036; иначе прерывание 24РПР и 21РПР. */
             if (! IS_48BIT(cpu->TagR))
                 longjmp(cpu->exception, STOP_VALUE_KIND);
