@@ -167,6 +167,11 @@ static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val64, uint8 t)
 
     mmu_protection_check(cpu, vaddr);
 
+    /* Точки останова по записи — в любом режиме, приписка тут ни при чём. */
+    if (sim_brk_summ & SWMASK('W') &&
+        sim_brk_test(vaddr, SWMASK('W')))
+        longjmp(cpu->exception, STOP_WWATCH);
+
     /* Различаем адреса с припиской и без */
     if (cpu->M[PSW] & PSW_MMAP_DISABLE) {
         /* Приписка отключена. */
@@ -188,10 +193,6 @@ static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val64, uint8 t)
         /* ЗПСЧ: ЗП */
         if (cpu->M[DWP] == vaddr && (cpu->M[PSW] & PSW_WRITE_WATCH))
             longjmp(cpu->exception, STOP_STORE_ADDR_MATCH);
-
-        if (sim_brk_summ & SWMASK('W') &&
-            sim_brk_test(vaddr, SWMASK('W')))
-            longjmp(cpu->exception, STOP_WWATCH);
     }
 
     /* Вычисляем физический адрес. */
@@ -247,18 +248,16 @@ static int mmu_load_with_tag(CORE *cpu, int vaddr, t_value *val64, uint8 *t)
 
     mmu_protection_check(cpu, vaddr);
 
+    /* Точки останова по чтению — в любом режиме, приписка тут ни при чём. */
+    if (sim_brk_summ & SWMASK('R') &&
+        sim_brk_test(vaddr, SWMASK('R')))
+        longjmp(cpu->exception, STOP_RWATCH);
+
     /* Различаем адреса с припиской и без */
-    if (cpu->M[PSW] & PSW_MMAP_DISABLE) {
-        /* Приписка отключена. */
-    } else {
-        /* Приписка работает. */
-        /* ЗПСЧ: СЧ */
+    if (! (cpu->M[PSW] & PSW_MMAP_DISABLE)) {
+        /* Приписка работает. ЗПСЧ: СЧ */
         if (cpu->M[DWP] == vaddr && !(cpu->M[PSW] & PSW_WRITE_WATCH))
             longjmp(cpu->exception, STOP_LOAD_ADDR_MATCH);
-
-        if (sim_brk_summ & SWMASK('R') &&
-            sim_brk_test(vaddr, SWMASK('R')))
-            longjmp(cpu->exception, STOP_RWATCH);
     }
 
     /* Вычисляем физический адрес слова */
