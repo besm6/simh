@@ -202,17 +202,14 @@ typedef struct {
 extern IOMDATA iom_data[4];         /* состояние ПВВ */
 
 /*
- * Четыре режима трассировки.
+ * Разряды флага отладки процессора: `set cpu0 debug=insn;regs'.
+ * Без списка разрядов `set cpu0 debug' включает все, то есть полную трассу.
  */
-typedef enum {
-    TRACE_NONE = 0,
-    TRACE_DEVICES,                  /* только обмены каналов и устройств */
-    TRACE_EXTRACODES,               /* только экстракоды (кроме э75) */
-    TRACE_INSTRUCTIONS,             /* только команды процессора */
-    TRACE_ALL,                      /* команды, регистры и обращения к памяти */
-} TRACEMODE;
-
-extern TRACEMODE svs_trace;
+#define DEB_INSN    0001            /* команды процессора */
+#define DEB_EXTRA   0002            /* только экстракоды (кроме э75) */
+#define DEB_REGS    0004            /* регистры и обращения к памяти */
+#define DEB_FETCH   0010            /* выборка команд */
+#define DEB_DEV     0020            /* обмены каналов и устройств */
 
 /*
  * Окно трассы по PC (`set cpu0 window=lo:hi`): покомандная трасса и
@@ -243,6 +240,15 @@ extern t_addr svs_trace_lo, svs_trace_hi;
 
 #define TRACE_IN_WINDOW(pc) \
     (! svs_trace_window || ((pc) >= svs_trace_lo && (pc) <= svs_trace_hi))
+
+/*
+ * Критерий трассировки: флаг отладки включён и журнал открыт (`set debug file').
+ * CPU_TRACE дополнительно проверяет окно по PC, CPU_DEB — нет.
+ * Трасса устройств привязана к процессору 0.
+ */
+#define CPU_DEB(cpu, bits)       (sim_deb && (cpu_dev[(cpu)->index].dctrl & (bits)))
+#define CPU_TRACE(cpu, bits)     (CPU_DEB(cpu, bits) && TRACE_IN_WINDOW((cpu)->PC))
+#define SVS_DEV_TRACE()          (sim_deb && (cpu_dev[0].dctrl & DEB_DEV))
 
 /*
  * Разряды режима АУ.
@@ -436,8 +442,15 @@ void svs_log_cont(const char *fmt, ...);
 void svs_debug(const char *fmt, ...);
 t_stat fprint_sym(FILE *of, t_addr addr, t_value *val,
                   UNIT *uptr, int32 sw);
+void svs_trace_reset(CORE *cpu);
 void svs_trace_opcode(CORE *cpu, int paddr);
 void svs_trace_registers(CORE *cpu);
+void svs_trace_memory(CORE *cpu, const char *opname,
+                      int vaddr, int paddr, uint8 t, t_value val);
+void svs_trace_memory64(CORE *cpu, const char *opname,
+                        int vaddr, int paddr, uint8 t, t_value val64);
+void svs_trace_fetch(CORE *cpu, int vaddr, int paddr, uint8 t, t_value val);
+void svs_trace_exception(CORE *cpu, const char *fmt, ...);
 
 /*
  * Арифметика.

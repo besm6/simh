@@ -204,8 +204,8 @@ void iom_reset(int index)
     iom->UTA = 0;
     iom->IOQA = 0;
     iom->SQA = 0;
-    if (svs_trace >= TRACE_DEVICES)
-        fprintf(sim_log, "iom%d --- Сброс ПВВ\n", iom->index);
+    if (SVS_DEV_TRACE())
+        fprintf(sim_deb, "iom%d --- Сброс ПВВ\n", iom->index);
 }
 
 /*
@@ -349,8 +349,8 @@ static int iom_addr_ok(IOMDATA *iom, const char *what, uint32 addr)
     if (addr != 0 && addr < MEMSIZE)
         return 1;
 
-    if (svs_trace >= TRACE_DEVICES)
-        fprintf(sim_log, "iom%d --- %s: адрес %o вне памяти, команда пропущена\n",
+    if (SVS_DEV_TRACE())
+        fprintf(sim_deb, "iom%d --- %s: адрес %o вне памяти, команда пропущена\n",
             iom->index, what, addr);
     return 0;
 }
@@ -457,15 +457,15 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
     {
         static int last_dev = -1, last_zone = -1, last_addr = -1, same = 0;
 
-        if (dev == last_dev && zone == last_zone && memaddr == last_addr) {
+        if (sim_deb && dev == last_dev && zone == last_zone && memaddr == last_addr) {
             same++;
             if (same == 200) {
-                fprintf(sim_log, "iom%d === заявка повторилась %d раз —"
+                fprintf(sim_deb, "iom%d === заявка повторилась %d раз —"
                     " включаю покомандную трассу на 2 итерации\n", iom->index, same);
-                svs_trace = TRACE_INSTRUCTIONS;
+                cpu_dev[0].dctrl |= DEB_INSN;
             } else if (same == 202) {
-                fprintf(sim_log, "iom%d === хватит\n", iom->index);
-                svs_trace = TRACE_DEVICES;
+                fprintf(sim_deb, "iom%d === хватит\n", iom->index);
+                cpu_dev[0].dctrl &= ~DEB_INSN;
             }
         } else {
             same = 0;
@@ -473,8 +473,8 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
         }
     }
 
-    if (svs_trace >= TRACE_DEVICES)
-        fprintf(sim_log,
+    if (SVS_DEV_TRACE())
+        fprintf(sim_deb,
             "iom%d --- обмен: устр=%d(напр %d/устр %d) заявка@%o %s"
             " зона=%o сектор=%d буфер=%o PC=%05o\n"
             "iom%d ---   ДО=%016jo(НАМ %07o РАЗМ %d) СО=%016jo СПУ=%016jo(РМР %06o)\n",
@@ -502,9 +502,9 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
      * области АДАП-а, и после этого канал читает в БАКПВВ мусор. Проверяем
      * ФИЗИЧЕСКИЕ адреса приёмника против зарегистрированных таблиц.
      */
-    if (svs_trace >= TRACE_DEVICES && !is_read) {
+    if (SVS_DEV_TRACE() && !is_read) {
         /* запись на устройство память не портит — проверяем только чтение */
-    } else if (svs_trace >= TRACE_DEVICES) {
+    } else if (SVS_DEV_TRACE()) {
         static const char *what[] = { "БАКПВВ", "ТУС", "ТОЧ", "ДВРПВВ" };
         uint32 cell[4];
         int w, k;
@@ -517,7 +517,7 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
 
             for (k = 0; k < 4; k++) {
                 if (cell[k] != 0 && pa == cell[k]) {
-                    fprintf(sim_log, "iom%d --- !!! ЧТЕНИЕ ЗАТРЁТ %s@%o:"
+                    fprintf(sim_deb, "iom%d --- !!! ЧТЕНИЕ ЗАТРЁТ %s@%o:"
                         " слово %d буфера %o (вирт.%o) ложится туда же\n",
                         iom->index, what[k], cell[k], w, memaddr, memaddr + w);
                     cell[k] = 0;        /* сообщаем один раз на обмен */
@@ -544,8 +544,8 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
         break;
     }
 
-    if (svs_trace >= TRACE_DEVICES)
-        fprintf(sim_log, "iom%d ---   %s → %s\n", iom->index,
+    if (SVS_DEV_TRACE())
+        fprintf(sim_deb, "iom%d ---   %s → %s\n", iom->index,
             (devclass == IOM_TUS_CLASS_MD) ? "svs_disk_io" :
             (devclass == IOM_TUS_CLASS_MB) ? "svs_drum_io" : "класс не поддержан",
             (r == SCPE_OK) ? "OK" : "ОШИБКА");
@@ -588,8 +588,8 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
     if (iom->SQA == 0) {
         /* Таблица ответов не зарегистрирована (не было БАК КОП=007) — связать
          * заявку не с чем; молча писать по адресу 0 нельзя. */
-        if (svs_trace >= TRACE_DEVICES)
-            fprintf(sim_log, "iom%d --- ОТВ не зарегистрирована, заявка@%o не связана\n",
+        if (SVS_DEV_TRACE())
+            fprintf(sim_deb, "iom%d --- ОТВ не зарегистрирована, заявка@%o не связана\n",
                 iom->index, z);
     } else {
         /*
@@ -643,8 +643,8 @@ void iom_update_intr(int cpu_index)
          * регистры. Если разряд успевает погаснуть здесь, обработчик видит
          * ГРВП=0, не совпадает ни с Е4/Е8/Е3/Е6 и уходит в СТОП '00301'.
          */
-        if (svs_trace >= TRACE_DEVICES)
-            fprintf(sim_log, "iom%d --- гашу ПРПВВ (ДВРПВВ@%o пуст), PC=%05o\n",
+        if (SVS_DEV_TRACE())
+            fprintf(sim_deb, "iom%d --- гашу ПРПВВ (ДВРПВВ@%o пуст), PC=%05o\n",
                 iom->index, iom->SQA, cpu_core[cpu_index].PC);
         cpu_core[cpu_index].GRVP &= ~GRVP_INTR_IOM;
     }
@@ -673,8 +673,8 @@ static void iom_pusk_obmen(IOMDATA *iom, int cmd_nus)
     int nus, found = 0;
 
     if (toch == 0) {
-        if (svs_trace >= TRACE_DEVICES)
-            fprintf(sim_log, "iom%d --- ПУСКОБ: ТОЧ не зарегистрирована\n", iom->index);
+        if (SVS_DEV_TRACE())
+            fprintf(sim_deb, "iom%d --- ПУСКОБ: ТОЧ не зарегистрирована\n", iom->index);
         return;
     }
 
@@ -702,8 +702,8 @@ static void iom_pusk_obmen(IOMDATA *iom, int cmd_nus)
      * ровно одна очередь, как написано в документе.
      */
     if (cmd_nus > 0 && cmd_nus < IOM_TUS_ENTRIES) {
-        if (svs_trace >= TRACE_DEVICES)
-            fprintf(sim_log, "iom%d --- ПУСКОБ: команда назвала НУС=%d,"
+        if (SVS_DEV_TRACE())
+            fprintf(sim_deb, "iom%d --- ПУСКОБ: команда назвала НУС=%d,"
                 " обслуживаю только эту очередь\n", iom->index, cmd_nus);
     }
 
@@ -758,8 +758,8 @@ static void iom_pusk_obmen(IOMDATA *iom, int cmd_nus)
 
             steps++;
             if (next == z) {
-                if (svs_trace >= TRACE_DEVICES)
-                    fprintf(sim_log, "iom%d --- ТОЧ[%d]: заявка@%o замкнута сама"
+                if (SVS_DEV_TRACE())
+                    fprintf(sim_deb, "iom%d --- ТОЧ[%d]: заявка@%o замкнута сама"
                         " на себя, обход прерван\n", iom->index, nus, z);
                 next = 0;
             }
@@ -776,16 +776,16 @@ static void iom_pusk_obmen(IOMDATA *iom, int cmd_nus)
             if (devclass < 0) {
                 /* Один раз на очередь: иначе длинная (или зацикленная)
                  * цепочка заливает трассу гигабайтами одинаковых строк. */
-                if (svs_trace >= TRACE_DEVICES && steps == 1)
-                    fprintf(sim_log, "iom%d --- ТОЧ[%d]: класс по ТУС не определён"
+                if (SVS_DEV_TRACE() && steps == 1)
+                    fprintf(sim_deb, "iom%d --- ТОЧ[%d]: класс по ТУС не определён"
                         " (ТУС@%o), заявка@%o пропущена\n",
                         iom->index, nus, iom->UTA, z);
                 z = next;
                 continue;
             }
             found++;
-            if (svs_trace >= TRACE_DEVICES)
-                fprintf(sim_log, "iom%d --- ПУСКОБ: работа найдена в ТОЧ[%d]"
+            if (SVS_DEV_TRACE())
+                fprintf(sim_deb, "iom%d --- ПУСКОБ: работа найдена в ТОЧ[%d]"
                     " (НУС из команды %d)\n", iom->index, nus, cmd_nus);
             iom_xfer_zaiavka(iom, z, devclass, unit);
             z = next;
@@ -802,11 +802,11 @@ static void iom_pusk_obmen(IOMDATA *iom, int cmd_nus)
     /* Завершение обмена: внешнее прерывание ПРПВВ исходному СВС (ГРВП разр.3). */
     if (found) {
         cpu_core[0].GRVP |= GRVP_INTR_IOM;
-        if (svs_trace >= TRACE_DEVICES)
-            fprintf(sim_log, "iom%d --- ПУСКОБ: обработано заявок %d, ПРПВВ\n",
+        if (SVS_DEV_TRACE())
+            fprintf(sim_deb, "iom%d --- ПУСКОБ: обработано заявок %d, ПРПВВ\n",
                 iom->index, found);
-    } else if (svs_trace >= TRACE_DEVICES) {
-        fprintf(sim_log, "iom%d --- ПУСКОБ: ТОЧ@%o пуста "
+    } else if (SVS_DEV_TRACE()) {
+        fprintf(sim_deb, "iom%d --- ПУСКОБ: ТОЧ@%o пуста "
             "(заявка обслуживается на звонке ЕСВС из ТВЗП, см. iom_service_tvzp)\n",
             iom->index, toch);
     }
@@ -833,8 +833,8 @@ void iom_service_tvzp(int index)
     z = IOM_DAIMA(parked);
     if (! iom_addr_ok(iom, "заявка из ТВЗП", z) || z + 7 >= MEMSIZE)
         return;
-    if (svs_trace >= TRACE_DEVICES)
-        fprintf(sim_log, "iom%d --- ЕСВС: заявка из ТВЗП@%o → @%o\n",
+    if (SVS_DEV_TRACE())
+        fprintf(sim_deb, "iom%d --- ЕСВС: заявка из ТВЗП@%o → @%o\n",
             iom->index, IOM_TVZP, z);
 
     /* Устройство берём из НАПРУС (см. комментарий у IOM_NAPRUS), а не из
@@ -855,13 +855,13 @@ void iom_service_tvzp(int index)
         if (devclass < 0) {
             /* ТУС не настроена — сохраняем прежнее поведение (диск),
              * иначе загрузка с системного диска перестала бы идти. */
-            if (svs_trace >= TRACE_DEVICES)
-                fprintf(sim_log, "iom%d --- ТВЗП: класс по ТУС не определён"
+            if (SVS_DEV_TRACE())
+                fprintf(sim_deb, "iom%d --- ТВЗП: класс по ТУС не определён"
                     " (НУС=%d), беру МД\n", iom->index, nus);
             devclass = IOM_TUS_CLASS_MD;
             unit = (int)((memory[IOM_NAPRUS] >> 16) & 7);
-        } else if (svs_trace >= TRACE_DEVICES) {
-            fprintf(sim_log, "iom%d --- ТВЗП: класс %d устр %d по ТУС (НУС=%d)\n",
+        } else if (SVS_DEV_TRACE()) {
+            fprintf(sim_deb, "iom%d --- ТВЗП: класс %d устр %d по ТУС (НУС=%d)\n",
                 iom->index, devclass, unit, nus);
         }
         iom_xfer_zaiavka(iom, z, devclass, unit);
@@ -901,8 +901,8 @@ static void iom_pobr(IOMDATA *iom, uint32 z, int nus)
         unit = (int)((spu >> 38) & 017);
     }
 
-    if (svs_trace >= TRACE_DEVICES)
-        fprintf(sim_log, "iom%d --- ПОБР: БВВ@%o класс %d устр %d\n",
+    if (SVS_DEV_TRACE())
+        fprintf(sim_deb, "iom%d --- ПОБР: БВВ@%o класс %d устр %d\n",
             iom->index, z, devclass, unit);
 
     r = iom_xfer_zaiavka(iom, z, devclass, unit);
@@ -940,8 +940,8 @@ static void iom_pobr(IOMDATA *iom, uint32 z, int nus)
         memory[IOM_POBR_STATUS] = low;
         tag[IOM_POBR_STATUS] = TAG_BITSET;
 
-        if (svs_trace >= TRACE_DEVICES)
-            fprintf(sim_log, "iom%d --- ПОБР: состояние@%o младш.16=%06o"
+        if (SVS_DEV_TRACE())
+            fprintf(sim_deb, "iom%d --- ПОБР: состояние@%o младш.16=%06o"
                 " (НУС=%d УСБ=%d)\n", iom->index, IOM_POBR_STATUS,
                 low, unit & 017, (r == SCPE_OK) ? 0 : 1);
     }
@@ -968,8 +968,8 @@ void iom_request(int index)
         int kop = BAK_KOP(ptr);
         uint32 blk = IOM_PHYS(BAK_BLOCK_ADDR(ptr));
 
-        if (svs_trace >= TRACE_DEVICES)
-            fprintf(sim_log, "iom%d --- СТБАК: КОП=%02o %s СБ=%d НУС=%d"
+        if (SVS_DEV_TRACE())
+            fprintf(sim_deb, "iom%d --- СТБАК: КОП=%02o %s СБ=%d НУС=%d"
                 " адрес=%o слово=%#jx\n",
                 iom->index, kop, bak_kop_name(kop), BAK_SEM(ptr), BAK_NUS(ptr),
                 BAK_BLOCK_ADDR(ptr), (uintmax_t)ptr);
@@ -1017,8 +1017,8 @@ void iom_request(int index)
     {
         int kop = BAK_KOP(cmd);
 
-        if (svs_trace >= TRACE_DEVICES)
-            fprintf(sim_log, "iom%d --- Команда БАКПВВ@%o: КОП=%02o %s"
+        if (SVS_DEV_TRACE())
+            fprintf(sim_deb, "iom%d --- Команда БАКПВВ@%o: КОП=%02o %s"
                 " СБ=%d НУС=%d адрес=%o слово=%#jx\n",
                 iom->index, iom->BAK, kop, bak_kop_name(kop),
                 BAK_SEM(cmd), BAK_NUS(cmd), BAK_BLOCK_ADDR(cmd), (intmax_t)cmd);
@@ -1036,28 +1036,28 @@ void iom_request(int index)
                          (kop == BAK_KOP_REG_TOCH) ? iom->IOQA : iom->SQA;
             uint32 now = IOM_PHYS(BAK_BLOCK_ADDR(cmd));
 
-            if (was != 0 && was != now && svs_trace >= TRACE_DEVICES)
-                fprintf(sim_log, "iom%d --- ВНИМАНИЕ: %s переставляет базу"
+            if (was != 0 && was != now && SVS_DEV_TRACE())
+                fprintf(sim_deb, "iom%d --- ВНИМАНИЕ: %s переставляет базу"
                     " %o -> %o\n", iom->index, bak_kop_name(kop), was, now);
         }
 
         switch (kop) {
         case BAK_KOP_REG_UT:    /* регистрация таблицы устройств */
             iom->UTA = IOM_PHYS(BAK_BLOCK_ADDR(cmd));
-            if (svs_trace >= TRACE_DEVICES)
-                fprintf(sim_log, "iom%d ---   УТ@%o\n", iom->index, iom->UTA);
+            if (SVS_DEV_TRACE())
+                fprintf(sim_deb, "iom%d ---   УТ@%o\n", iom->index, iom->UTA);
             break;
 
         case BAK_KOP_REG_TOCH:  /* регистрация таблицы очередей ТОЧ */
             iom->IOQA = IOM_PHYS(BAK_BLOCK_ADDR(cmd));
-            if (svs_trace >= TRACE_DEVICES)
-                fprintf(sim_log, "iom%d ---   ТОЧ@%o\n", iom->index, iom->IOQA);
+            if (SVS_DEV_TRACE())
+                fprintf(sim_deb, "iom%d ---   ТОЧ@%o\n", iom->index, iom->IOQA);
             break;
 
         case BAK_KOP_REG_ANSW:  /* регистрация таблицы ответов */
             iom->SQA = IOM_PHYS(BAK_BLOCK_ADDR(cmd));
-            if (svs_trace >= TRACE_DEVICES)
-                fprintf(sim_log, "iom%d ---   ОТВ@%o\n", iom->index, iom->SQA);
+            if (SVS_DEV_TRACE())
+                fprintf(sim_deb, "iom%d ---   ОТВ@%o\n", iom->index, iom->SQA);
             break;
 
         case BAK_KOP_EXCHANGE1: /* обмен (вариант 1): АДАП уже поставил заявку в ТОЧ */
@@ -1074,10 +1074,10 @@ void iom_request(int index)
              * ячейку": печатаем состояние и ищем по памяти слова, похожие на
              * настоящие команды БАК (КОП=004..007 с осмысленным адресом).
              */
-            if (svs_trace >= TRACE_DEVICES) {
+            if (SVS_DEV_TRACE()) {
                 uint32 a, found = 0;
 
-                fprintf(sim_log, "iom%d --- ДИАГ БАК: БАКПВВ@%o сл0=%016jo сл1=%016jo"
+                fprintf(sim_deb, "iom%d --- ДИАГ БАК: БАКПВВ@%o сл0=%016jo сл1=%016jo"
                     " АДРЕС=%o\n", iom->index, iom->BAK,
                     (uintmax_t)memory[iom->BAK], (uintmax_t)memory[iom->BAK + 1],
                     iom_pvv_base(iom));
@@ -1092,13 +1092,13 @@ void iom_request(int index)
                     blk = BAK_BLOCK_ADDR(w);
                     if (blk == 0 || blk >= MEMSIZE)
                         continue;
-                    fprintf(sim_log, "iom%d ---   кандидат@%o: КОП=%03o адрес=%o"
+                    fprintf(sim_deb, "iom%d ---   кандидат@%o: КОП=%03o адрес=%o"
                         " (смещение от БАКПВВ %+d)\n",
                         iom->index, a, k, blk, (int)a - (int)iom->BAK);
                     found++;
                 }
                 if (! found)
-                    fprintf(sim_log, "iom%d ---   команд БАК в памяти не найдено\n",
+                    fprintf(sim_deb, "iom%d ---   команд БАК в памяти не найдено\n",
                         iom->index);
             }
             /*

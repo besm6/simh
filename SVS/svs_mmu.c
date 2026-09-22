@@ -38,7 +38,7 @@ static void mmu_protection_check(CORE *cpu, int vaddr)
     /* Защита не заблокирована, а лист закрыт */
     if (! tmp_prot_disabled && (cpu->RZ & (1 << (vaddr >> 10)))) {
         cpu->bad_addr = vaddr >> 10;
-        if (cpu_dev[0].dctrl)
+        if (CPU_DEB(cpu, DEB_INSN))
             svs_debug("--- (%05o) защита числа", vaddr);
         longjmp(cpu->exception, STOP_OPERAND_PROT);
     }
@@ -177,8 +177,8 @@ static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val64, uint8 t)
              * значения туда кладёт только пульт, в эмуляторе — команда
              * `d 2 …` из .ini через cpu_deposit(), мимо этого пути.
              */
-            if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC)) {
-                fprintf(sim_log, "cpu%d --- Ignore write to pult register %d\n",
+            if (CPU_TRACE(cpu, DEB_INSN)) {
+                fprintf(sim_deb, "cpu%d --- Ignore write to pult register %d\n",
                     cpu->index, vaddr);
             }
             return 0;
@@ -217,12 +217,8 @@ void mmu_store(CORE *cpu, int vaddr, t_value val)
 
     int paddr = mmu_store_with_tag(cpu, vaddr, val << 16, t);
 
-    if (paddr != 0 && svs_trace >= TRACE_ALL) {
-        fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
-            cpu->index, vaddr, paddr, t);
-        fprint_sym(sim_log, 0, &val, 0, 0);
-        fprintf(sim_log, "\n");
-    }
+    if (paddr != 0 && CPU_DEB(cpu, DEB_REGS))
+        svs_trace_memory(cpu, "Write", vaddr, paddr, t, val);
 }
 
 /*
@@ -232,16 +228,8 @@ void mmu_store64(CORE *cpu, int vaddr, t_value val64)
 {
     int paddr = mmu_store_with_tag(cpu, vaddr, val64, cpu->TagR);
 
-    if (paddr != 0 && svs_trace >= TRACE_ALL) {
-        fprintf(sim_log, "cpu%d       Memory Write [%05o %07o] = %02o:",
-            cpu->index, vaddr, paddr, cpu->TagR);
-        fprintf(sim_log, "%03x %03x %03x %03x %04x\n",
-            (int) (val64 >> 52) & 07777,
-            (int) (val64 >> 40) & 07777,
-            (int) (val64 >> 28) & 07777,
-            (int) (val64 >> 16) & 07777,
-            (int) val64 & 0177777);
-    }
+    if (paddr != 0 && CPU_DEB(cpu, DEB_REGS))
+        svs_trace_memory64(cpu, "Write", vaddr, paddr, cpu->TagR, val64);
 }
 
 /*
@@ -308,20 +296,8 @@ t_value mmu_load64(CORE *cpu, int vaddr, int tag_check)
     uint8 t;
     int paddr = mmu_load_with_tag(cpu, vaddr, &val64, &t);
 
-    if (paddr != 0 && svs_trace >= TRACE_ALL) {
-        if (paddr < 010)
-            fprintf(sim_log, "cpu%d       Read  TR%o = ", cpu->index, paddr);
-        else
-            fprintf(sim_log, "cpu%d       Memory Read [%05o %07o] = %02o:",
-                cpu->index, vaddr, paddr, t);
-        fprintf(sim_log, "%04o %04o %04o %04o:%02o %04o\n",
-            (int) (val64 >> 52) & 07777,
-            (int) (val64 >> 40) & 07777,
-            (int) (val64 >> 28) & 07777,
-            (int) (val64 >> 16) & 07777,
-            (int) (val64 >> 12) & 017,
-            (int) val64 & 07777);
-    }
+    if (paddr != 0 && CPU_DEB(cpu, DEB_REGS))
+        svs_trace_memory64(cpu, "Read", vaddr, paddr, t, val64);
 
     /* Прерывание (контроль числа), если попалось 48-битное слово. */
     /* TEMP: контроль числа временно отключён, чтобы пройти инициализацию АДАП
@@ -346,15 +322,8 @@ t_value mmu_load(CORE *cpu, int vaddr)
     int paddr = mmu_load_with_tag(cpu, vaddr, &val, &t);
 
     val >>= 16;
-    if (paddr != 0 && svs_trace >= TRACE_ALL) {
-        if (paddr < 010)
-            fprintf(sim_log, "cpu%d       Read  TR%o = ", cpu->index, paddr);
-        else
-            fprintf(sim_log, "cpu%d       Memory Read [%05o %07o] = %02o:",
-                cpu->index, vaddr, paddr, t);
-        fprint_sym(sim_log, 0, &val, 0, 0);
-        fprintf(sim_log, "\n");
-    }
+    if (paddr != 0 && CPU_DEB(cpu, DEB_REGS))
+        svs_trace_memory(cpu, "Read", vaddr, paddr, t, val);
 
     /*
      * Прерывание (контроль числа), если попалось 64-битное слово.
@@ -389,7 +358,7 @@ static void mmu_fetch_check(CORE *cpu, int vaddr)
          */
         if (page == 0) {
             cpu->bad_addr = vaddr >> 10;
-            if (cpu_dev[0].dctrl)
+            if (CPU_DEB(cpu, DEB_INSN))
                 svs_debug("--- (%05o) защита команды", vaddr);
             longjmp(cpu->exception, STOP_INSN_PROT);
         }
@@ -405,7 +374,7 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
     uint8 t;
 
     if (vaddr == 0) {
-        if (cpu_dev[0].dctrl)
+        if (CPU_DEB(cpu, DEB_INSN))
             svs_debug("--- передача управления на 0");
         longjmp(cpu->exception, STOP_INSN_CHECK);
     }
@@ -483,15 +452,8 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
     t     = cpu->pf_tag[0];
     cpu->pf_last = vaddr;
 
-    if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC) && cpu_dev[0].dctrl &&
-        ! (cpu->RUU & RUU_RIGHT_INSTR)) {
-        // When both trace and cpu debug enabled,
-        // print the fetch information.
-        fprintf(sim_log, "cpu%d       Fetch [%05o %07o] = %o:",
-            cpu->index, vaddr, paddr, t);
-        fprint_sym(sim_log, 0, &val, 0, SWMASK('I'));
-        fprintf(sim_log, "\n");
-    }
+    if (CPU_TRACE(cpu, DEB_FETCH) && ! (cpu->RUU & RUU_RIGHT_INSTR))
+        svs_trace_fetch(cpu, vaddr, paddr, t, val);
 
     /* Прерывание (контроль команды), если попалась не 48-битная команда.
      * Тумблерные регистры только с командной сверткой. */
@@ -537,7 +499,7 @@ void mmu_set_rp(CORE *cpu, int idx, t_value val, int supervisor)
     p2 &= mask;
     p3 &= mask;
 
-    if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC)) {
+    if (CPU_TRACE(cpu, DEB_INSN)) {
         /*
          * Дамп перепрограммирования приписки. Печатаем и СТАРОЕ, и НОВОЕ
          * отображение, чтобы сразу видеть, какие виртуальные страницы
@@ -548,7 +510,7 @@ void mmu_set_rp(CORE *cpu, int idx, t_value val, int supervisor)
         const uint32 *tlb = supervisor ? cpu->STLB : cpu->UTLB;
         int b = idx * 4;
 
-        fprintf(sim_log,
+        fprintf(sim_deb,
             "cpu%d --- Приписка %s: РП%d := %o,%o,%o,%o (было %o,%o,%o,%o)"
             " => вирт.стр %d->%o %d->%o %d->%o %d->%o%s\n",
             cpu->index, supervisor ? "ЯДРА  " : "ПОЛЬЗ.", idx,

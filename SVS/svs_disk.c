@@ -296,11 +296,11 @@ t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
      * В исходном svs2053.bin там лежит удвоенный номер — отсюда зацикливание
      * на зоне 0462; лечит tools/makeSVS2053.py (svs2053-fixed.bin).
      */
-    if (svs_trace >= TRACE_DEVICES) {
+    if (SVS_DEV_TRACE()) {
         t_value ss0 = (memory[mmu_iom_data_pa(sysaddr)] >> 16) & BITS48;
 
         if ((ss0 >> 36) != (t_value)zone)
-            fprintf(sim_log, "disk ---   зона %04o: СС[0]=%016jo — ОС ждёт"
+            fprintf(sim_deb, "disk ---   зона %04o: СС[0]=%016jo — ОС ждёт"
                 " %04o, будет ОШЗОНЫ\n", zone, (uintmax_t)ss0, zone);
     }
 

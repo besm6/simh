@@ -110,6 +110,10 @@ int svs_opcode(char *instr)
  * Выдача на консоль и в файл протокола.
  * Если первый символ формата - подчерк, на консоль не печатаем.
  * Добавляет перевод строки.
+ *
+ * В файл пишем через fprintf() (scp.h подменяет его на Fprintf): при
+ * `set debug log' журнал и отладочная выдача - один и тот же файл, и голый
+ * vfprintf() пролезал бы мимо буфера отладки, разрывая строки трассы.
  */
 void svs_log(const char *fmt, ...)
 {
@@ -124,13 +128,13 @@ void svs_log(const char *fmt, ...)
         va_end(args);
     }
     if (sim_log) {
+        char buf[1024];
+
         va_start(args, fmt);
-        vfprintf(sim_log, fmt, args);
-        if (sim_log == stdout)
-            fprintf(sim_log, "\r");
-        fprintf(sim_log, "\n");
-        fflush(sim_log);
+        vsnprintf(buf, sizeof(buf), fmt, args);
         va_end(args);
+        fprintf(sim_log, (sim_log == stdout) ? "%s\r\n" : "%s\n", buf);
+        fflush(sim_log);
     }
 }
 
@@ -149,10 +153,13 @@ void svs_log_cont(const char *fmt, ...)
         va_end(args);
     }
     if (sim_log) {
+        char buf[1024];
+
         va_start(args, fmt);
-        vfprintf(sim_log, fmt, args);
-        fflush(sim_log);
+        vsnprintf(buf, sizeof(buf), fmt, args);
         va_end(args);
+        fprintf(sim_log, "%s", buf);
+        fflush(sim_log);
     }
 }
 
@@ -169,11 +176,13 @@ void svs_debug(const char *fmt, ...)
     printf("\r\n");
     va_end(args);
     if (sim_log && sim_log != stdout) {
+        char buf[1024];
+
         va_start(args, fmt);
-        vfprintf(sim_log, fmt, args);
-        fprintf(sim_log, "\n");
-        fflush(sim_log);
+        vsnprintf(buf, sizeof(buf), fmt, args);
         va_end(args);
+        fprintf(sim_log, "%s\n", buf);
+        fflush(sim_log);
     }
 }
 

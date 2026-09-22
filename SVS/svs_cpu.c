@@ -40,8 +40,6 @@ int redraw_panel;                       /* request graphical panel refresh */
 
 int32 tmr_poll = INSN_PER_TICK;         /* pgm timer poll */
 
-TRACEMODE svs_trace;                    /* trace mode */
-
 extern const char *scp_errors[];
 
 /* Wired (non-registered) bits of interrupt registers (RPR and GRVP)
@@ -58,26 +56,6 @@ t_stat cpu_reset(DEVICE *dev);
 t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp);
-t_stat cpu_set_trace(UNIT *u, int32 val, CONST char *cptr, void *desc);
-/*
- * Трасса ТОЛЬКО обменов канала и устройств, без покомандной.
- *
- * Нужна для длинных прогонов: с `itrace` трасса растёт ~3 МБ/с и 20 млн команд
- * дают около гигабайта, так что досмотреть загрузку до конца нельзя. Уровень
- * TRACE_DEVICES ниже TRACE_EXTRACODES, поэтому `itrace` по-прежнему печатает и
- * сообщения канала.
- */
-t_stat cpu_set_dtrace(UNIT *u, int32 val, CONST char *cptr, void *desc)
-{
-    svs_trace = TRACE_DEVICES;
-    return SCPE_OK;
-}
-
-t_stat cpu_set_itrace(UNIT *u, int32 val, CONST char *cptr, void *desc);
-t_stat cpu_set_etrace(UNIT *u, int32 val, CONST char *cptr, void *desc);
-t_stat cpu_set_dtrace(UNIT *u, int32 val, CONST char *cptr, void *desc);
-t_stat cpu_show_trace(FILE *st, UNIT *up, int32 v, CONST void *dp);
-t_stat cpu_clr_trace(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_window(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_clr_window(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_window(FILE *st, UNIT *up, int32 v, CONST void *dp);
@@ -195,21 +173,6 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV,
         0, NULL,    "REQ",      &cpu_req,           NULL,               NULL,
                                 "Sends a request interrupt" },
-    { MTAB_XTD|MTAB_VDV,
-        0, "TRACE", "TRACE",    &cpu_set_trace,     &cpu_show_trace,    NULL,
-                                "Enables full tracing of processor state" },
-    { MTAB_XTD|MTAB_VDV,
-        0, NULL,    "DTRACE",   &cpu_set_dtrace,    NULL,               NULL,
-                                "Enables device/channel tracing only" },
-    { MTAB_XTD|MTAB_VDV,
-        0, NULL,    "ITRACE",   &cpu_set_itrace,    NULL,               NULL,
-                                "Enables instruction tracing" },
-    { MTAB_XTD|MTAB_VDV,
-        0, NULL,    "ETRACE",   &cpu_set_etrace,    NULL,               NULL,
-                                "Enables extracode only tracing" },
-    { MTAB_XTD|MTAB_VDV,
-        0, NULL,    "NOTRACE",  &cpu_clr_trace,     NULL,               NULL,
-                                "Disables tracing" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR,
         0, "WINDOW", "WINDOW",  &cpu_set_window,    &cpu_show_window,   NULL,
                                 "Limits instruction tracing to a PC range" },
@@ -229,23 +192,42 @@ MTAB cpu_mod[] = {
     { 0 }
 };
 
+/*
+ * Разряды трассы: `set cpu0 debug' включает все сразу (полная трасса, как в
+ * besm6), `set cpu0 debug=insn;dev' — только перечисленные, `set cpu0
+ * nodebug=fetch' — снять один разряд. Выдача идёт в журнал отладки,
+ * см. `set debug'. Разряд INSN обязан быть младшим: SIMH при `set debug'
+ * без списка сначала кладёт в dctrl единицу, а потом добавляет маски.
+ *
+ * Один и тот же массив разделяют все четыре процессора: debflags — это
+ * указатель на таблицу, а состояние трассы (dctrl) у каждого своё.
+ */
+static DEBTAB cpu_deb[] = {
+    { "INSN",  DEB_INSN,  "команды процессора" },
+    { "EXTRA", DEB_EXTRA, "экстракоды (кроме э75)" },
+    { "REGS",  DEB_REGS,  "регистры и обращения к памяти" },
+    { "FETCH", DEB_FETCH, "выборка команд" },
+    { "DEV",   DEB_DEV,   "обмены каналов и устройств" },
+    { 0 }
+};
+
 DEVICE cpu_dev[4] = {
     { "CPU0", &cpu_unit[0], cpu0_reg, cpu_mod,
       1, 8, 17, 1, 8, 50,
       &cpu_examine, &cpu_deposit, &cpu_reset,
-      NULL, NULL, NULL, (void*)&cpu_core[0], DEV_DEBUG },
+      NULL, NULL, NULL, (void*)&cpu_core[0], DEV_DEBUG, 0, cpu_deb },
     { "CPU1", &cpu_unit[1], NULL, cpu_mod,
       1, 8, 17, 1, 8, 50,
       &cpu_examine, &cpu_deposit, &cpu_reset,
-      NULL, NULL, NULL, (void*)&cpu_core[1], DEV_DEBUG },
+      NULL, NULL, NULL, (void*)&cpu_core[1], DEV_DEBUG, 0, cpu_deb },
     { "CPU2", &cpu_unit[2], NULL, cpu_mod,
       1, 8, 17, 1, 8, 50,
       &cpu_examine, &cpu_deposit, &cpu_reset,
-      NULL, NULL, NULL, (void*)&cpu_core[2], DEV_DEBUG },
+      NULL, NULL, NULL, (void*)&cpu_core[2], DEV_DEBUG, 0, cpu_deb },
     { "CPU3", &cpu_unit[3], NULL, cpu_mod,
       1, 8, 17, 1, 8, 50,
       &cpu_examine, &cpu_deposit, &cpu_reset,
-      NULL, NULL, NULL, (void*)&cpu_core[3], DEV_DEBUG },
+      NULL, NULL, NULL, (void*)&cpu_core[3], DEV_DEBUG, 0, cpu_deb },
 };
 
 /*
@@ -443,9 +425,10 @@ t_stat cpu_reset(DEVICE *dev)
         }
     }
 
-    if (svs_trace) {
-        fprintf(sim_log, "cpu%d --- Reset\n", cpu->index);
+    if (CPU_DEB(cpu, DEB_INSN)) {
+        fprintf(sim_deb, "cpu%d --- Reset\n", cpu->index);
     }
+    svs_trace_reset(cpu);       /* полный дамп регистров при первой трассе */
     mpd_reset(cpu);
 
     return SCPE_OK;
@@ -464,52 +447,10 @@ t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
     if (! cpu)
         return SCPE_IERR;
 
-    if (svs_trace) {
-        fprintf(sim_log, "cpu%d --- Request from control panel\n", cpu->index);
+    if (CPU_DEB(cpu, DEB_INSN)) {
+        fprintf(sim_deb, "cpu%d --- Request from control panel\n", cpu->index);
     }
     cpu->GRVP |= GRVP_PANEL_REQ;
-    return SCPE_OK;
-}
-
-/*
- * Trace level selector
- */
-t_stat cpu_set_trace(UNIT *u, int32 val, CONST char *cptr, void *desc)
-{
-    if (! sim_log) {
-        sim_printf("Cannot enable tracing: please set console log first\n");
-        return SCPE_INCOMP;
-    }
-    svs_trace = TRACE_ALL;
-    sim_printf("Trace instructions, registers and memory access\n");
-    return SCPE_OK;
-}
-
-t_stat cpu_set_etrace(UNIT *u, int32 val, CONST char *cptr, void *desc)
-{
-    if (! sim_log) {
-        sim_printf("Cannot enable tracing: please set console log first\n");
-        return SCPE_INCOMP;
-    }
-    svs_trace = TRACE_EXTRACODES;
-    sim_printf("Trace extracodes (except e75)\n");
-    return SCPE_OK;
-}
-
-t_stat cpu_set_itrace(UNIT *u, int32 val, CONST char *cptr, void *desc)
-{
-    if (! sim_log) {
-        sim_printf("Cannot enable tracing: please set console log first\n");
-        return SCPE_INCOMP;
-    }
-    svs_trace = TRACE_INSTRUCTIONS;
-    sim_printf("Trace instructions only\n");
-    return SCPE_OK;
-}
-
-t_stat cpu_clr_trace (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
-{
-    svs_trace = TRACE_NONE;
     return SCPE_OK;
 }
 
@@ -551,18 +492,6 @@ t_stat cpu_show_window(FILE *st, UNIT *up, int32 v, CONST void *dp)
             (unsigned) svs_trace_lo, (unsigned) svs_trace_hi);
     else
         fprintf(st, "no trace window");
-    return SCPE_OK;
-}
-
-t_stat cpu_show_trace(FILE *st, UNIT *up, int32 v, CONST void *dp)
-{
-    switch (svs_trace) {
-    case TRACE_NONE:         break;
-    case TRACE_DEVICES:      fprintf(st, "trace devices"); break;
-    case TRACE_EXTRACODES:   fprintf(st, "trace extracodes"); break;
-    case TRACE_INSTRUCTIONS: fprintf(st, "trace instructions"); break;
-    case TRACE_ALL:          fprintf(st, "trace all"); break;
-    }
     return SCPE_OK;
 }
 
@@ -637,36 +566,36 @@ static void cmd_002(CORE *cpu)
     case 020: case 021: case 022: case 023:
     case 024: case 025: case 026: case 027:
         /* Запись в регистры приписки режима пользователя */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Установка приписки пользователя\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Установка приписки пользователя\n", cpu->index);
         mmu_set_rp(cpu, cpu->Aex & 7, cpu->ACC, 0);
         break;
 
     case 030: case 031: case 032: case 033:
         /* Запись в регистры защиты */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Запись в регистр защиты\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Запись в регистр защиты\n", cpu->index);
         mmu_set_protection(cpu, cpu->Aex & 3, cpu->ACC);
         break;
 
     case 034:
         /* Запись в регистр конфигурации оперативной памяти */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Запись конфигурации оперативной памяти\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Запись конфигурации оперативной памяти\n", cpu->index);
         /* игнорируем */
         break;
 
     case 035:
         /* Запись в сигнал контроля оперативной памяти */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Запись в сигнал контроля оперативной памяти\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Запись в сигнал контроля оперативной памяти\n", cpu->index);
         /* игнорируем */
         break;
 
     case 0235:
         /* Чтение сигнала контроля от оперативной памяти */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение сигнала контроля оперативной памяти\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение сигнала контроля оперативной памяти\n", cpu->index);
         cpu->ACC = 0;
         break;
 
@@ -693,81 +622,81 @@ static void cmd_002(CORE *cpu)
          * тождественной начальной приписке это НЕ сдвигает страницу 0, где
          * лежит стек, — что и требуется.
          */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение ЗЗ (секции памяти, запретов нет)\n",
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение ЗЗ (секции памяти, запретов нет)\n",
                 cpu->index);
         cpu->ACC = 0;
         break;
 
     case 037:
         /* Гашение регистра внутренних прерываний */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Гашение РПР\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Гашение РПР\n", cpu->index);
         cpu->RPR &= cpu->ACC | RPR_WIRED_BITS;
         break;
 
     case 0237:
         /* Чтение главного регистра прерываний */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение ГРП\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение ГРП\n", cpu->index);
         cpu->ACC = cpu->RPR;
         break;
 
     case 044:
         /* Запись в регистр тега */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Установка тега\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Установка тега\n", cpu->index);
         cpu->TagR = cpu->ACC;
         break;
 
     case 0244:
         /* Чтение регистра тега */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение регистра тега\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение регистра тега\n", cpu->index);
         cpu->ACC = cpu->TagR;
         break;
 
     case 0245:
         /* Чтение регистра ТЕГБРЧ */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение ТЕГБРЧ\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение ТЕГБРЧ\n", cpu->index);
         cpu->ACC = 0; //TODO
         break;
 
     case 046:
         /* Запись маски внешних прерываний */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Установка ГРМ\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Установка ГРМ\n", cpu->index);
         cpu->GRM = cpu->ACC;
         break;
 
     case 0246:
         /* Чтение маски внешних прерываний */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение ГРМ\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение ГРМ\n", cpu->index);
         cpu->ACC = cpu->GRM;
         break;
 
     case 047:
         /* Clearing the external interrupt register: */
         /* it is impossible to clear wired (stateless) bits this way */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Гашение РВП\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Гашение РВП\n", cpu->index);
         cpu->GRVP &= cpu->ACC | GRVP_WIRED_BITS;
         break;
 
     case 0247:
         /* Чтение регистра внешних прерываний */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение РВП: ГРВП=%04jo ГРМ=%04jo PC=%05o\n",
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение РВП: ГРВП=%04jo ГРМ=%04jo PC=%05o\n",
                 cpu->index, (uintmax_t)cpu->GRVP, (uintmax_t)cpu->GRM, cpu->PC);
         cpu->ACC = cpu->GRVP;
         break;
 
     case 050:
         /* Запись в регистр прерываний процессорам */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Запись в ПП\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Запись в ПП\n", cpu->index);
         cpu->PP = cpu->ACC & (CONF_IOM_MASK | CONF_CPU_MASK | CONF_DATA_MASK);
         if (cpu->ACC & CONF_MT) {
             /* Передача младшей половины байта. */
@@ -800,8 +729,8 @@ static void cmd_002(CORE *cpu)
              * РКП должен перечислять этот процессор — см. `d RKP` в
              * dispak.ini. См. ПВВ.md §7.6.
              */
-            if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-                fprintf(sim_log, "cpu%d --- Прерывание процессорам, маска %#jo\n",
+            if (CPU_TRACE(cpu, DEB_INSN))
+                fprintf(sim_deb, "cpu%d --- Прерывание процессорам, маска %#jo\n",
                     cpu->index, (uintmax_t)(cpu->ACC & CONF_CPU_MASK));
             cpu->POP |= cpu->ACC & CONF_CPU_MASK;
         } else {
@@ -820,16 +749,16 @@ static void cmd_002(CORE *cpu)
          * процессор 9 — разряд 33.
          * Номер берётся из cpu_svs_number (регистр NSVS), а не из индекса
          * процессора: эмулятор гоняет одну машину, но её номер выбирается. */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение номера процессора (СВС %d)\n",
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение номера процессора (СВС %d)\n",
                 cpu->index, cpu_svs_number);
         cpu->ACC = (0x3ffLL << 32) & ~(1LL << (41 - cpu_svs_number));
         break;
 
     case 051:
         /* Запись в регистр ответов процессорам */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Запись в ОПП\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Запись в ОПП\n", cpu->index);
         cpu->OPP = cpu->ACC & (CONF_IOM_MASK | CONF_CPU_MASK | CONF_DATA_MASK);
         if (cpu->ACC & CONF_MT) {
             /* Передача старшей половины байта. */
@@ -843,74 +772,74 @@ static void cmd_002(CORE *cpu)
 
     case 052:
         /* Гашение регистра прерываний от процессоров */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Гашение ПОП\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Гашение ПОП\n", cpu->index);
         /* Оставляем бит передачи МПД. */
         cpu->POP &= cpu->ACC | CONF_MT;
         break;
 
     case 0252:
         /* Чтение регистра прерываний от процессоров */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение ПОП\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение ПОП\n", cpu->index);
         cpu->ACC = cpu->POP;
         break;
 
     case 053:
         /* Гашение регистра ответов от процессоров */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Гашение ОПОП\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Гашение ОПОП\n", cpu->index);
         cpu->OPOP &= cpu->ACC;
         break;
 
     case 0253:
         /* Чтение регистра ответов от процессоров */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение ОПОП\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение ОПОП\n", cpu->index);
         cpu->ACC = cpu->OPOP;
         break;
 
     case 054:
         /* Запись в регистр конфигурации процессора */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Установка конфигурации процессора\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Установка конфигурации процессора\n", cpu->index);
         cpu->RKP = cpu->ACC & (CONF_IOM_MASK | CONF_CPU_MASK | CONF_MR | CONF_MT);
         break;
 
     case 0254:
         /* Чтение регистра конфигурации процессора */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение регистра конфигурации процессора\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение регистра конфигурации процессора\n", cpu->index);
         cpu->ACC = cpu->RKP;
         break;
 
     case 055:
         /* Запись в регистр аварии процессоров */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Запись в регистр аварии процессоров\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Запись в регистр аварии процессоров\n", cpu->index);
         /* игнорируем */
         break;
 
     case 0255:
         /* Чтение регистра аварии процессоров */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение регистра аварии процессоров\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение регистра аварии процессоров\n", cpu->index);
         cpu->ACC = 0;
         break;
 
     case 056:
         /* Запись в регистр часов: разр.44-1 сумматора. */
         svs_clock = cpu->ACC & BITS44;
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Установка часов: %015jo\n",
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Установка часов: %015jo\n",
                 cpu->index, (uintmax_t)svs_clock);
         break;
 
     case 0256:
         /* Чтение регистра часов: разр.44-1 в сумматор. */
         cpu->ACC = svs_clock & BITS44;
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение регистра часов: %015jo\n",
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение регистра часов: %015jo\n",
                 cpu->index, (uintmax_t)cpu->ACC);
         break;
 
@@ -918,8 +847,8 @@ static void cmd_002(CORE *cpu)
         /* Запись в регистр таймера: разр.32-1 сумматора, счёт пошёл. */
         svs_timer = cpu->ACC & BITS(32);
         svs_timer_run = 1;
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Установка таймера: %011jo"
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Установка таймера: %011jo"
                 " (прерывание через %ju мкс)\n", cpu->index,
                 (uintmax_t)svs_timer,
                 (uintmax_t)((1ULL << 32) - svs_timer) & 0xffffffff);
@@ -928,16 +857,16 @@ static void cmd_002(CORE *cpu)
     case 0257:
         /* Чтение регистра таймера: разр.32-1 в сумматор. */
         cpu->ACC = svs_timer & BITS(32);
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Чтение регистра таймера: %011jo\n",
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Чтение регистра таймера: %011jo\n",
                 cpu->index, (uintmax_t)cpu->ACC);
         break;
 
     case 060: case 061: case 062: case 063:
     case 064: case 065: case 066: case 067:
         /* Запись в регистры приписки супервизора */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Установка приписки супервизора\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Установка приписки супервизора\n", cpu->index);
         mmu_set_rp(cpu, cpu->Aex & 7, cpu->ACC, 1);
         break;
 
@@ -948,8 +877,8 @@ static void cmd_002(CORE *cpu)
          * Биты 2 и 3 - признаки формирования контрольных
          * разрядов (ПКП и ПКЛ).
          */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Установка режимов УУ\n", cpu->index);
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Установка режимов УУ\n", cpu->index);
 
         if (cpu->Aex & 1) cpu->RUU |= RUU_AVOST_DISABLE;
         else              cpu->RUU &= ~RUU_AVOST_DISABLE;
@@ -963,8 +892,8 @@ static void cmd_002(CORE *cpu)
 
     case 0140:
         /* Сброс контрольных признаков (СКП). */
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC))
-            fprintf(sim_log, "cpu%d --- Сброс контрольных признаков\n",
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- Сброс контрольных признаков\n",
                 cpu->index);
         //TODO
         break;
@@ -1038,9 +967,8 @@ void cpu_one_instr(CORE *cpu)
     }
 
     /* Трассировка команды: адрес, код и мнемоника. */
-    if ((svs_trace >= TRACE_INSTRUCTIONS ||
-        (svs_trace == TRACE_EXTRACODES && is_extracode(opcode))) &&
-        TRACE_IN_WINDOW(cpu->PC)) {
+    if (CPU_TRACE(cpu, DEB_INSN) ||
+        (CPU_TRACE(cpu, DEB_EXTRA) && is_extracode(opcode))) {
         svs_trace_opcode(cpu, paddr);
     }
 
@@ -1716,7 +1644,7 @@ branch_zero:
     }
 
     /* Трассировка изменённых регистров. */
-    if (svs_trace == TRACE_ALL && TRACE_IN_WINDOW(cpu->PC)) {
+    if (CPU_TRACE(cpu, DEB_REGS)) {
         svs_trace_registers(cpu);
     }
 
@@ -1780,7 +1708,7 @@ t_stat sim_instr(void)
     int iintr = 0;
 
     /* Трассировка начального состояния. */
-    if (svs_trace == TRACE_ALL && TRACE_IN_WINDOW(cpu->PC)) {
+    if (CPU_TRACE(cpu, DEB_REGS)) {
         svs_trace_registers(cpu);
     }
 
@@ -1795,10 +1723,8 @@ t_stat sim_instr(void)
             scp_errors[r - SCPE_BASE] :
             sim_stop_messages[r];
 
-        if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC)) {
-            fprintf(sim_log, "cpu%d --- %s\n",
-                cpu->index, message);
-        }
+        if (CPU_TRACE(cpu, DEB_INSN))
+            svs_trace_exception(cpu, "%s", message);
         cpu->M[017] += cpu->corr_stack;
 
         /*
@@ -1986,10 +1912,8 @@ ret:        svs_draw_panel(1);
         {
             if (cpu->RPR) {
                 /* internal interrupt */
-                if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC)) {
-                    fprintf(sim_log, "cpu%d --- Внутреннее прерывание\n",
-                        cpu->index);
-                }
+                if (CPU_TRACE(cpu, DEB_INSN))
+                    svs_trace_exception(cpu, "Внутреннее прерывание");
                 op_int_2(cpu);
             }
             /*
@@ -2015,12 +1939,11 @@ ret:        svs_draw_panel(1);
                  * целиком, чтобы видеть, какой разряд реально доставлен и
                  * доживает ли он до РЕГ '247' внутри обработчика.
                  */
-                if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu->PC)) {
-                    fprintf(sim_log, "cpu%d --- Внешнее прерывание:"
-                        " ГРВП=%04jo ГРМ=%04jo (доставлено %04jo) PC=%05o\n",
-                        cpu->index, (uintmax_t)cpu->GRVP, (uintmax_t)cpu->GRM,
-                        (uintmax_t)(cpu->GRVP & cpu->GRM), cpu->PC);
-                }
+                if (CPU_TRACE(cpu, DEB_INSN))
+                    svs_trace_exception(cpu, "Внешнее прерывание:"
+                        " ГРВП=%04jo ГРМ=%04jo (доставлено %04jo)",
+                        (uintmax_t)cpu->GRVP, (uintmax_t)cpu->GRM,
+                        (uintmax_t)(cpu->GRVP & cpu->GRM));
                 op_int_2(cpu);
             }
         }
@@ -2045,8 +1968,8 @@ t_stat fast_clk(UNIT *this)
 {
     static unsigned counter;
 
-    if (svs_trace >= TRACE_INSTRUCTIONS && TRACE_IN_WINDOW(cpu_core[0].PC)) {
-        fprintf(sim_log, "---- --- Timer\n");
+    if (CPU_TRACE(&cpu_core[0], DEB_INSN)) {
+        fprintf(sim_deb, "---- --- Timer\n");
     }
 
     ++counter;

@@ -1038,8 +1038,8 @@ static void mpd_queue_char(CORE *cpu, int line, int c)
     c &= 0177;
     receive_syllable = (line << 8) | c | (odd_parity(c) << 7);
     receive_state = 2;
-    if (svs_trace >= TRACE_DEVICES)
-        fprintf(sim_log, "cpu%d --- МПД приём слога 0x%04x\n",
+    if (SVS_DEV_TRACE())
+        fprintf(sim_deb, "cpu%d --- МПД приём слога 0x%04x\n",
                 cpu->index, receive_syllable);
     tty_strobe(cpu);
 }
@@ -1194,8 +1194,8 @@ static void mpd_emit_char(int line, int sym, int bad_parity)
  */
 void mpd_send_nibble(CORE *cpu, int data)
 {
-    if (svs_trace >= TRACE_INSTRUCTIONS)
-        fprintf(sim_log, "cpu%d --- МПД передача полубайта\n", cpu->index);
+    if (CPU_TRACE(cpu, DEB_INSN))
+        fprintf(sim_deb, "cpu%d --- МПД передача полубайта\n", cpu->index);
 
     cpu->mpd_data <<= 4;
     cpu->mpd_data |= data & 0xf;
@@ -1276,8 +1276,8 @@ void mpd_send_nibble(CORE *cpu, int data)
         }
         fflush(stdout);
 
-        if (svs_trace >= TRACE_INSTRUCTIONS)
-            fprintf(sim_log, "cpu%d --- МПД передача слога 0x%04x\n",
+        if (CPU_TRACE(cpu, DEB_INSN))
+            fprintf(sim_deb, "cpu%d --- МПД передача слога 0x%04x\n",
                     cpu->index, cpu->mpd_data);
         cpu->mpd_nbits = 0;
         cpu->mpd_data = 0;

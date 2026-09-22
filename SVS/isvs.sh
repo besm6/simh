@@ -21,9 +21,9 @@
 #   ^E                  уйти в sim> посреди прогона
 #   cont                вернуться в машину
 #   do probe-mott.ini   поставить пробы на МОТТ
-#   set cpu0 itrace     покомандная трасса…
+#   set cpu0 debug=insn  покомандная трасса…
 #   set cpu0 window=76000:77777   …только по МОТТ
-#   set cpu0 notrace    выключить
+#   set cpu0 nodebug     выключить
 
 set -e
 
