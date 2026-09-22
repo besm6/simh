@@ -899,52 +899,78 @@ int vt_getc(int num)
 }
 
 /*
- * Reading UTF-8, returning KOI-7.
- * The resulting char is in the range 0..0177.
- * If no input, returns -1.
+ * Сборка UTF-8 в КОИ-7.
+ *
+ * Байты одной буквы приходят порознь: с консоли `sim_poll_kbd()` отдаёт по
+ * одному за опрос, поэтому начало последовательности хранится в состоянии
+ * линии. `acc` — собранные разряды, `left` — сколько байт продолжения ещё
+ * ожидается.
+ *
+ * Возвращает код КОИ-7 (0..0177) либо -1, если буква ещё не собрана или в
+ * КОИ-7 её нет.
  */
-static int vt_kbd_input_unicode(int num)
+typedef struct {
+    unsigned acc;               /* собранные разряды кода Unicode */
+    int left;                   /* сколько байт продолжения ещё ждём */
+} UTF8;
+
+static UTF8 utf8_console;                   /* консоль SIMH */
+static UTF8 utf8_line[TTY_UNIT_MAX+1];      /* telnet-линии, по номеру юнита */
+
+static int utf8_to_koi7(CORE *cpu, UTF8 *st, int byte)
 {
-    int c1, c2, c3, r;
-again:
-    r = vt_getc(num);
-    if (r < 0 || r > 0377)
-        return r;
-    c1 = r & 0377;
-    if (!(c1 & 0x80))
-        return unicode_to_koi7(c1);
+    unsigned code;
+    int sym;
 
-    r = vt_getc(num);
-    if (r < 0 || r > 0377)
-        return r;
-    c2 = r & 0377;
-    if (!(c1 & 0x20))
-        return unicode_to_koi7((c1 & 0x1f) << 6 | (c2 & 0x3f));
-
-    r = vt_getc(num);
-    if (r < 0 || r > 0377)
-        return r;
-    c3 = r & 0377;
-    if (c1 == 0xEF && c2 == 0xBB && c3 == 0xBF) {
-        /* Skip zero width no-break space. */
-        goto again;
+    if (st->left > 0) {
+        if ((byte & 0300) == 0200) {
+            st->acc = (st->acc << 6) | (byte & 077);
+            if (--st->left > 0)
+                return -1;
+            code = st->acc;
+            goto done;
+        }
+        /*
+         * Не байт продолжения: последовательность оборвана, а этот байт
+         * разбирается заново — как начало следующей.
+         */
+        st->left = 0;
     }
-    return unicode_to_koi7((c1 & 0x0f) << 12 | (c2 & 0x3f) << 6 | (c3 & 0x3f));
+
+    if (! (byte & 0200)) {
+        code = byte;
+        goto done;
+    }
+    if ((byte & 0340) == 0300) {
+        st->acc = byte & 037;
+        st->left = 1;
+    } else if ((byte & 0360) == 0340) {
+        st->acc = byte & 017;
+        st->left = 2;
+    } else if ((byte & 0370) == 0360) {
+        st->acc = byte & 07;
+        st->left = 3;
+    }
+    return -1;
+
+done:
+    if (code == 0xFEFF)
+        return -1;              /* нуль-ширинный пробел */
+    sym = unicode_to_koi7(code);
+    if (sym < 0 && SVS_DEV_TRACE())
+        fprintf(sim_deb, "cpu%d --- МПД: U+%04X в КОИ-7 не отображается\n",
+            cpu->index, code);
+    return sym;
 }
+
 
 /*
  * Alternatively, entering Cyrillics can be done without switching keyboard
  * layouts. Period and comma are entered with shift, less-than and greater-than
  * are mapped to tilde-grave. Semicolon is }, quote is |.
  */
-static int vt_kbd_input_koi7(int num)
+static int koi7_jcuken(int r)
 {
-    int r;
-
-    r = vt_getc(num);
-    if (r < 0 || r > 0377)
-        return r;
-    r &= 0377;
     switch (r) {
     case '\r': return '\003';
     case 'q': return 'j';
@@ -989,6 +1015,48 @@ static int vt_kbd_input_koi7(int num)
     }
 }
 
+/*
+ * Байт с линии — в код КОИ-7, по НАБОРУ СИМВОЛОВ этой линии
+ * (`set tty<N> unicode|jcuken|qwerty|raw`). Состояние сборки UTF-8 — своё у
+ * каждой линии, поэтому передаётся отдельно.
+ *
+ * Возвращает -1, если буква ещё не собрана или на линию не годится.
+ *
+ * Набор RAW отдаёт байт как есть; в остальных ВК приходит кодом ETX, а
+ * клавиша ЗАБОЙ — кодом ШАГ НАЗАД.
+ */
+static int kbd_byte_to_koi7(CORE *cpu, int unum, UTF8 *st, int byte)
+{
+    int charset = tty_unit[unum].flags & TTY_CHARSET_MASK;
+    int c;
+
+    switch (charset) {
+    case TTY_KOI7_JCUKEN_CHARSET:
+        c = koi7_jcuken(byte);
+        break;
+    case TTY_RAW_CHARSET:
+    case TTY_KOI7_QWERTY_CHARSET:
+        c = byte;
+        break;
+    case TTY_UNICODE_CHARSET:
+        c = utf8_to_koi7(cpu, st, byte);
+        break;
+    default:
+        c = '?';
+        break;
+    }
+    if (c < 0 || c > 0177)
+        return -1;
+
+    if (charset != TTY_RAW_CHARSET) {
+        if (c == '\r' || c == '\n')
+            c = '\003';        /* ВК передаётся кодом ETX */
+        if (c == 0177)
+            c = '\b';          /* клавиша ЗАБОЙ: DEL → ШАГ НАЗАД */
+    }
+    return c;
+}
+
 int odd_parity(unsigned char c)
 {
     c = (c & 0x55) + ((c >> 1) & 0x55);
@@ -1028,6 +1096,34 @@ static uint32 receive_syllable = 0;
 static uint8 mpd_line_send[0200];
 
 /*
+ * Местное эхо линии: 1 — МПД сам возвращает принятый символ на ту же линию,
+ * не дожидаясь, пока его вернёт машина. Включено на всех линиях (mpd_reset).
+ *
+ * Каким разрядом служебного слога хост переключает эхо, пока не установлено.
+ * В разборе команды (mpd_send_nibble) заняты разр.8 (ЗСЛ), разр.7 (ОПРОС) и
+ * разр.4 (режим линии); разр.6 и 5 младшего байта не разобраны.
+ */
+static uint8 mpd_line_echo[0200];
+
+/*
+ * Местное эхо: вернуть принятый символ на ту же линию.
+ *
+ * Символ уходит КАК ЕСТЬ: что принято с линии, то на неё и возвращается.
+ * Как отработать управляющий код, решает сам терминал (vt_send).
+ */
+static void mpd_echo_char(CORE *cpu, int line, int sym)
+{
+    int unum = line_to_unit(line);
+
+    if (SVS_DEV_TRACE())
+        fprintf(sim_deb, "cpu%d --- МПД линия %o: эхо символа %03o\n",
+            cpu->index, line, sym);
+
+    if (unum > 0)
+        vt_send(unum, sym);
+}
+
+/*
  * Поставить символ в очередь приёма МПД слогом с указанной линии.
  *
  * Разр.8 байта — дополнение до ЧЁТНОСТИ: `odd_parity()` даёт 1, когда в
@@ -1041,6 +1137,8 @@ static void mpd_queue_char(CORE *cpu, int line, int c)
     if (SVS_DEV_TRACE())
         fprintf(sim_deb, "cpu%d --- МПД приём слога 0x%04x\n",
                 cpu->index, receive_syllable);
+    if (mpd_line_echo[line])
+        mpd_echo_char(cpu, line, c);
     tty_strobe(cpu);
 }
 
@@ -1065,7 +1163,12 @@ static void mpd_poll_input(CORE *cpu)
     if (c == SCPE_STOP)
         stop_cpu = 1;   /* just in case */
     if (c & SCPE_KFLAG) {
-        mpd_queue_char(cpu, mpd_console_line, c);
+        unum = line_to_unit(mpd_console_line);
+        if (unum >= 1 && unum <= TTY_UNIT_MAX) {
+            c = kbd_byte_to_koi7(cpu, unum, &utf8_console, c & 0377);
+            if (c >= 0)
+                mpd_queue_char(cpu, mpd_console_line, c);
+        }
         return;
     }
 
@@ -1076,31 +1179,12 @@ static void mpd_poll_input(CORE *cpu)
         if (!tty_line[unum].conn || !tty_line[unum].rcve)
             continue;
 
-        switch (tty_unit[unum].flags & TTY_CHARSET_MASK) {
-        case TTY_KOI7_JCUKEN_CHARSET:
-            c = vt_kbd_input_koi7(unum);
-            break;
-        case TTY_RAW_CHARSET:
-        case TTY_KOI7_QWERTY_CHARSET:
-            c = vt_getc(unum);
-            break;
-        case TTY_UNICODE_CHARSET:
-            c = vt_kbd_input_unicode(unum);
-            break;
-        default:
-            c = '?';
-            break;
-        }
+        c = vt_getc(unum);
         if (c < 0)
             continue;
-        if (c > 0177)
+        c = kbd_byte_to_koi7(cpu, unum, &utf8_line[unum], c & 0377);
+        if (c < 0)
             continue;
-        if ((tty_unit[unum].flags & TTY_CHARSET_MASK) != TTY_RAW_CHARSET) {
-            if (c == '\r' || c == '\n')
-                c = 3;              /* ETX is used as Enter */
-            if (c == '\177')
-                c = '\b';           /* ASCII DEL -> BS */
-        }
         mpd_queue_char(cpu, line, c);
         return;
     }
@@ -1142,6 +1226,9 @@ void mpd_reset(CORE *cpu)
     receive_state = 0;
     receive_syllable = 0;
     memset(mpd_line_send, 0, sizeof(mpd_line_send));
+    memset(mpd_line_echo, 1, sizeof(mpd_line_echo));
+    utf8_console.left = 0;
+    memset(utf8_line, 0, sizeof(utf8_line));
 
     /* Готов к передаче. */
     cpu->POP |= CONF_MT;
