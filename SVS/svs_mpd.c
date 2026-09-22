@@ -1150,15 +1150,15 @@ void mpd_reset(CORE *cpu)
 /*
  * Слог данных: разр.7-1 — символ КОИ-7, разр.8 дополняет байт до ЧЁТНОСТИ (§2).
  *
- * Показываем ВСЕ символы: непечатаемый — восьмеричным кодом в угловых
- * скобках, а символ со сбитой чётностью помечаем апострофом слева.
- * Перевод строки и возврат каретки печатаются как есть. Вывод идёт на
- * консоль SIMH и/или на telnet-сессию этой линии.
+ * На линию идёт только сам символ: управляющие коды отрабатывает vt_send()
+ * как настоящий терминал. Код символа и сбитую чётность видно в трассе
+ * устройств (`set cpu0 debug=dev`). Вывод идёт на консоль SIMH и/или на
+ * telnet-сессию этой линии.
  */
-static void mpd_emit_char(int line, int sym, int bad_parity)
+static void mpd_emit_char(CORE *cpu, int line, int sym, int bad_parity)
 {
     int unum = line_to_unit(line);
-
+#if 0
     if (bad_parity) {
         if (line == mpd_console_line)
             sim_putchar('`');
@@ -1177,6 +1177,10 @@ static void mpd_emit_char(int line, int sym, int bad_parity)
             tmxr_linemsg(&tty_line[unum], buf);
         return;
     }
+#endif
+    if (SVS_DEV_TRACE())
+        fprintf(sim_deb, "cpu%d --- МПД линия %o: символ %03o%s\n",
+            cpu->index, line, sym, bad_parity ? " (сбита чётность)" : "");
 
     if (unum > 0)
         vt_send(unum, sym);
@@ -1211,8 +1215,9 @@ void mpd_send_nibble(CORE *cpu, int data)
             /*
              * Служебный слог: разр.15-9 — номер линии, младший байт —
              * команда, разр.3-1 — номер ЭВМ. Команды перечислены в МПД.md
-             * §3В; печатаем их по имени, иначе три разные команды выглядят
-             * на консоли одинаково.
+             * §3В; в трассе называем их по имени, иначе три разные команды
+             * выглядят одинаково. На консоль служебные слоги не идут: это
+             * протокол МПД, а не текст терминала.
              */
             int line = (cpu->mpd_data >> 8) & 0177;
             int cmd  = cpu->mpd_data & 0377;
@@ -1222,7 +1227,9 @@ void mpd_send_nibble(CORE *cpu, int data)
                 (cmd & 010)  ? "ВЫДАЧА" :   /* разр.4 — линию на выдачу */
                                "ПРИЕМ";     /* иначе — линию на приём */
 
-            printf("<Т%o %s ЭВМ%d>", line, name, cmd & 7);
+            if (SVS_DEV_TRACE())
+                fprintf(sim_deb, "cpu%d --- МПД линия %o: %s ЭВМ%d\n",
+                    cpu->index, line, name, cmd & 7);
 
             /*
              * Ответ на служебный слог — тоже СЛУЖЕБНЫЙ слог.
@@ -1272,7 +1279,7 @@ void mpd_send_nibble(CORE *cpu, int data)
             int sym = cpu->mpd_data & 0177;
             int bad = odd_parity(cpu->mpd_data & 0377);
 
-            mpd_emit_char(line, sym, bad);
+            mpd_emit_char(cpu, line, sym, bad);
         }
         fflush(stdout);
 
