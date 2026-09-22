@@ -417,18 +417,14 @@ extern void gost_putc(unsigned char, FILE *);
 extern int odd_parity(unsigned char);
 
 /*
- * Терминалы.
+ * МПД / консоль SIMH (устройство TTY).
  */
-void vt_receive(CORE *cpu);
 int vt_is_idle(void);
-
-/*
- * МПД.
- */
 void mpd_reset(CORE *cpu);
 void mpd_send_nibble(CORE *cpu, int data);
 void mpd_receive_update(CORE *cpu);
 void tty_strobe(CORE *cpu);
+t_stat tty_reset(DEVICE *dptr);
 
 /*
  * Отладочная выдача.

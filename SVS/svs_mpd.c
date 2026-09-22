@@ -1,5 +1,5 @@
 /*
- * SVS teletype device
+ * SVS MPD (мультиплексор передачи данных) + telnet (TMXR) + консоль SIMH.
  *
  * Copyright (c) 2009, Leo Broukhis
  * Copyright (c) 2009, Serge Vakulenko
@@ -54,72 +54,42 @@
 #include "sim_tmxr.h"
 #include <time.h>
 
-#define TTY_MAX         24          /* Serial TTY lines */
-#define LINES_MAX       TTY_MAX     /* Including parallel "Consul" typewriters */
+/*
+ * Юнит TTYN (N — восьмеричный номер линии МПД, цифры 1..77).
+ * SIMH разбирает N как десятичное, поэтому «tty70» → юнит 70, а в слоге МПД
+ * номер линии — те же цифры восьмерично (070). Юнит 0 — таймер опроса.
+ *
+ * Telnet: `attach tty <port>`. Ввод/вывод линий идёт слогами МПД.
+ * Последовательного бит-бэнга и Consul нет.
+ */
+#define MPD_LINE_MAX    077         /* максимальный номер линии МПД */
+#define TTY_UNIT_MAX    77          /* set tty77 → линия 077 */
 
-/* For serial lines */
-int tty_active[TTY_MAX+1], tty_sym[TTY_MAX+1];
-int tty_typed[TTY_MAX+1], tty_instate[TTY_MAX+1];
-time_t tty_last_time[TTY_MAX+1];
-int tty_idle_count[TTY_MAX+1];
-
-/* The serial interrupt generator frequency, common for all VT lines */
-int tty_rate = 300;
-
-/* Interrupt generator mode: 1 - model time, 0 - wallclock time */
-int tty_turbo = 1;
-
-uint32 vt_sending, vt_receiving;
-uint32 tt_sending, tt_receiving;
-
-// Attachments survive the reset
-uint32 tt_mask = 0, vt_mask = 0;
-
-uint32 TTY_IN = 0, vt_idle = 0;
+time_t tty_last_time[TTY_UNIT_MAX+1];
+int tty_idle_count[TTY_UNIT_MAX+1];
 
 /* Command line buffers for TELNET mode. */
-char vt_cbuf[CBUFSIZE][LINES_MAX+1];
-char *vt_cptr[LINES_MAX+1];
+char vt_cbuf[CBUFSIZE][TTY_UNIT_MAX+1];
+char *vt_cptr[TTY_UNIT_MAX+1];
 
 t_stat vt_clk(UNIT *);
-static void mpd_console_input(CORE *cpu);
+static void mpd_poll_input(CORE *cpu);
+static int unit_to_line(int unum);
+static int line_to_unit(int line);
+t_stat tty_setconsole(UNIT *up, int32 v, CONST char *cp, void *dp);
+t_stat tty_showconsole(FILE *f, UNIT *up, int32 v, CONST void *dp);
 
-/* Линия, с которой в МПД приходят символы консоли SIMH. */
-#define MPD_CONSOLE_LINE    61
+/*
+ * Линия, с которой в МПД приходят символы консоли SIMH.
+ * По умолчанию 075 (2053); в 2253 — 070 (`set tty70 console`).
+ */
+int mpd_console_line = 075;
 extern const char *get_sim_sw(const char *cptr);
 
 int attached_console;
 
-UNIT tty_unit[] = {
-    { UDATA(vt_clk, UNIT_DIS|UNIT_IDLE, 0) },        /* fake unit, clock */
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    /* The next two units are parallel interface */
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { UDATA(NULL, UNIT_SEQ, 0) },
-    { 0 }
+UNIT tty_unit[TTY_UNIT_MAX+1] = {
+    { UDATA(vt_clk, UNIT_IDLE, 0) },        /* fake unit, clock + telnet attach */
 };
 
 REG tty_reg[] = {
@@ -134,9 +104,10 @@ REG tty_reg[] = {
  * line 0 is kept used (.conn = 1).
  * The .rcve field is set to 1 for network connections.
  * For local connections, it is 0.
+ * Index == SIMH unit number; MPD line number = unit_to_line(index).
  */
-TMLN tty_line[LINES_MAX+1];
-TMXR tty_desc = { LINES_MAX+1, 0, 0, tty_line };        /* mux descriptor */
+TMLN tty_line[TTY_UNIT_MAX+1];
+TMXR tty_desc = { TTY_UNIT_MAX+1, 0, 0, tty_line };        /* mux descriptor */
 
 #define TTY_UNICODE_CHARSET     0
 #define TTY_KOI7_JCUKEN_CHARSET (1<<UNIT_V_UF)
@@ -144,14 +115,38 @@ TMXR tty_desc = { LINES_MAX+1, 0, 0, tty_line };        /* mux descriptor */
 #define TTY_RAW_CHARSET         (3<<UNIT_V_UF)
 #define TTY_CHARSET_MASK        (3<<UNIT_V_UF)
 #define TTY_OFFLINE_STATE       0
-#define TTY_TELETYPE_STATE      (1<<(UNIT_V_UF+2))
-#define TTY_VT340_STATE         (2<<(UNIT_V_UF+2))
-#define TTY_CONSUL_STATE        (3<<(UNIT_V_UF+2))
+#define TTY_ONLINE_STATE        (1<<(UNIT_V_UF+2))
 #define TTY_STATE_MASK          (3<<(UNIT_V_UF+2))
 #define TTY_DESTRUCTIVE_BSPACE  0
 #define TTY_AUTHENTIC_BSPACE    (1<<(UNIT_V_UF+4))
 #define TTY_BSPACE_MASK         (1<<(UNIT_V_UF+4))
 #define TTY_CMDLINE_MASK        (1<<(UNIT_V_UF+5))
+
+/* Юнит tty70 → линия 070: цифры номера юнита читаются восьмерично. */
+static int unit_to_line(int unum)
+{
+    char buf[16];
+    char *end;
+    long line;
+
+    if (unum < 1 || unum > TTY_UNIT_MAX)
+        return -1;
+    sprintf(buf, "%d", unum);
+    line = strtol(buf, &end, 8);
+    if (*end || line < 1 || line > MPD_LINE_MAX)
+        return -1;
+    return (int)line;
+}
+
+static int line_to_unit(int line)
+{
+    char buf[16];
+
+    if (line < 1 || line > MPD_LINE_MAX)
+        return -1;
+    sprintf(buf, "%o", line);
+    return atoi(buf);
+}
 
 static void reset_line(int num)
 {
@@ -161,49 +156,42 @@ static void reset_line(int num)
 
 t_stat tty_reset(DEVICE *dptr)
 {
-    CORE *cpu = &cpu_core[0];
+    static int units_inited = 0;
+    int i;
 
-    memset(tty_active, 0, sizeof(tty_active));
-    memset(tty_sym, 0, sizeof(tty_sym));
-    memset(tty_typed, 0, sizeof(tty_typed));
-    memset(tty_instate, 0, sizeof(tty_instate));
-    vt_sending = vt_receiving = 0;
-    TTY_IN = 0;
-    vt_idle = 1;
+    if (!units_inited) {
+        for (i = 1; i <= TTY_UNIT_MAX; ++i)
+            tty_unit[i] = (UNIT){ UDATA(NULL, 0, 0) };
+        units_inited = 1;
+    }
     tty_line[0].conn = 1;                   /* faked, always busy */
 
-    // Schedule the very first TTY interrupt to match the next clock interrupt.
+    /* Schedule the very first TTY interrupt to match the next clock interrupt. */
     return sim_clock_coschedule(tty_unit, 0);
 }
 
-/* Bit 19 of GRVP, should be <tty_rate> Hz */
-t_stat vt_clk(UNIT * this)
+t_stat vt_clk(UNIT *this)
 {
     CORE *cpu = &cpu_core[0];
     int num;
-#if 0
-    //TODO
-    cpu->GRVP |= cpu->GRM & GRVP_SERIAL;
-#endif
+
     /* Polling receiving from sockets */
     tmxr_poll_rx(&tty_desc);
-
-    vt_receive(cpu);
-    mpd_console_input(cpu);
+    mpd_poll_input(cpu);
 
     /* Are there any new network connections? */
     num = tmxr_poll_conn(&tty_desc);
-    if (num > 0 && num <= LINES_MAX) {
+    if (num > 0 && num <= TTY_UNIT_MAX && unit_to_line(num) > 0) {
         char buf[80];
         TMLN *t = &tty_line[num];
-        svs_debug("--- tty%d: a new connection from %s",
-                     num, t->ipad);
+        int line = unit_to_line(num);
+
+        svs_debug("--- tty%d (T%03o): a new connection from %s",
+                  num, line, t->ipad);
         reset_line(num);
         t->rcve = 1;
         tty_unit[num].flags &= ~TTY_STATE_MASK;
-        tty_unit[num].flags |= TTY_VT340_STATE;
-        if (num <= TTY_MAX)
-            vt_mask |= 1 << (TTY_MAX - num);
+        tty_unit[num].flags |= TTY_ONLINE_STATE;
 
         switch (tty_unit[num].flags & TTY_CHARSET_MASK) {
         case TTY_KOI7_JCUKEN_CHARSET:
@@ -221,17 +209,15 @@ t_stat vt_clk(UNIT * this)
         }
         if (sim_int_char < 040 || sim_int_char == 0177) {
             sprintf(buf, "WRU – Break to sim> prompt character - is ^%c\r\n",
-                     sim_int_char ^ 0100);
+                    sim_int_char ^ 0100);
         } else {
             sprintf(buf, "WRU – Break to sim> prompt character - is %c\r\n",
-                     sim_int_char);
+                    sim_int_char);
         }
         tmxr_linemsg(t, buf);
         tty_idle_count[num] = 0;
         tty_last_time[num] = time(0);
-        sprintf(buf, "%.24s from %s\r\n",
-                 ctime(&tty_last_time[num]),
-                 t->ipad);
+        sprintf(buf, "%.24s from %s\r\n", ctime(&tty_last_time[num]), t->ipad);
         tmxr_linemsg(t, buf);
 
         /* Entering ^C (ETX) to get a prompt. */
@@ -253,30 +239,17 @@ t_stat vt_clk(UNIT * this)
 
     /* Polling sockets for transmission. */
     tmxr_poll_tx(&tty_desc);
-    /* If the TTY system is not idle, schedule the next interrupt
-     * by instruction count using the target interrupt rate of 300 Hz;
-     * otherwise we can wait for a roughly equivalent wallclock time period,
-     * e.g. until the next 250 Hz wallclock interrupt, but making sure
-     * that the model time interval between GRVP_SERIAL interrupts
-     * is never less than expected.
-     */
-    if (vt_is_idle()) {
-        /* When idle, slow down the TTY interrupts to match the clock interrupts. */
-        return sim_clock_coschedule(this, 0);
-    } else if (tty_turbo) {
-        /* In "turbo" mode, the TTY works at the model speed */
-        return sim_activate(this, 1000000/tty_rate);
-    } else {
-        /* In "non-turbo" mode, the TTY interrupts imitate the true feel of the speed */
-        return sim_activate_after(this, 1000000/tty_rate);
-    }
+    return sim_clock_coschedule(this, 0);
 }
 
 t_stat tty_setmode(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
     int num = u - tty_unit;
-    TMLN *t = &tty_line[num];
-    uint32 mask = 1 << (TTY_MAX - num);
+    TMLN *t;
+
+    if (unit_to_line(num) < 1)
+        return SCPE_NXUN;
+    t = &tty_line[num];
 
     switch (val & TTY_STATE_MASK) {
     case TTY_OFFLINE_STATE:
@@ -286,35 +259,9 @@ t_stat tty_setmode(UNIT *u, int32 val, CONST char *cptr, void *desc)
                 t->rcve = 0;
             } else
                 t->conn = 0;
-            if (num <= TTY_MAX) {
-                tty_sym[num] =
-                    tty_active[num] =
-                    tty_typed[num] =
-                    tty_instate[num] = 0;
-                vt_mask &= ~mask;
-                tt_mask &= ~mask;
-            }
         }
         break;
-    case TTY_TELETYPE_STATE:
-        if (num > TTY_MAX)
-            return SCPE_NXPAR;
-        t->conn = 1;
-        t->rcve = 0;
-        tt_mask |= mask;
-        vt_mask &= ~mask;
-        break;
-    case TTY_VT340_STATE:
-        t->conn = 1;
-        t->rcve = 0;
-        if (num <= TTY_MAX) {
-            vt_mask |= mask;
-            tt_mask &= ~mask;
-        }
-        break;
-    case TTY_CONSUL_STATE:
-        if (num <= TTY_MAX)
-            return SCPE_NXPAR;
+    case TTY_ONLINE_STATE:
         t->conn = 1;
         t->rcve = 0;
         break;
@@ -326,12 +273,16 @@ t_stat tty_setmode(UNIT *u, int32 val, CONST char *cptr, void *desc)
  * Allowing telnet connections is done with
  *      attach tty <port>
  * Where <port> is the port number for telnet, e.g. 4199.
+ *
+ * attach ttyN console — same as set ttyN console
+ * attach ttyN none    — mark line unusable
  */
 t_stat tty_attach(UNIT *u, CONST char *cptr)
 {
     int num = u - tty_unit;
     char gbuf[CBUFSIZE];
-    int r, m, n;
+    int r, n;
+    int saved_conn[TTY_UNIT_MAX+1];
 
     /* All arguments but the magic words "console" and "none" are passed
      * to tmxr_attach().
@@ -339,41 +290,27 @@ t_stat tty_attach(UNIT *u, CONST char *cptr)
     get_glyph(cptr, gbuf, 0);
     /* Disallowing future connections to a line */
     if (strcmp(gbuf, "NONE") == 0) {
+        if (unit_to_line(num) < 1)
+            return SCPE_NXUN;
         /* Marking the TTY as unusable. */
         tty_line[num].conn = 1;
         tty_line[num].rcve = 0;
-        if (num <= TTY_MAX) {
-            vt_mask &= ~(1 << (TTY_MAX - num));
-            tt_mask &= ~(1 << (TTY_MAX - num));
-        }
-        svs_debug("--- turning off T%03o", num);
+        svs_debug("--- turning off T%03o", unit_to_line(num));
         return SCPE_OK;
     }
-    if (strcmp(gbuf, "CONSOLE")) {
-        /* Saving and restoring all .conn,
-         * because tmxr_attach() zeroes them. */
-        for (m=0, n=1; n<=LINES_MAX; ++n)
-            if (tty_line[n].conn)
-                m |= 1 << (LINES_MAX-n);
-        /* The unit number is ignored for the port assignment */
-        r = tmxr_attach(&tty_desc, &tty_unit[0], cptr);
-        for (n=1; n<=LINES_MAX; ++n)
-            if (m >> (LINES_MAX-n) & 1)
-                tty_line[n].conn = 1;
-        return r;
-    } else {
-        /* Attaching SIMH console to a particular terminal. */
-        u->flags &= ~TTY_STATE_MASK;
-        u->flags |= TTY_VT340_STATE;
-        tty_line[num].conn = 1;
-        tty_line[num].rcve = 0;
-        if (num <= TTY_MAX)
-            vt_mask |= 1 << (TTY_MAX - num);
-        svs_debug("--- console on T%03o", num);
-        attached_console = 1;
-        return SCPE_OK;
-    }
-    return SCPE_ALATT;
+    if (strcmp(gbuf, "CONSOLE") == 0)
+        return tty_setconsole(u, 0, NULL, NULL);
+
+    /* Saving and restoring all .conn,
+     * because tmxr_attach() zeroes them. */
+    for (n = 1; n <= TTY_UNIT_MAX; ++n)
+        saved_conn[n] = tty_line[n].conn;
+    /* The unit number is ignored for the port assignment */
+    r = tmxr_attach(&tty_desc, &tty_unit[0], cptr);
+    for (n = 1; n <= TTY_UNIT_MAX; ++n)
+        if (saved_conn[n])
+            tty_line[n].conn = 1;
+    return r;
 }
 
 t_stat tty_detach(UNIT *u)
@@ -381,40 +318,28 @@ t_stat tty_detach(UNIT *u)
     return tmxr_detach(&tty_desc, &tty_unit[0]);
 }
 
-t_stat tty_showrate(FILE *f, UNIT *up, int32 v, CONST void *dp) {
-    fprintf(f, "%d Baud", tty_rate);
+t_stat tty_showconsole(FILE *f, UNIT *up, int32 v, CONST void *dp)
+{
+    if (unit_to_line(up - tty_unit) == mpd_console_line)
+        fprintf(f, "SIMH console");
     return SCPE_OK;
 }
 
-t_stat tty_showturbo(FILE *f, UNIT *up, int32 v, CONST void *dp) {
-    fprintf(f, tty_turbo ? "Turbo" : "Authentic feel");
-    return SCPE_OK;
-}
+t_stat tty_setconsole(UNIT *up, int32 v, CONST char *cp, void *dp)
+{
+    int num = up - tty_unit;
+    int line = unit_to_line(num);
 
-t_stat tty_setrate(UNIT *up, int32 v, CONST char *cp, void *dp) {
-    int rate;
-    if (cp)
-        rate = atoi(cp);
-    else
-        return SCPE_MISVAL;
-    if (rate <= 0 || rate > 19200 || rate % 300 != 0)
+    if (line < 1)
         return SCPE_ARG;
-    rate /= 300;
-    if ((rate-1) & rate)
-        return SCPE_ARG;
-    tty_rate = rate * 300;
-    return SCPE_OK;
-}
-
-t_stat tty_setturbo(UNIT *up, int32 v, CONST char *cp, void *dp) {
-    if (!cp)
-        return SCPE_MISVAL;
-    if (!MATCH_CMD("ON", cp))
-        tty_turbo = 1;
-    else if (!MATCH_CMD("OFF", cp))
-        tty_turbo = 0;
-    else
-        return SCPE_ARG;
+    /* Attaching SIMH console to a particular terminal. */
+    mpd_console_line = line;
+    attached_console = 1;
+    up->flags &= ~TTY_STATE_MASK;
+    up->flags |= TTY_ONLINE_STATE;
+    tty_line[num].conn = 1;
+    tty_line[num].rcve = 0;
+    svs_debug("--- console on T%03o", line);
     return SCPE_OK;
 }
 
@@ -425,14 +350,11 @@ t_stat tty_setturbo(UNIT *up, int32 v, CONST char *cp, void *dp) {
  * set ttyN qwerty      - selecting KOI-7 encoding, QWERTY layout
  * set ttyN raw         - selecting transmission of raw chars
  * set ttyN off         - disconnecting a line
- * set ttyN tt          - a Baudot TTY
- * set ttyN vt          - a Videoton-340 terminal
- * set ttyN consul      - a "Consul-254" typewriter
+ * set ttyN online      - mark line online
+ * set ttyN console     - SIMH console ↔ MPD line N (octal digits, 1..77)
  * set ttyN destrbs     - destructive (erasing) backspace
  * set ttyN authbs      - authentic backspace (cursor left)
  * set tty disconnect=N - forceful termination of a telnet connection
- * set tty rate=N       - I/O rate in Hz
- * set tty turbo={ON,OFF} - TTY interrupts use model time (on) or wallclock (0ff)
  * show tty             - showing modes and types
  * show tty connections - showing IP-addresses and connection times
  * show tty statistics  - showing TX/RX byte counts
@@ -448,22 +370,18 @@ MTAB tty_mod[] = {
       "RAW" },
     { TTY_STATE_MASK, TTY_OFFLINE_STATE, "offline",
       "OFF", &tty_setmode },
-    { TTY_STATE_MASK, TTY_TELETYPE_STATE, "Teletype",
-      "TT", &tty_setmode },
-    { TTY_STATE_MASK, TTY_VT340_STATE, "Videoton-340",
-      "VT", &tty_setmode },
-    { TTY_STATE_MASK, TTY_CONSUL_STATE, "Consul-254",
-      "CONSUL", &tty_setmode },
+    { TTY_STATE_MASK, TTY_ONLINE_STATE, "online",
+      "ONLINE", &tty_setmode },
+    { MTAB_XTD | MTAB_VUN, 0, "SIMH console", "CONSOLE",
+      &tty_setconsole, &tty_showconsole, NULL,
+      "use this MPD line for the SIMH console" },
     { TTY_BSPACE_MASK, TTY_DESTRUCTIVE_BSPACE, "destructive backspace",
       "DESTRBS" },
     { TTY_BSPACE_MASK, TTY_AUTHENTIC_BSPACE, NULL,
       "AUTHBS" },
     { MTAB_XTD | MTAB_VDV | MTAB_VALR, 1, NULL,
-      "DISCONNECT", &tmxr_dscln, NULL, (void*) &tty_desc, "terminates telnet connection" },
-    { MTAB_XTD | MTAB_VDV | MTAB_VALR, 1, "RATE",
-      "RATE", &tty_setrate, &tty_showrate, NULL, "{300,600,1200,2400,4800,9600,19200}" },
-    { MTAB_XTD | MTAB_VDV | MTAB_VALR, 1, "TURBO",
-      "TURBO", &tty_setturbo, &tty_showturbo, NULL, "{ON, OFF}"},
+      "DISCONNECT", &tmxr_dscln, NULL, (void*) &tty_desc,
+      "terminates telnet connection" },
     { UNIT_ATT, UNIT_ATT, "connections",
       NULL, NULL, &tmxr_show_summ, (void*) &tty_desc },
     { MTAB_XTD | MTAB_VDV | MTAB_NMO, 1, "CONNECTIONS",
@@ -478,30 +396,28 @@ MTAB tty_mod[] = {
 };
 
 DEVICE tty_dev = {
-    "MPD", tty_unit, tty_reg, tty_mod,
-    27, 2, 1, 1, 2, 1,
+    "TTY", tty_unit, tty_reg, tty_mod,
+    TTY_UNIT_MAX + 1, 8, 6, 1, 8, 50,
     NULL, NULL, &tty_reset, NULL, &tty_attach, &tty_detach,
     NULL, DEV_NET|DEV_DEBUG
 };
 
 /*
  * Sending a character to a terminal with the given number.
+ * num is the SIMH unit index; MPD line = unit_to_line(num).
  */
 void vt_putc(int num, int c)
 {
     TMLN *t = &tty_line[num];
-    if (num == MPD_CONSOLE_LINE) {
+    int line = unit_to_line(num);
+
+    if (line == mpd_console_line)
         sim_putchar(c);
-        return;
-    }
-    if (! t->conn)
+    if (!t->conn)
         return;
     if (t->rcve) {
         /* A telnet connection. */
         tmxr_putc_ln(t, c);
-    } else {
-        /* Console output. */
-        sim_putchar(c);
     }
 }
 
@@ -511,25 +427,27 @@ void vt_putc(int num, int c)
 void vt_puts(int num, const char *s)
 {
     TMLN *t = &tty_line[num];
-    if (num == MPD_CONSOLE_LINE) {
+    int line = unit_to_line(num);
+    const char *p;
+
+    if (line == mpd_console_line) {
         /* Console output. */
-        while (*s)
-            sim_putchar(*s++);
-        return;
+        for (p = s; *p; ++p)
+            sim_putchar(*p);
     }
-    if (! t->conn)
+    if (!t->conn)
         return;
     if (t->rcve) {
         /* A telnet connection. */
         tmxr_linemsg(t, s);
-    } else {
+    } else if (line != mpd_console_line) {
         /* Console output. */
-        while (*s)
-            sim_putchar(*s++);
+        for (p = s; *p; ++p)
+            sim_putchar(*p);
     }
 }
 
-const char * koi7_rus_to_unicode[32] = {
+const char *koi7_rus_to_unicode[32] = {
     "Ю", "А", "Б", "Ц", "Д", "Е", "Ф", "Г",
     "Х", "И", "Й", "К", "Л", "М", "Н", "О",
     "П", "Я", "Р", "С", "Т", "У", "Ж", "В",
@@ -604,8 +522,9 @@ void vt_send(int num, uint32 sym)
         }
         if (sym)
             vt_putc(num, sym);
-    } else
+    } else {
         vt_puts(num, koi7_rus_to_unicode[sym - 0x60]);
+    }
 }
 
 /*
@@ -653,6 +572,38 @@ static int unicode_to_koi7(unsigned val)
     return -1;
 }
 
+static t_stat cmd_set(int32 num, CONST char *cptr);
+static t_stat cmd_show(int32 num, CONST char *cptr);
+static t_stat cmd_exit(int32 num, CONST char *cptr);
+static t_stat cmd_help(int32 num, CONST char *cptr);
+
+static CTAB cmd_table[] = {
+    { "SET", &cmd_set, 0,
+      "set unicode              select UTF-8 encoding\r\n"
+      "set jcuken               select KOI7 encoding, 'jcuken' keymap\r\n"
+      "set qwerty               select KOI7 encoding, 'qwerty' keymap\r\n"
+      "set raw                  select no I/O conversions\r\n"
+      "set online               mark line online\r\n"
+      "set off                  disconnect the line\r\n"
+      "set destrbs              destructive backspace\r\n"
+      "set authbs               authentic backspace\r\n"
+    },
+    { "SHOW", &cmd_show, 0,
+      "sh{ow}                   show modes of the terminal\r\n"
+      "sh{ow} s{tatistics}      show network statistics\r\n"
+    },
+    { "EXIT", &cmd_exit, 0,
+      "exi{t} | q{uit} | by{e}  exit from simulation\r\n"
+    },
+    { "QUIT", &cmd_exit, 0, NULL },
+    { "BYE", &cmd_exit, 0, NULL },
+    { "HELP", &cmd_help, 0,
+      "h{elp}                   type this message\r\n"
+      "h{elp} <command>         type help for command\r\n"
+    },
+    { 0 }
+};
+
 /*
  * Set command
  */
@@ -662,9 +613,9 @@ static t_stat cmd_set(int32 num, CONST char *cptr)
     int len;
 
     cptr = (CONST char*) get_sim_sw(cptr);
-    if (! cptr)
+    if (!cptr)
         return SCPE_INVSW;
-    if (! *cptr)
+    if (!*cptr)
         return SCPE_NOPARAM;
     cptr = get_glyph(cptr, gbuf, 0);
     if (*cptr)
@@ -683,15 +634,13 @@ static t_stat cmd_set(int32 num, CONST char *cptr)
     } else if (strncmp("RAW", gbuf, len) == 0) {
         tty_unit[num].flags &= ~TTY_CHARSET_MASK;
         tty_unit[num].flags |= TTY_RAW_CHARSET;
-    } else if (strncmp("TT", gbuf, len) == 0) {
+    } else if (strncmp("ONLINE", gbuf, len) == 0) {
         tty_unit[num].flags &= ~TTY_STATE_MASK;
-        tty_unit[num].flags |= TTY_TELETYPE_STATE;
-    } else if (strncmp("VT", gbuf, len) == 0) {
+        tty_unit[num].flags |= TTY_ONLINE_STATE;
+    } else if (strncmp("OFF", gbuf, len) == 0) {
         tty_unit[num].flags &= ~TTY_STATE_MASK;
-        tty_unit[num].flags |= TTY_VT340_STATE;
-    } else if (strncmp("CONSUL", gbuf, len) == 0) {
-        tty_unit[num].flags &= ~TTY_STATE_MASK;
-        tty_unit[num].flags |= TTY_CONSUL_STATE;
+        tty_unit[num].flags |= TTY_OFFLINE_STATE;
+        return tty_setmode(&tty_unit[num], TTY_OFFLINE_STATE, 0, 0);
     } else if (strncmp("DESTRBS", gbuf, len) == 0) {
         tty_unit[num].flags &= ~TTY_BSPACE_MASK;
         tty_unit[num].flags |= TTY_DESTRUCTIVE_BSPACE;
@@ -715,13 +664,13 @@ static t_stat cmd_show(int32 num, CONST char *cptr)
     int len;
 
     cptr = (CONST char*) get_sim_sw(cptr);
-    if (! cptr)
+    if (!cptr)
         return SCPE_INVSW;
-    if (! *cptr) {
+    if (!*cptr) {
         sprintf(gbuf, "TTY%d", num);
         tmxr_linemsg(t, gbuf);
-        for (m=tty_mod; m->mask; m++) {
-            if (m->pstring &&
+        for (m = tty_mod; m->mask || m->pstring || m->mstring; m++) {
+            if (m->pstring && m->mask &&
                 (tty_unit[num].flags & m->mask) == m->match) {
                 tmxr_linemsg(t, ", ");
                 tmxr_linemsg(t, m->pstring);
@@ -735,13 +684,12 @@ static t_stat cmd_show(int32 num, CONST char *cptr)
     cptr = get_glyph(cptr, gbuf, 0);
     if (*cptr)
         return SCPE_2MARG;
-
     len = strlen(gbuf);
     if (strncmp("STATISTICS", gbuf, len) == 0) {
         sprintf(gbuf, "line %d: input queued/total = %d/%d, "
-                 "output queued/total = %d/%d\r\n", num,
-                 t->rxbpi - t->rxbpr, t->rxcnt,
-                 t->txbpi - t->txbpr, t->txcnt);
+                "output queued/total = %d/%d\r\n", num,
+                t->rxbpi - t->rxbpr, t->rxcnt,
+                t->txbpi - t->txbpr, t->txcnt);
         tmxr_linemsg(t, gbuf);
     } else {
         return SCPE_NXPAR;
@@ -757,38 +705,6 @@ static t_stat cmd_exit(int32 num, CONST char *cptr)
     return SCPE_EXIT;
 }
 
-static t_stat cmd_help(int32 num, CONST char *cptr);
-
-static CTAB cmd_table[] = {
-    { "SET", &cmd_set, 0,
-      "set unicode              select UTF-8 encoding\r\n"
-      "set jcuken               select KOI7 encoding, 'jcuken' keymap\r\n"
-      "set qwerty               select KOI7 encoding, 'qwerty' keymap\r\n"
-      "set raw                  select no I/O conversions\r\n"
-      "set tt                   use Teletype mode\r\n"
-      "set vt                   use Videoton-340 mode\r\n"
-      "set consul               use Consul-254 mode\r\n"
-      "set destrbs              destructive backspace\r\n"
-      "set authbs               authentic backspace\r\n"
-    },
-    { "SHOW", &cmd_show, 0,
-      "sh{ow}                   show modes of the terminal\r\n"
-      "sh{ow} s{tatistics}      show network statistics\r\n"
-    },
-    { "EXIT", &cmd_exit, 0,
-      "exi{t} | q{uit} | by{e}  exit from simulation\r\n"
-    },
-    { "QUIT", &cmd_exit, 0, NULL
-    },
-    { "BYE", &cmd_exit, 0, NULL
-    },
-    { "HELP", &cmd_help, 0,
-      "h{elp}                   type this message\r\n"
-      "h{elp} <command>         type help for command\r\n"
-    },
-    { 0 }
-};
-
 /*
  * Find command routine
  */
@@ -798,7 +714,7 @@ static CTAB *lookup_cmd(char *command)
     int len;
 
     len = strlen(command);
-    for (c=cmd_table; c->name; c++) {
+    for (c = cmd_table; c->name; c++) {
         if (strncmp(command, c->name, len) == 0)
             return c;
     }
@@ -815,12 +731,12 @@ static t_stat cmd_help(int32 num, CONST char *cptr)
     CTAB *c;
 
     cptr = (CONST char*) get_sim_sw(cptr);
-    if (! cptr)
+    if (!cptr)
         return SCPE_INVSW;
-    if (! *cptr) {
+    if (!*cptr) {
         /* Listing all commands. */
         tmxr_linemsg(t, "Commands may be abbreviated.  Commands are:\r\n\r\n");
-        for (c=cmd_table; c && c->name; c++)
+        for (c = cmd_table; c && c->name; c++)
             if (c->help)
                 tmxr_linemsg(t, c->help);
         return SCPE_OK;
@@ -829,7 +745,7 @@ static t_stat cmd_help(int32 num, CONST char *cptr)
     if (*cptr)
         return SCPE_2MARG;
     c = lookup_cmd(gbuf);
-    if (! c)
+    if (!c)
         return SCPE_ARG;
     /* Describing a command. */
     tmxr_linemsg(t, c->help);
@@ -850,7 +766,7 @@ void vt_cmd_exec(int num)
 
     cptr = get_glyph(vt_cbuf[num], gbuf, 0);        /* get command glyph */
     cmdp = lookup_cmd(gbuf);                        /* lookup command */
-    if (! cmdp) {
+    if (!cmdp) {
         tmxr_linemsg(t, scp_errors[SCPE_UNK - SCPE_BASE]);
         tmxr_linemsg(t, "\r\n");
         return;
@@ -899,16 +815,16 @@ void vt_cmd_loop(int num, int c)
         tmxr_linemsg(t, "\b \b");
         while (*cptr > cbuf) {
             --*cptr;
-            if (! (**cptr & 0x80))
+            if (!(**cptr & 0x80))
                 break;
         }
         break;
     case 'U' & 037:
         /* Erase line. */
 erase_line:
-        while(*cptr > cbuf) {
+        while (*cptr > cbuf) {
             --*cptr;
-            if (! (**cptr & 0x80))
+            if (!(**cptr & 0x80))
                 tmxr_linemsg(t, "\b \b");
         }
         break;
@@ -947,59 +863,37 @@ int vt_getc(int num)
     extern int32 sim_int_char;
     int c;
 
-    if (! t->conn) {
+    if (!t->conn) {
         /* Пользователь отключился. */
         if (t->ipad) {
-            svs_debug("--- tty%d: disconnecting %s",
-                num, t->ipad);
+            svs_debug("--- tty%d: disconnecting %s", num, t->ipad);
             t->ipad = NULL;
         }
         tty_setmode(tty_unit+num, TTY_OFFLINE_STATE, 0, 0);
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         return -1;
     }
-    if (t->rcve) {
-        /* A telnet line. */
-        c = tmxr_getc_ln(t);
-        if (! (c & TMXR_VALID)) {
-#ifdef REMOTE_TIMEOUT
-            time_t now = time(0);
-            if (now > tty_last_time[num] + 5*60) {
-                ++tty_idle_count[num];
-                if (tty_idle_count[num] > 3) {
-                    tmxr_linemsg(t, "\r\nSIMH: END OF SESSION\r\n");
-                    tmxr_reset_ln(t);
-                    return -1;
-                }
-                tmxr_linemsg(t, "\r\nSIMH: WAKE UP!\r\n");
-                tty_last_time[num] = now;
-            }
-#endif
-            return -1;
-        }
-        tty_idle_count[num] = 0;
-        tty_last_time[num] = time(0);
+    if (!t->rcve)
+        return -1;
 
-        if (tty_unit[num].flags & TTY_CMDLINE_MASK) {
-            /* Continuing CLI mode. */
-            vt_cmd_loop(num, c & 0377);
-            return -1;
-        }
-        if ((c & 0377) == sim_int_char) {
-            /* Entering CLI mode. */
-            tty_unit[num].flags |= TTY_CMDLINE_MASK;
-            tmxr_linemsg(t, "sim>");
-            vt_cptr[num] = vt_cbuf[num];
-            return -1;
-        }
-    } else {
-        /* Console (keyboard) input. */
-        c = sim_poll_kbd();
-        if (c == SCPE_STOP) {
-            stop_cpu = 1;   /* just in case */
-        }
-        if (! (c & SCPE_KFLAG))
-            return -1;
+    /* A telnet line. */
+    c = tmxr_getc_ln(t);
+    if (!(c & TMXR_VALID))
+        return -1;
+    tty_idle_count[num] = 0;
+    tty_last_time[num] = time(0);
+
+    if (tty_unit[num].flags & TTY_CMDLINE_MASK) {
+        /* Continuing CLI mode. */
+        vt_cmd_loop(num, c & 0377);
+        return -1;
+    }
+    if ((c & 0377) == sim_int_char) {
+        /* Entering CLI mode. */
+        tty_unit[num].flags |= TTY_CMDLINE_MASK;
+        tmxr_linemsg(t, "sim>");
+        vt_cptr[num] = vt_cbuf[num];
+        return -1;
     }
     return c & 0377;
 }
@@ -1017,14 +911,14 @@ again:
     if (r < 0 || r > 0377)
         return r;
     c1 = r & 0377;
-    if (! (c1 & 0x80))
+    if (!(c1 & 0x80))
         return unicode_to_koi7(c1);
 
     r = vt_getc(num);
     if (r < 0 || r > 0377)
         return r;
     c2 = r & 0377;
-    if (! (c1 & 0x20))
+    if (!(c1 & 0x20))
         return unicode_to_koi7((c1 & 0x1f) << 6 | (c2 & 0x3f));
 
     r = vt_getc(num);
@@ -1035,14 +929,13 @@ again:
         /* Skip zero width no-break space. */
         goto again;
     }
-    return unicode_to_koi7((c1 & 0x0f) << 12 | (c2 & 0x3f) << 6 |
-                           (c3 & 0x3f));
+    return unicode_to_koi7((c1 & 0x0f) << 12 | (c2 & 0x3f) << 6 | (c3 & 0x3f));
 }
 
 /*
- * Alternatively, entering Cyrillics can be done without switching keyboard layouts.
- * Period and comma are entered with shift, less-than and greater-than are mapped to tilde-grave.
- * Semicolon is }, quote is |.
+ * Alternatively, entering Cyrillics can be done without switching keyboard
+ * layouts. Period and comma are entered with shift, less-than and greater-than
+ * are mapped to tilde-grave. Semicolon is }, quote is |.
  */
 static int vt_kbd_input_koi7(int num)
 {
@@ -1125,7 +1018,6 @@ int odd_parity(unsigned char c)
  */
 static int receive_state = 0;
 static uint32 receive_syllable = 0;
-static int mpd_answered = 0;        /* ответ на служебный слог уже отдан */
 
 /*
  * Режим линии: 1 — выдача, 0 — приём. Задают служебные слоги «линию на
@@ -1136,34 +1028,82 @@ static int mpd_answered = 0;        /* ответ на служебный сло
 static uint8 mpd_line_send[0200];
 
 /*
- * Символ с консоли SIMH подаётся в МПД слогом с линии MPD_CONSOLE_LINE.
+ * Поставить символ в очередь приёма МПД слогом с указанной линии.
  *
  * Разр.8 байта — дополнение до ЧЁТНОСТИ: `odd_parity()` даёт 1, когда в
  * разр.7-1 нечётное число единиц, и этот разряд достраивает байт до чётного.
- *
- * Пока предыдущий слог не забран (`receive_state != 0`), клавиатура не
- * опрашивается: символ останется в очереди SIMH до следующего раза.
  */
-static void mpd_console_input(CORE *cpu)
+static void mpd_queue_char(CORE *cpu, int line, int c)
 {
-    int c;
+    c &= 0177;
+    receive_syllable = (line << 8) | c | (odd_parity(c) << 7);
+    receive_state = 2;
+    if (svs_trace >= TRACE_DEVICES)
+        fprintf(sim_log, "cpu%d --- МПД приём слога 0x%04x\n",
+                cpu->index, receive_syllable);
+    tty_strobe(cpu);
+}
+
+/*
+ * Ввод с консоли SIMH и с telnet-линий — слогами МПД.
+ *
+ * Символ с консоли подаётся слогом с линии `mpd_console_line`; символы с
+ * telnet — слогом с номером линии этой сессии (`unit_to_line`).
+ *
+ * Пока предыдущий слог не забран (`receive_state != 0`), источники не
+ * опрашиваются: символ останется в очереди SIMH/tmxr до следующего раза.
+ */
+static void mpd_poll_input(CORE *cpu)
+{
+    int c, unum, line;
 
     if (receive_state != 0)
         return;
 
+    /* Console (keyboard) input. */
     c = sim_poll_kbd();
     if (c == SCPE_STOP)
-        stop_cpu = 1;
-    if (! (c & SCPE_KFLAG))
+        stop_cpu = 1;   /* just in case */
+    if (c & SCPE_KFLAG) {
+        mpd_queue_char(cpu, mpd_console_line, c);
         return;
+    }
 
-    c &= 0177;
-    receive_syllable = (MPD_CONSOLE_LINE << 8) | c | (odd_parity(c) << 7);
-    receive_state = 2;
-    if (svs_trace >= TRACE_DEVICES)
-        fprintf(sim_log, "cpu%d --- МПД приём слога 0x%04x с консоли\n",
-            cpu->index, receive_syllable);
-    tty_strobe(cpu);
+    for (unum = 1; unum <= TTY_UNIT_MAX; ++unum) {
+        line = unit_to_line(unum);
+        if (line < 1)
+            continue;
+        if (!tty_line[unum].conn || !tty_line[unum].rcve)
+            continue;
+
+        switch (tty_unit[unum].flags & TTY_CHARSET_MASK) {
+        case TTY_KOI7_JCUKEN_CHARSET:
+            c = vt_kbd_input_koi7(unum);
+            break;
+        case TTY_RAW_CHARSET:
+        case TTY_KOI7_QWERTY_CHARSET:
+            c = vt_getc(unum);
+            break;
+        case TTY_UNICODE_CHARSET:
+            c = vt_kbd_input_unicode(unum);
+            break;
+        default:
+            c = '?';
+            break;
+        }
+        if (c < 0)
+            continue;
+        if (c > 0177)
+            continue;
+        if ((tty_unit[unum].flags & TTY_CHARSET_MASK) != TTY_RAW_CHARSET) {
+            if (c == '\r' || c == '\n')
+                c = 3;              /* ETX is used as Enter */
+            if (c == '\177')
+                c = '\b';           /* ASCII DEL -> BS */
+        }
+        mpd_queue_char(cpu, line, c);
+        return;
+    }
 }
 
 void tty_strobe(CORE *cpu)
@@ -1184,100 +1124,12 @@ void tty_strobe(CORE *cpu)
 }
 
 /*
- * Handling input from all connected terminals.
- */
-void vt_receive(CORE *cpu)
-{
-    uint32 workset = vt_mask;
-    int num;
-
-    TTY_IN = 0;
-    for (num = svs_highest_bit(workset) - TTY_MAX;
-         workset; num = svs_highest_bit(workset) - TTY_MAX) {
-        uint32 mask = 1 << (TTY_MAX - num);
-        switch (tty_instate[num]) {
-        case 0:
-            switch (tty_unit[num].flags & TTY_CHARSET_MASK) {
-            case TTY_KOI7_JCUKEN_CHARSET:
-                tty_typed[num] = vt_kbd_input_koi7(num);
-                break;
-            case TTY_RAW_CHARSET:
-            case TTY_KOI7_QWERTY_CHARSET:
-                tty_typed[num] = vt_getc(num);
-                break;
-            case TTY_UNICODE_CHARSET:
-                tty_typed[num] = vt_kbd_input_unicode(num);
-                break;
-            default:
-                tty_typed[num] = '?';
-                break;
-            }
-            if (tty_typed[num] < 0) {
-                break;
-            }
-            if (tty_typed[num] <= 0177) {
-                if ((tty_unit[num].flags & TTY_CHARSET_MASK) != TTY_RAW_CHARSET) {
-                    if (tty_typed[num] == '\r' || tty_typed[num] == '\n')
-                        tty_typed[num] = 3;     /* ETX is used as Enter */
-                    if (tty_typed[num] == '\177')
-                        tty_typed[num] = '\b';  /* ASCII DEL -> BS */
-                }
-                tty_instate[num] = 1;
-                TTY_IN |= mask;         /* start bit */
-#if 0
-                //TODO
-                cpu->GRVP |= GRVP_TTY_START;   /* not used ? */
-                /* auto-enabling the interrupt just in case
-                 * (seems to be unneeded as the interrupt is never disabled)
-                 */
-                cpu->GRM |= GRVP_SERIAL;
-#endif
-                vt_receiving |= mask;
-            }
-            break;
-        case 1: case 2: case 3: case 4: case 5: case 6: case 7:
-            /* need inverted byte */
-            TTY_IN |= (tty_typed[num] & (1 << (tty_instate[num]-1))) ? 0 : mask;
-                tty_instate[num]++;
-                break;
-        case 8:
-            TTY_IN |= odd_parity(tty_typed[num]) ? 0 : mask;        /* even parity of inverted */
-            tty_instate[num]++;
-            break;
-        case 9: case 10: case 11:
-            /* stop bits are 0 */
-            tty_instate[num]++;
-            break;
-        case 12:
-            tty_instate[num] = 0;   /* ready for the next char */
-            vt_receiving &= ~mask;
-            break;
-        }
-        workset &= ~mask;
-    }
-#if 0
-    //TODO
-    switch (receive_state) {
-    case 1:
-        REQUEST = ((syllable >> 8) & 0xFLL) << 34;
-        RESPONSE = ((syllable >> 12) & 0xFLL) << 34;
-        REQUEST |= BIT(33)|BIT(34);
-        PRP |= PRP_REQUEST;
-        receive_state = 2;
-        break;
-    }
-#endif
-    if (vt_receiving)
-        vt_idle = 0;
-}
-
-/*
  * Checking if all terminals are idle.
  * SIMH should not enter idle mode until they are.
  */
-int vt_is_idle()
+int vt_is_idle(void)
 {
-    return (tt_mask ? vt_idle > 300 : vt_idle > 10);
+    return 1;
 }
 
 /*
@@ -1289,11 +1141,52 @@ void mpd_reset(CORE *cpu)
     cpu->mpd_data = 0;
     receive_state = 0;
     receive_syllable = 0;
-    mpd_answered = 0;
     memset(mpd_line_send, 0, sizeof(mpd_line_send));
 
     /* Готов к передаче. */
     cpu->POP |= CONF_MT;
+}
+
+/*
+ * Слог данных: разр.7-1 — символ КОИ-7, разр.8 дополняет байт до ЧЁТНОСТИ (§2).
+ *
+ * Показываем ВСЕ символы: непечатаемый — восьмеричным кодом в угловых
+ * скобках, а символ со сбитой чётностью помечаем апострофом слева.
+ * Перевод строки и возврат каретки печатаются как есть. Вывод идёт на
+ * консоль SIMH и/или на telnet-сессию этой линии.
+ */
+static void mpd_emit_char(int line, int sym, int bad_parity)
+{
+    int unum = line_to_unit(line);
+
+    if (bad_parity) {
+        if (line == mpd_console_line)
+            sim_putchar('`');
+        else if (unum > 0 && tty_line[unum].rcve)
+            tmxr_putc_ln(&tty_line[unum], '`');
+    }
+
+    if ((sym < 040 && sym != 012 && sym != 015) || sym == 0177) {
+        char buf[8], *b;
+        sprintf(buf, "<%03o>", sym);
+        if (line == mpd_console_line) {
+            for (b = buf; *b; ++b)
+                sim_putchar(*b);
+        }
+        if (unum > 0 && tty_line[unum].rcve)
+            tmxr_linemsg(&tty_line[unum], buf);
+        return;
+    }
+
+    if (unum > 0)
+        vt_send(unum, sym);
+    else if (line == mpd_console_line) {
+        /* console line without a matching unit — raw */
+        if (sym == '\n')
+            sim_putchar('\r');
+        if (sym && sym != '\r' && sym != '\003')
+            sim_putchar(sym);
+    }
 }
 
 /*
@@ -1313,7 +1206,6 @@ void mpd_send_nibble(CORE *cpu, int data)
 
     if (cpu->mpd_nbits >= 16) {
         /* Имеем полный слог, 16 бит. */
-#if 1
         /* Выдаем символы на stdout. */
         if (cpu->mpd_data & 0x8000) {
             /*
@@ -1322,17 +1214,16 @@ void mpd_send_nibble(CORE *cpu, int data)
              * §3В; печатаем их по имени, иначе три разные команды выглядят
              * на консоли одинаково.
              */
-            {
-                int line = (cpu->mpd_data >> 8) & 0177;
-                int cmd  = cpu->mpd_data & 0377;
-                const char *name =
-                    (cmd & 0200) ? "ЗСЛ"    :   /* разр.8 — запрос состояния */
-                    (cmd & 0100) ? "ОПРОС"  :   /* разр.7 — опрос линии */
-                    (cmd & 010)  ? "ВЫДАЧА" :   /* разр.4 — линию на выдачу */
-                                   "ПРИЕМ";     /* иначе — линию на приём */
+            int line = (cpu->mpd_data >> 8) & 0177;
+            int cmd  = cpu->mpd_data & 0377;
+            const char *name =
+                (cmd & 0200) ? "ЗСЛ"    :   /* разр.8 — запрос состояния */
+                (cmd & 0100) ? "ОПРОС"  :   /* разр.7 — опрос линии */
+                (cmd & 010)  ? "ВЫДАЧА" :   /* разр.4 — линию на выдачу */
+                               "ПРИЕМ";     /* иначе — линию на приём */
 
-                printf("<Т%o %s ЭВМ%d>", line, name, cmd & 7);
-            }
+            printf("<Т%o %s ЭВМ%d>", line, name, cmd & 7);
+
             /*
              * Ответ на служебный слог — тоже СЛУЖЕБНЫЙ слог.
              *
@@ -1366,52 +1257,28 @@ void mpd_send_nibble(CORE *cpu, int data)
              *   ОПРОС — АС76А сверяет только разр.3-1 с НОМАС; разр.4 он
              *           смотрит лишь на ветви несовпадения.
              */
-            {
-                int line = (cpu->mpd_data >> 8) & 0177;
-                int cmd  = cpu->mpd_data & 0377;
-
-                if (! (cmd & 0300)) {
-                    /* Задание режима: разр.4 — на выдачу, иначе на приём. */
-                    mpd_line_send[line] = (cmd & 010) != 0;
-                } else if (receive_state == 0) {
-                    mpd_answered = 1;
-                    receive_syllable = (cpu->mpd_data & 0177400) |
-                                       (mpd_line_send[line] ? 010 : 0) |
-                                       (cpu->mpd_data & 07);
-                    receive_state = 2;
-                    tty_strobe(cpu);
-                }
+            if (!(cmd & 0300)) {
+                /* Задание режима: разр.4 — на выдачу, иначе на приём. */
+                mpd_line_send[line] = (cmd & 010) != 0;
+            } else if (receive_state == 0) {
+                receive_syllable = (cpu->mpd_data & 0177400) |
+                                   (mpd_line_send[line] ? 010 : 0) |
+                                   (cpu->mpd_data & 07);
+                receive_state = 2;
+                tty_strobe(cpu);
             }
-        } else if (((cpu->mpd_data >> 8) & 0177) == MPD_CONSOLE_LINE) {
-            /*
-             * Слог данных на консольную линию: разр.7-1 — символ КОИ-7,
-             * разр.8 дополняет байт до ЧЁТНОСТИ (§2).
-             *
-             * Показываем ВСЕ символы: непечатаемый — восьмеричным кодом в
-             * угловых скобках, а символ со сбитой чётностью помечаем
-             * апострофом слева. Перевод строки и возврат каретки печатаются
-             * как есть.
-             */
+        } else {
+            int line = (cpu->mpd_data >> 8) & 0177;
             int sym = cpu->mpd_data & 0177;
+            int bad = odd_parity(cpu->mpd_data & 0377);
 
-            if (odd_parity(cpu->mpd_data & 0377))
-                sim_putchar('`');
-
-            if ((sym < 040 && sym != 012 && sym != 015) || sym == 0177) {
-                char buf[8], *b;
-
-                sprintf(buf, "<%03o>", sym);
-                for (b = buf; *b; ++b)
-                    sim_putchar(*b);
-            } else
-                vt_send (MPD_CONSOLE_LINE, sym);
+            mpd_emit_char(line, sym, bad);
         }
         fflush(stdout);
-#endif
+
         if (svs_trace >= TRACE_INSTRUCTIONS)
             fprintf(sim_log, "cpu%d --- МПД передача слога 0x%04x\n",
-                cpu->index, cpu->mpd_data);
-        //TODO
+                    cpu->index, cpu->mpd_data);
         cpu->mpd_nbits = 0;
         cpu->mpd_data = 0;
 
@@ -1427,10 +1294,4 @@ void mpd_receive_update(CORE *cpu)
 {
     /* СТРОБ ПРИЕМА от процессора. */
     tty_strobe(cpu);
-#if 0
-    /* Приняли очередной байт. */
-    cpu->POP |= CONF_MR;
-    cpu->POP = CONF_SET_DATA(cpu->POP, 0xe);
-    cpu->OPOP = CONF_SET_DATA(cpu->OPOP, 0xd);
-#endif
 }
