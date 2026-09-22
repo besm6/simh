@@ -56,6 +56,7 @@ t_stat cpu_reset(DEVICE *dev);
 t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp);
+t_stat cpu_set_debug(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_window(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_clr_window(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_window(FILE *st, UNIT *up, int32 v, CONST void *dp);
@@ -173,6 +174,9 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV,
         0, NULL,    "REQ",      &cpu_req,           NULL,               NULL,
                                 "Sends a request interrupt" },
+    { MTAB_XTD|MTAB_VDV|MTAB_VALO,
+        0, NULL,    "DEBUG",    &cpu_set_debug,     NULL,               NULL,
+                                "Enables tracing: every flag except FETCH, or a given list" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR,
         0, "WINDOW", "WINDOW",  &cpu_set_window,    &cpu_show_window,   NULL,
                                 "Limits instruction tracing to a PC range" },
@@ -452,6 +456,28 @@ t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
     }
     cpu->GRVP |= GRVP_PANEL_REQ;
     return SCPE_OK;
+}
+
+/*
+ * `set cpu0 debug[=разряды]`.
+ *
+ * Перехватываем штатную команду SIMH ради одного: без списка разрядов она
+ * включает ВСЕ разряды таблицы, в том числе FETCH, а трасса выборки команд
+ * удваивает объём и забивает всё остальное. Поэтому `set cpu0 debug` включает
+ * всё, кроме FETCH; выборку надо просить явно: `set cpu0 debug=fetch`.
+ */
+t_stat cpu_set_debug(UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    DEVICE *dev = find_dev_from_unit(u);
+    t_stat r;
+
+    if (! dev)
+        return SCPE_IERR;
+
+    r = set_dev_debug(dev, u, 1, cptr);
+    if (r == SCPE_OK && ! cptr)
+        dev->dctrl &= ~DEB_FETCH;
+    return r;
 }
 
 /*
@@ -945,6 +971,11 @@ void cpu_one_instr(CORE *cpu)
      * are kept as a reference.
      */
     uint32 delay;
+
+    /* Адрес самой команды: к концу cpu_one_instr() СчАС уже сдвинут
+     * (инкремент ниже, а переход меняет его совсем), поэтому окно трассы
+     * для дампа регистров проверяем по сохранённому значению. */
+    uint32 trace_pc = cpu->PC;
 
     cpu->corr_stack = 0;
     word = mmu_fetch(cpu, cpu->PC, &paddr);
@@ -1644,7 +1675,7 @@ branch_zero:
     }
 
     /* Трассировка изменённых регистров. */
-    if (CPU_TRACE(cpu, DEB_REGS)) {
+    if (CPU_DEB(cpu, DEB_REGS) && TRACE_IN_WINDOW(trace_pc)) {
         svs_trace_registers(cpu);
     }
 

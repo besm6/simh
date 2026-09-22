@@ -55,15 +55,16 @@ same path twice with two buffers and shreds the output.
 | `INSN` | machine instructions, interrupts, and the РЕГ-instruction explanations |
 | `EXTRA` | extracodes only (э50…э77 except э75, plus э20 and э21) |
 | `REGS` | changed registers and operand memory reads/writes |
-| `FETCH` | instruction fetches |
+| `FETCH` | instruction fetches — **not** included by bare `set cpu0 debug` |
 | `DEV` | channel (ПВВ), disk and МПД exchanges |
 
 ```
-set cpu0 debug                  ; all five flags - the full trace
+set cpu0 debug                  ; everything except FETCH - the usual full trace
 set cpu0 debug=insn             ; instructions only
 set cpu0 debug=insn;regs        ; ...plus registers and memory
 set cpu0 debug=extra            ; only extracodes - a cheap call trace
 set cpu0 debug=dev              ; only channel/device traffic
+set cpu0 debug=fetch            ; add instruction fetches
 set cpu0 nodebug=fetch          ; drop one flag, keep the rest
 set cpu0 nodebug                ; tracing off
 show cpu0 debug                 ; => Debug=INSN;EXTRA;REGS;DEV
@@ -88,6 +89,10 @@ The window applies to everything that is *per-instruction* (`INSN`, `EXTRA`,
 `REGS` register dumps, `FETCH`). It does **not** apply to operand memory
 accesses or to `DEV` lines, which have no meaningful `PC` of their own.
 
+The register dump is matched against the address of the instruction that
+*caused* the change, not against the `PC` the instruction left behind — so a
+jump out of the window still reports what it changed.
+
 The window is global, not per-processor.
 
 ---
@@ -101,7 +106,6 @@ cpu0       Write M21 = 02017
 cpu0       Write M27 = 02007
 cpu0       Write RUU = 044
 cpu0       Write POP = 0000 0400 0000 0000
-cpu0       Fetch [00100 0000100] = 35:00 000 0200 01 050 0012
 cpu0 00100 0000100 L: 00 000 0200  зп 200
 cpu0       Memory Write [00200 0000200] = 35:0000 0000 0000 0000
 cpu0 00100 0000100 R: 01 050 0012  э50 12(1) = 12
@@ -163,8 +167,8 @@ cpu0       Memory Write [00200 0000200] = 35:0000 0000 0000 0000
 cpu0       Memory Read [32011 0032011] = 36:0000 0100 0000 0001
 ```
 
-Virtual address, physical address, tag, then the value. Addresses 1–7 in user
-mode are the console switch registers and print differently:
+Virtual address, physical address, tag, then the value. Physical addresses 1–7
+are the console switch registers and print differently:
 
 ```
 cpu0       Read  TR3 = 0000 0000 0000 0000
@@ -182,6 +186,11 @@ cpu0       Fetch [00100 0000100] = 35:00 000 0200 01 050 0012
 Printed once per instruction *word* (on the left half only). Tag `35` is a
 command word, `36` is a data word — a `36` here is about to raise
 «контроль команды».
+
+Fetch tracing is **off unless you ask for it by name** — one extra line per
+instruction word buries the rest of the trace, and BESM-6 omits fetches too.
+Bare `set cpu0 debug` therefore enables every flag *except* `FETCH`; use
+`set cpu0 debug=fetch` to add it.
 
 ### Exception or interrupt
 
@@ -270,6 +279,11 @@ its executive address — a compact call trace.
 
 ## 7. Pitfalls
 
+- **`debug=insn` does not print registers.** Unlike BESM-6, where `set cpu debug`
+  is a single all-or-nothing toggle, SVS splits the trace into flags. If you
+  want the BESM-6 trace, use bare `set cpu0 debug`, or name the flags:
+  `set cpu0 debug=insn;regs`. `INSN` alone is the cheap instructions-only mode
+  (the old `itrace`).
 - **`set cpu0 debug` without `set debug <file>` silently does nothing.** Every
   trace test is gated on `sim_deb`, so with no debug file open the flags are
   set and no output appears. `show cpu0 debug` will still report them.
@@ -279,8 +293,9 @@ its executive address — a compact call trace.
   `.ini` scripts `! rm -f` the file first; `set debug -n <file>` does the same.
 - **Flags are separated by `;`.** `debug=insn,dev` fails with
   `Non-existent parameter - DEV`.
-- **`set cpu0 debug` includes `FETCH`**, which roughly doubles the line count.
-  The BESM-6 tracer omits fetches; `set cpu0 nodebug=fetch` matches it.
+- **`set cpu0 debug` does not turn on `FETCH`.** It is the one flag excluded
+  from the no-argument form, because it roughly doubles the line count. Ask for
+  it explicitly with `set cpu0 debug=fetch`.
 - **Device lines follow cpu0 only.** `set cpu1 debug=dev` has no effect.
 - **Only cpu0 executes.** `sim_instr()` still runs `cpu_core[0]` alone
   (the other processors are a TODO), so `cpu1`…`cpu3` produce no instruction
@@ -301,7 +316,14 @@ are in [svs_defs.h](svs_defs.h):
 ```
 
 Use `CPU_TRACE` for anything tied to the current instruction and `CPU_DEB` for
-everything else (memory accesses, reset messages).
+everything else (memory accesses, reset messages). The register dump uses
+`CPU_DEB` plus an explicit window test against the instruction's own address,
+because `cpu->PC` has already moved on by the time it runs.
+
+`cpu_set_debug()` in [svs_cpu.c](svs_cpu.c) intercepts `SET CPU DEBUG` ahead of
+SIMH's built-in handler (a device's MTAB is searched first) purely to clear
+`DEB_FETCH` when no flag list was given — SIMH's own code turns on every flag in
+the table.
 
 Hook points:
 
