@@ -225,17 +225,16 @@ t_stat vt_clk(UNIT *this)
     }
 
     /*
-     * It the operator console is remote, we still need to probe the local keyboard
-     * for a WRU, say, 10 times a second.
+     * Пультовой символ. Пока консоль SIMH не закреплена за линией МПД,
+     * следить за ним поручается самому SIMH: `sim_set_noconsole_port()`
+     * включает штатный опрос в `sim_con_poll_svc()`.
+     *
+     * Условие проверяется каждый такт, а не однажды: закрепить консоль за
+     * линией (`set tty<N> console`) можно и посреди прогона, из `sim>`.
+     * Вызов идемпотентен — ставит один признак.
      */
-    if (!attached_console) {
-        static int divider;
-        if (++divider == TICKS_PER_SEC/10) {
-            divider = 0;
-            if (SCPE_STOP == sim_poll_kbd())
-                stop_cpu = 1;
-        }
-    }
+    if (!attached_console)
+        sim_set_noconsole_port();
 
     /* Polling sockets for transmission. */
     tmxr_poll_tx(&tty_desc);
