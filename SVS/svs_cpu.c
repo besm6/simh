@@ -73,7 +73,9 @@ t_value svs_clock = 0;                  /* регистр часов 056, 44 р�
 t_value svs_timer = 0;                  /* регистр таймера 057, 32 разр., 1 мкс */
 static int svs_timer_run = 0;           /* счёт идёт после записи в регистр */
 
-int autotime;                           /* установка смены, даты и времени при загрузке */
+int autotime;                           /* задержка СМЕ/ВРЕ после первого ЖДУ, сек (0 = выкл) */
+static int autotime_armed;              /* срок уже поставлен после первого ЖДУ */
+static uint32 autotime_due_msec;        /* sim_os_msec(), когда можно звать setup */
 int svs_trace_window = 0;
 t_addr svs_trace_lo = 0, svs_trace_hi = 0;
 
@@ -185,7 +187,7 @@ MTAB cpu_mod[] = {
                                 "Limits instruction tracing to a PC range" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR,
         0, "AUTOTIME", "AUTOTIME", &cpu_set_autotime, &cpu_show_autotime, NULL,
-                                "{ON, OFF} Controls automatic date/time setting at boot-up" },
+                                "Delay seconds before auto date/time at idle (0=off)" },
     { MTAB_XTD|MTAB_VDV,
         0, NULL,    "NOWINDOW", &cpu_clr_window,    NULL,               NULL,
                                 "Removes the tracing PC range limit" },
@@ -572,24 +574,30 @@ void check_initial_setup(CORE *cpu)
 }
 
 /*
- * Automatic time setup.
+ * Automatic time setup: delay in seconds after first idle (0 = off).
  */
 t_stat cpu_set_autotime(UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
+    t_stat r;
+    t_value n;
+
     if (!cptr)
         return SCPE_MISVAL;
-    if (!MATCH_CMD("ON", cptr))
-        autotime = 1;
-    else if (!MATCH_CMD("OFF", cptr))
-        autotime = 0;
-    else
-        return SCPE_ARG;
+    n = get_uint(cptr, 10, INT_MAX, &r);
+    if (r != SCPE_OK)
+        return r;
+    autotime = (int)n;
+    autotime_armed = 0;
+    autotime_due_msec = 0;
     return SCPE_OK;
 }
 
 t_stat cpu_show_autotime(FILE *st, UNIT *up, int32 v, CONST void *dp)
 {
-    fprintf(st, "Automatic setup is %s", autotime ? "enabled" : "disabled");
+    if (autotime)
+        fprintf(st, "autotime delay %d sec", autotime);
+    else
+        fprintf(st, "autotime disabled");
     return SCPE_OK;
 }
 
@@ -1806,8 +1814,14 @@ branch_zero:
             printf("Reached idle\r\n");
             reached = 1;
         }
-        if (autotime)
-            check_initial_setup(cpu);
+        if (autotime > 0) {
+            if (!autotime_armed) {
+                autotime_due_msec = sim_os_msec() + (uint32)autotime * 1000u;
+                autotime_armed = 1;
+            }
+            if ((int32)(sim_os_msec() - autotime_due_msec) >= 0)
+                check_initial_setup(cpu);
+        }
         sim_idle(0, TRUE);
     }
 }
