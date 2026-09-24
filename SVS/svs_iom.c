@@ -473,19 +473,30 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
         }
     }
 
-    if (SVS_DEV_TRACE())
+    if (SVS_DEV_TRACE()) {
+        /*
+         * Барабаны — группа из 16 устройств 010-027 по 040 зон; сквозной
+         * номер зоны печатаем как «устройство/зона в нём».
+         */
+        char zbuf[32];
+
+        if (devclass == IOM_TUS_CLASS_MB)
+            snprintf(zbuf, sizeof(zbuf), "%02o/%02o", 010 + zone / 040, zone % 040);
+        else
+            snprintf(zbuf, sizeof(zbuf), "%o", zone);
         fprintf(sim_deb,
             "iom%d --- обмен: устр=%d(напр %d/устр %d) заявка@%o %s"
-            " зона=%o сектор=%d буфер=%o PC=%05o\n"
+            " зона=%s сектор=%d буфер=%o PC=%05o\n"
             "iom%d ---   ДО=%016jo(НАМ %07o РАЗМ %d) СО=%016jo СПУ=%016jo(РМР %06o)\n",
             iom->index, dev,
             (devclass == IOM_TUS_CLASS_MD) ? svs_disk_napr(dev) : 0,
             (devclass == IOM_TUS_CLASS_MD) ? dev % 8 : dev,
-            z, is_read ? "ЧТ" : "ЗП", zone, sector, memaddr,
+            z, is_read ? "ЧТ" : "ЗП", zbuf, sector, memaddr,
             cpu_core[0].PC,
             iom->index, (uintmax_t)do_, (unsigned)(memory[z+2] & 0xFFFFF),
             (unsigned)((memory[z+2] >> 22) & 0xFFFFF),
             (uintmax_t)so, (uintmax_t)spu, (unsigned)(memory[z+4] & 0xFFFF));
+    }
 
     /* Зона = 8 служебных слов (в буфер) + 1024 слова данных (буфер+8). */
     /*

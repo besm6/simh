@@ -254,8 +254,8 @@ static t_stat svs_drum_read(UNIT *u, int zone, int sector,
         memset(buf + got, 0, ZONE_BYTES - got);
 
     if (u->dptr->dctrl & DEB_DAT)
-        sim_debug(DEB_DAT, u->dptr, "::: чтение МБ зона %04o данные@%05o\n",
-                  zone, memaddr);
+        sim_debug(DEB_DAT, u->dptr, "::: чтение МБ зона %02o/%02o данные@%05o\n",
+                  010 + zone / 040, zone % 040, memaddr);
 
     if (got == 0) {
         /*
@@ -285,8 +285,8 @@ static t_stat svs_drum_read(UNIT *u, int zone, int sector,
 
         if (u->dptr->dctrl & DEB_OPS)
             sim_debug(DEB_OPS, u->dptr,
-                      "::: МБ зона %04o не записана — отдаю нули с тегами\n",
-                      zone);
+                      "::: МБ зона %02o/%02o не записана — отдаю нули с тегами\n",
+                      010 + zone / 040, zone % 040);
     }
 
     /*
@@ -341,8 +341,8 @@ static t_stat svs_drum_write(UNIT *u, int zone, int sector,
     }
 
     if (u->dptr->dctrl & DEB_DAT)
-        sim_debug(DEB_DAT, u->dptr, "::: запись МБ зона %04o данные@%05o\n",
-                  zone, memaddr);
+        sim_debug(DEB_DAT, u->dptr, "::: запись МБ зона %02o/%02o данные@%05o\n",
+                  010 + zone / 040, zone % 040, memaddr);
 
     if (fseek(u->fileref, (long)ZONE_BYTES * zone, SEEK_SET) != 0 ||
         sim_fwrite(buf, 1, ZONE_BYTES, u->fileref) != ZONE_BYTES) {

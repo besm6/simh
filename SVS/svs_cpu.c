@@ -515,14 +515,24 @@ void check_initial_setup(CORE *cpu)
 
     taken = memory[autotime_taken] >> 16;
 
+    if (!vt_is_idle()) {
+        /* Avoid sending setup requests while the OS
+         * is still printing boot-up messages.
+         */
+        printf("_");
+        return;
+    }
+
     if ((taken & SETUP_REQS_ENABLED) == 0 ||        /* not ready for setup */
         (cpu->GRM & GRVP_PANEL_REQ) == 0) {         /* not at the moment */
         return;
     }
+
     if (taken & ALL_REQS_ENABLED) {                 /* all done */
         if (!done) {
             printf("Initial setup done, per TAKEN\r\n");
             done = 1;
+            return;
         }
     }
 
@@ -1836,8 +1846,18 @@ branch_zero:
                 autotime_due_msec = sim_os_msec() + (uint32)autotime * 1000u;
                 autotime_armed = 1;
             }
-            if ((int32)(sim_os_msec() - autotime_due_msec) >= 0)
-                check_initial_setup(cpu);
+            if ((int32)(sim_os_msec() - autotime_due_msec) >= 0) {
+                /* Не чаще 10 раз в секунду. */
+                static uint32 last_setup_msec;
+                static int setup_called;
+                uint32 now = sim_os_msec();
+
+                if (!setup_called || now - last_setup_msec >= 100) {
+                    setup_called = 1;
+                    last_setup_msec = now;
+                    check_initial_setup(cpu);
+                }
+            }
         }
         sim_idle(0, TRUE);
     }

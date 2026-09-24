@@ -1207,12 +1207,12 @@ void tty_strobe(CORE *cpu)
 }
 
 /*
- * Checking if all terminals are idle.
- * SIMH should not enter idle mode until they are.
+ * Консоль свободна: её линия переведена на приём, то есть Диспак закончил
+ * выдачу на неё и ждёт ввода.
  */
 int vt_is_idle(void)
 {
-    return 1;
+    return !mpd_line_send[line_to_unit(mpd_console_line)];
 }
 
 /*
