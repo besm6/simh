@@ -141,12 +141,26 @@ UNIT disk_unit[NUM_DISK_UNITS] = {
     { UDATA(disk_event, UNIT_FIX+UNIT_ATTABLE+UNIT_ROABLE+UNIT_DISABLE, DISK_SIZE) },
 };
 
+/*
+ * Адреса ячеек ГОД / ЗАНЯТА / МГРП для autotime — из таблицы имён
+ * резидента на томе 2053 (зоны 0504 и 0742). Заполняются при attach.
+ */
+int autotime_year;              /* ГОД */
+int autotime_taken;             /* ЗАНЯТА */
+int autotime_mgrp;              /* МГРП */
+int ipzzt;                      /* ИПЗЖТ — база паспорта задачи «жду» */
+static UNIT *autotime_sym_unit; /* какой UNIT их выставил */
+
 static REG disk_reg[] = {
     { ORDATA(УСТР,  controller.dev,     3) },
     { ORDATA(ЗОНА,  controller.zone,   10) },
     { ORDATA(МОЗУ,  controller.memory, 20) },
     { ORDATA(СЛУЖ,  controller.sysarea,20) },
     { ORDATA(РС,    controller.status, 24) },
+    { ORDATA(YEAR,  autotime_year,     15) },
+    { ORDATA(TAKEN, autotime_taken,    15) },
+    { ORDATA(MGRP,  autotime_mgrp,     15) },
+    { ORDATA(IPZZT, ipzzt,             15) },
     { 0 }
 };
 
@@ -183,6 +197,8 @@ static DEBTAB disk_deb[] = {
 static t_stat disk_reset(DEVICE *dptr);
 static t_stat disk_attach(UNIT *u, CONST char *cptr);
 static t_stat disk_detach(UNIT *u);
+static void disk_clear_autotime_syms(void);
+static void disk_load_autotime_syms(UNIT *u);
 
 DEVICE disk_dev = {
     "DISK", disk_unit, disk_reg, disk_mod,
@@ -190,6 +206,15 @@ DEVICE disk_dev = {
     NULL, NULL, &disk_reset, NULL, &disk_attach, &disk_detach,
     NULL, DEV_DISABLE | DEV_DEBUG, 0, disk_deb
 };
+
+/* Имена в ГОСТ-10859, по 6 байт MSB-first (проверено на svs2053). */
+#define SYM_GOD     0x232e240f0f0fLL         /* ГОД···· */
+#define SYM_MGRP    0x2c23302f0f0fLL         /* МГРП·· */
+#define SYM_TAKEN   0x27202d3e3220LL         /* ЗАНЯТА */
+#define SYM_IPZZT   0x282f2726320fLL         /* ИПЗЖТ· */
+
+#define ZONE_NAMES  0504
+#define ZONE_ADDRS  0742
 
 /*
  * Reset routine.
@@ -206,15 +231,101 @@ static t_stat disk_reset(DEVICE *dptr)
     return SCPE_OK;
 }
 
+static void disk_clear_autotime_syms(void)
+{
+    autotime_year = 0;
+    autotime_taken = 0;
+    autotime_mgrp = 0;
+    ipzzt = 0;
+    autotime_sym_unit = NULL;
+}
+
+/*
+ * Плоское чтение 1024 слов данных зоны (без свёртки 4:3) — таблицы
+ * имён/адресов на носителе лежат 1:1, не через канал РАСПАК.
+ */
+static t_stat disk_read_zone_data(UNIT *u, int zone, t_value *data)
+{
+    t_value buf[ZONE_SIZE];
+    int i;
+
+    if (fseek(u->fileref, (long)ZONE_SIZE * zone * 8, SEEK_SET) != 0 ||
+        sim_fread(buf, 8, ZONE_SIZE, u->fileref) != ZONE_SIZE)
+        return SCPE_IOERR;
+    for (i = 0; i < 1024; ++i)
+        data[i] = buf[8 + i] & BITS48;
+    return SCPE_OK;
+}
+
+static int disk_sym_halfword(const t_value *addrs, int idx)
+{
+    t_value w = addrs[idx / 2];
+
+    if (idx & 1)
+        return (int)(w & 077777777);
+    return (int)((w >> 24) & 077777777);
+}
+
+/*
+ * На томе 2053: зона 0504 — имена ячеек (ГОСТ, слово на имя),
+ * зона 0742 — адреса (полуслово на имя, тот же индекс).
+ */
+static void disk_load_autotime_syms(UNIT *u)
+{
+    t_value names[1024], addrs[1024];
+    int i, year = 0, taken = 0, mgrp = 0, ipz = 0;
+
+    if (disk_read_zone_data(u, ZONE_NAMES, names) != SCPE_OK ||
+        disk_read_zone_data(u, ZONE_ADDRS, addrs) != SCPE_OK) {
+        sim_printf("%s: cannot read symbol table (zones %o/%o)\n",
+                   sim_uname(u), ZONE_NAMES, ZONE_ADDRS);
+        return;
+    }
+    for (i = 0; i < 1024; ++i) {
+        if (names[i] == SYM_GOD)
+            year = disk_sym_halfword(addrs, i);
+        else if (names[i] == SYM_TAKEN)
+            taken = disk_sym_halfword(addrs, i);
+        else if (names[i] == SYM_MGRP)
+            mgrp = disk_sym_halfword(addrs, i);
+        else if (names[i] == SYM_IPZZT)
+            ipz = disk_sym_halfword(addrs, i);
+    }
+    if (!year || !taken || !mgrp || !ipz) {
+        sim_printf("%s: symbol table missing ГОД/ЗАНЯТА/МГРП/ИПЗЖТ\n",
+                   sim_uname(u));
+        return;
+    }
+    autotime_year = year;
+    autotime_taken = taken;
+    autotime_mgrp = mgrp;
+    ipzzt = ipz;
+    autotime_sym_unit = u;
+}
+
 static t_stat disk_attach(UNIT *u, CONST char *cptr)
 {
+    t_stat r;
+    char *basename;
+
     /* Образ диска существует заранее; принудительно требуем '-e'. */
     sim_switches |= SWMASK('E');
-    return attach_unit(u, cptr);
+    r = attach_unit(u, cptr);
+    if (r != SCPE_OK)
+        return r;
+
+    /* Том 2053: имя файла содержит «2053» (svs2053.bin, 2053, …). */
+    basename = sim_filepath_parts(u->filename, "n");
+    if (basename && strstr(basename, "2053"))
+        disk_load_autotime_syms(u);
+    free(basename);
+    return SCPE_OK;
 }
 
 static t_stat disk_detach(UNIT *u)
 {
+    if (u == autotime_sym_unit)
+        disk_clear_autotime_syms();
     return detach_unit(u);
 }
 

@@ -487,6 +487,12 @@ t_stat svs_drum_io(int dev, int zone, int sector,
 t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 
+/* Адреса ячеек для autotime (из таблицы имён тома 2053 при attach). */
+extern int autotime_year;       /* ГОД */
+extern int autotime_taken;      /* ЗАНЯТА */
+extern int autotime_mgrp;       /* МГРП */
+extern int ipzzt;               /* ИПЗЖТ */
+
 /*
  * Разряды главного регистра прерываний (ГРП)
  * Внешние:

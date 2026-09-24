@@ -58,6 +58,8 @@ t_stat cpu_set_pult(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_pult(FILE *st, UNIT *up, int32 v, CONST void *dp);
 t_stat cpu_set_debug(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_window(UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_set_autotime(UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_show_autotime(FILE *st, UNIT *up, int32 v, CONST void *dp);
 t_stat cpu_clr_window(UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_window(FILE *st, UNIT *up, int32 v, CONST void *dp);
 
@@ -71,6 +73,7 @@ t_value svs_clock = 0;                  /* регистр часов 056, 44 р�
 t_value svs_timer = 0;                  /* регистр таймера 057, 32 разр., 1 мкс */
 static int svs_timer_run = 0;           /* счёт идёт после записи в регистр */
 
+int autotime;                           /* установка смены, даты и времени при загрузке */
 int svs_trace_window = 0;
 t_addr svs_trace_lo = 0, svs_trace_hi = 0;
 
@@ -180,6 +183,9 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV|MTAB_VALR,
         0, "WINDOW", "WINDOW",  &cpu_set_window,    &cpu_show_window,   NULL,
                                 "Limits instruction tracing to a PC range" },
+    { MTAB_XTD|MTAB_VDV|MTAB_VALR,
+        0, "AUTOTIME", "AUTOTIME", &cpu_set_autotime, &cpu_show_autotime, NULL,
+                                "{ON, OFF} Controls automatic date/time setting at boot-up" },
     { MTAB_XTD|MTAB_VDV,
         0, NULL,    "NOWINDOW", &cpu_clr_window,    NULL,               NULL,
                                 "Removes the tracing PC range limit" },
@@ -322,13 +328,10 @@ t_stat cpu_examine(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
     if (addr >= MEMSIZE)
         return SCPE_NXM;
     if (vptr) {
-        if (addr == 0) {
+        if (addr < 010) {
             /* from switch regs */
             *vptr = cpu->pult[addr];
         } else {
-            /* Слова 1-7 — обычная физическая память (см. mmu_load_with_tag):
-             * именно там АДАП ищет слова пульта, поэтому `e 2`/`d 2` должны
-             * работать с ней же, иначе заданное в .ini до кода не доходит. */
             *vptr = memory[addr] >> 16;
         }
     }
@@ -350,13 +353,12 @@ t_stat cpu_deposit(t_value val, t_addr addr, UNIT *uptr, int32 sw)
 
     if (addr >= MEMSIZE)
         return SCPE_NXM;
-    if (addr == 0) {
+    if (addr && addr < 010) {
         /* Deposited values for the switch register address range
          * always go to switch registers.
          */
         cpu->pult[addr] = val;
-    } else {
-        /* Слова 1-7 — физическая память, как и всё остальное. */
+    } else if (addr) {
         memory[addr] = val << 16;
         tag[addr] = TAG_INSN48;
     }
@@ -454,6 +456,7 @@ t_stat cpu_req(UNIT *u, int32 val, CONST char *cptr, void *desc)
     if (CPU_DEB(cpu, DEB_INSN)) {
         fprintf(sim_deb, "cpu%d --- Request from control panel\n", cpu->index);
     }
+    printf(" --- Request \n");
     cpu->GRVP |= GRVP_PANEL_REQ;
     return SCPE_OK;
 }
@@ -478,6 +481,116 @@ t_stat cpu_set_debug(UNIT *u, int32 val, CONST char *cptr, void *desc)
     if (r == SCPE_OK && ! cptr)
         dev->dctrl &= ~DEB_FETCH;
     return r;
+}
+
+/*
+ * Приказы оператора СМЕ и ВРЕ при загрузке — как в besm6_cpu.c.
+ *
+ * Зовётся из цикла «ЖДУ» Диспака. Приказ подаётся с пульта: номер приказа и
+ * его параметр кладутся в тумблерные регистры, и взводится запрос от пульта
+ * (GRVP_PANEL_REQ). Дату Диспак берёт из ячейки ГОД, её правим прямо в памяти.
+ *
+ * Адреса ячеек ГОД / ЗАНЯТА / МГРП — из таблицы имён тома 2053
+ * (зоны 0504/0742), выставляются при attach в svs_disk.c.
+ * Слово в памяти СВС хранится как (48 разрядов << 16) | младшие 16.
+ */
+void check_initial_setup(CORE *cpu)
+{
+    /* 47 р. яч. ЗАНЯТА - разр. приказы вообще */
+    const t_value SETUP_REQS_ENABLED = 1LL << 46;
+
+    /* 7 р. яч. ЗАНЯТА - разр любые приказы */
+    const t_value ALL_REQS_ENABLED = 1 << 6;
+
+    t_value taken;
+    static int done = 0;
+
+    if (!autotime_year || !autotime_taken || !autotime_mgrp)
+        return;
+
+    if (done)
+        return;
+
+    taken = memory[autotime_taken] >> 16;
+
+    if ((taken & SETUP_REQS_ENABLED) == 0 ||        /* not ready for setup */
+        (cpu->GRM & GRVP_PANEL_REQ) == 0) {         /* not at the moment */
+        return;
+    }
+    if (taken & ALL_REQS_ENABLED) {                 /* all done */
+        if (!done) {
+            printf("Initial setup done, per TAKEN\r\n");
+            done = 1;
+        }
+    }
+
+    printf("Started forming setup\r\n");
+    /* Выдаем приказы оператора СМЕ и ВРЕ,
+     * а дату корректируем непосредственно в памяти.
+     */
+    /* Номер смены в 22-24 рр. МГРП: если еще не установлен, установить */
+    if (((memory[autotime_mgrp] >> 16 >> 21) & 3) == 0) {
+        /* приказ СМЕ: ТР6 = 010, ТР4 = 1, 22-24 р ТР5 - #смены */
+        cpu->pult[6] = 010;
+        cpu->pult[4] = 1;
+        cpu->pult[5] = 1 << 21;
+        cpu->GRVP |= GRVP_PANEL_REQ;
+        printf("CME was 0, sending CME\r\n");
+    } else {
+        struct tm * d;
+        static int times = 0;
+
+        /* Яч. ГОД обновляем самостоятельно */
+        time_t t;
+        t_value date;
+        sim_get_time(&t);
+        d = localtime(&t);
+        ++d->tm_mon;
+        date = (t_value) (d->tm_mday / 10) << 33 |
+            (t_value) (d->tm_mday % 10) << 29 |
+            (d->tm_mon / 10) << 28 |
+            (d->tm_mon % 10) << 24 |
+            (d->tm_year % 10) << 20 |
+            ((d->tm_year / 10) % 10) << 16 |
+            ((memory[autotime_year] >> 16) & 7);
+        memory[autotime_year] = (date << 16) | (memory[autotime_year] & 0xffff);
+        tag[autotime_year] = TAG_NUMBER48;
+        /* приказ ВРЕ: ТР6 = 016, ТР5 = 9-14 р.-часы, 1-8 р.-минуты */
+        cpu->pult[6] = 016;
+        cpu->pult[4] = 0;
+        cpu->pult[5] = (d->tm_hour / 10) << 12 |
+            (d->tm_hour % 10) << 8 |
+            (d->tm_min / 10) << 4 |
+            (d->tm_min % 10);
+        cpu->GRVP |= GRVP_PANEL_REQ;
+        printf("CME was non-0, setting DAT, sending TIM %d time\r\n", ++times);
+        if (times > 5) {
+            printf("Enough already, done\r\n");
+            done = 1;
+        }
+    }
+}
+
+/*
+ * Automatic time setup.
+ */
+t_stat cpu_set_autotime(UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    if (!cptr)
+        return SCPE_MISVAL;
+    if (!MATCH_CMD("ON", cptr))
+        autotime = 1;
+    else if (!MATCH_CMD("OFF", cptr))
+        autotime = 0;
+    else
+        return SCPE_ARG;
+    return SCPE_OK;
+}
+
+t_stat cpu_show_autotime(FILE *st, UNIT *up, int32 v, CONST void *dp)
+{
+    fprintf(st, "Automatic setup is %s", autotime ? "enabled" : "disabled");
+    return SCPE_OK;
 }
 
 /*
@@ -1684,9 +1797,17 @@ branch_zero:
         svs_trace_registers(cpu);
     }
 
-    /* Не находимся ли мы в цикле "ЖДУ" диспака? */
-    // 05016 (уиа 3, цикл 5015(15)
-    if (IS_SUPERVISOR(cpu->RUU) && cpu->PC == 05016 && cpu->RK == 02400003) {
+    /* Не находимся ли мы в цикле "ЖДУ" диспака?
+     * Адрес петли — младшие 15 р. слова ИПЗЖТ+3 (паспорт ждущей задачи). */
+    if (IS_SUPERVISOR(cpu->RUU) && ipzzt &&
+        cpu->PC == ADDR(memory[ipzzt + 3] >> 16)) {
+        static int reached = 0;
+        if (!reached) {
+            printf("Reached idle\r\n");
+            reached = 1;
+        }
+        if (autotime)
+            check_initial_setup(cpu);
         sim_idle(0, TRUE);
     }
 }

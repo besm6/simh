@@ -264,14 +264,9 @@ static int mmu_load_with_tag(CORE *cpu, int vaddr, t_value *val64, uint8 *t)
     int paddr = va_to_pa(cpu, vaddr, 0);
 
     /*
-     * Слова 1-7 в режиме ЯДРА читаются из физической памяти 1-7, а не с
-     * тумблерных регистров: приписка на них не действует, но это обычные
-     * ячейки. Именно оттуда АДАП берёт слова пульта — например, номер канала
-     * для МД (разр.22:21 слова 2, проверка ЕСТЬКД 033613; иначе СТОП 40114)
-     * и приписку стека из слова 7. Команда `d 2 …` в .ini кладёт значение
-     * именно в память, так что читать надо её.
+     * Слова 1-7 в режиме ЯДРА с тумблерных регистров.
      */
-    if (paddr >= 010 || IS_SUPERVISOR(cpu->RUU)) {
+    if (paddr >= 010 || !IS_SUPERVISOR(cpu->RUU)) {
         /* Из памяти */
         *val64 = memory[paddr];
         *t = tag[paddr];
@@ -371,8 +366,15 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
     uint8 t;
 
     if (vaddr == 0) {
-        if (CPU_DEB(cpu, DEB_INSN))
-            svs_debug("--- передача управления на 0");
+        /*
+         * В журнал отладки — безусловно, разрядом INSN не ограничиваясь:
+         * на длинном прогоне покомандная трасса выключена, а знать, что
+         * управление ушло на 0, нужно именно тогда. `svs_debug()` сюда не
+         * годится: он пишет на консоль и в её журнал, а не в `sim_deb`.
+         */
+        if (sim_deb)
+            fprintf(sim_deb, "cpu%d --- передача управления на 0\n",
+                    cpu->index);
         longjmp(cpu->exception, STOP_INSN_CHECK);
     }
 
@@ -434,7 +436,7 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
 
         cpu->pf_va[cpu->pf_count]   = va;
         cpu->pf_pa[cpu->pf_count]   = pa;
-        if (pa >= 010) {
+        if (pa >= 010 || !IS_SUPERVISOR(cpu->RUU)) {
             cpu->pf_word[cpu->pf_count] = memory[pa] >> 16;
             cpu->pf_tag[cpu->pf_count]  = tag[pa];
         } else {
