@@ -541,6 +541,18 @@ void check_initial_setup(CORE *cpu)
     } else {
         struct tm * d;
         static int times = 0;
+        static int cme_accepted = 0;
+
+        if (!cme_accepted) {
+            /*
+             * СМЕ принят. Сразу после приказа Диспак следующий запрос
+             * от пульта не берёт, поэтому перед ВРЕ выжидается та же
+             * задержка autotime, что и перед первым приказом.
+             */
+            cme_accepted = 1;
+            autotime_due_msec = sim_os_msec() + (uint32)autotime * 1000u;
+            return;
+        }
 
         /* Яч. ГОД обновляем самостоятельно */
         time_t t;
@@ -548,13 +560,18 @@ void check_initial_setup(CORE *cpu)
         sim_get_time(&t);
         d = localtime(&t);
         ++d->tm_mon;
-        date = (t_value) (d->tm_mday / 10) << 33 |
-            (t_value) (d->tm_mday % 10) << 29 |
-            (d->tm_mon / 10) << 28 |
-            (d->tm_mon % 10) << 24 |
-            (d->tm_year % 10) << 20 |
-            ((d->tm_year / 10) % 10) << 16 |
-            ((memory[autotime_year] >> 16) & 7);
+        /*
+         * Раскладка ГОД в Диспаке СВС — как её пишет директива ДАТА
+         * (ПРИК4.bemsh): месяц в 25-29 р., число в 30-35 р., оба
+         * десятичными цифрами, как их набирают в ТР5; младшая цифра
+         * года — в 21-24 р. (её печатает ПРВР). Остальные разряды, в том
+         * числе № ЭВМ в 1-3 р., сохраняются.
+         */
+        date = (memory[autotime_year] >> 16) &
+            ~((t_value) 03777 << 24 | (t_value) 017 << 20);
+        date |= (t_value) (((d->tm_mday / 10) << 4 | d->tm_mday % 10) << 5 |
+                           ((d->tm_mon / 10) << 4 | d->tm_mon % 10)) << 24 |
+            (t_value) (d->tm_year % 10) << 20;
         memory[autotime_year] = (date << 16) | (memory[autotime_year] & 0xffff);
         tag[autotime_year] = TAG_NUMBER48;
         /* приказ ВРЕ: ТР6 = 016, ТР5 = 9-14 р.-часы, 1-8 р.-минуты */
