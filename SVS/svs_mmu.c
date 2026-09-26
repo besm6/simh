@@ -107,14 +107,25 @@ int mmu_iom_data_pa(int addr)
  * контролю команды: остаётся невыясненным, какой должна быть НАЧАЛЬНАЯ
  * приписка ядра и пользователя (приёмник ПЕРЕП — "2-я п/секция").
  */
+/*
+ * Тумблерные регистры пульта занимают адреса 1-7 только в приписке ядра:
+ * её выбирают выборка команд в режиме ядра и данные ядра при VТМ.
+ * В приписке пользователя адреса 1-7 — обычные слова листа.
+ */
+static int pult_selected(CORE *cpu, int vaddr, int is_fetch)
+{
+    return vaddr < 010 && IS_SUPERVISOR(cpu->RUU) &&
+           (is_fetch || (cpu->M[PSW] & PSW_MMAP_DISABLE));
+}
+
 static int va_to_pa(CORE *cpu, int vaddr, int is_fetch)
 {
     int vpage  = vaddr >> 10;
     int offset = vaddr & BITS(10);
     uint32 physpage;
 
-    if (vaddr < 010)
-        return vaddr;               /* тумблерные регистры — не память */
+    if (pult_selected(cpu, vaddr, is_fetch))
+        return vaddr;               /* тумблерные регистры ядра — не память */
 
     if (! IS_SUPERVISOR(cpu->RUU))
         physpage = cpu->UTLB[vpage];            /* режим пользователя */
@@ -175,7 +186,7 @@ static int mmu_store_with_tag(CORE *cpu, int vaddr, t_value val64, uint8 t)
     /* Различаем адреса с припиской и без */
     if (cpu->M[PSW] & PSW_MMAP_DISABLE) {
         /* Приписка отключена. */
-        if (vaddr < 010) {
+        if (pult_selected(cpu, vaddr, 0)) {
             /*
              * Физические адреса 1-7 — тумблерные регистры пульта.
              * Программе они недоступны на запись ни в каком режиме;
@@ -264,9 +275,9 @@ static int mmu_load_with_tag(CORE *cpu, int vaddr, t_value *val64, uint8 *t)
     int paddr = va_to_pa(cpu, vaddr, 0);
 
     /*
-     * Слова 1-7 в режиме ЯДРА с тумблерных регистров.
+     * Слова 1-7 в приписке ЯДРА с тумблерных регистров.
      */
-    if (paddr >= 010 || !IS_SUPERVISOR(cpu->RUU)) {
+    if (! pult_selected(cpu, vaddr, 0)) {
         /* Из памяти */
         *val64 = memory[paddr];
         *t = tag[paddr];
@@ -436,7 +447,7 @@ t_value mmu_fetch(CORE *cpu, int vaddr, int *paddrp)
 
         cpu->pf_va[cpu->pf_count]   = va;
         cpu->pf_pa[cpu->pf_count]   = pa;
-        if (pa >= 010 || !IS_SUPERVISOR(cpu->RUU)) {
+        if (! pult_selected(cpu, va, 1)) {
             cpu->pf_word[cpu->pf_count] = memory[pa] >> 16;
             cpu->pf_tag[cpu->pf_count]  = tag[pa];
         } else {
