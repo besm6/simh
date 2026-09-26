@@ -491,6 +491,13 @@ t_stat svs_drum_io(int dev, int zone, int sector,
 extern DEVICE printer_dev;
 t_stat svs_printer_io(int num, int kop, int memaddr, int nwords);
 void utf8_putc(unsigned ch, FILE *fout);
+
+/*
+ * Считыватель перфокарт (VU) и фотосчитыватель ленты (FS) на ЕС-канале.
+ */
+extern DEVICE vu_dev, fs_dev;
+t_stat svs_card_io(int num, int kop, int memaddr, int nwords);
+t_stat svs_tape_io(int num, int kop, int memaddr, int nwords);
 t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 

@@ -205,7 +205,7 @@ void iom_reset(int index)
     iom->IOQA = 0;
     iom->SQA = 0;
     if (SVS_DEV_TRACE())
-        fprintf(sim_deb, "iom%d --- Сброс ПВВ\n", iom->index);
+        fprintf(sim_deb, "iom%d --- Сброс ПВВ, PC=%05o\n", iom->index, cpu_core[index].PC);
 }
 
 /*
@@ -301,6 +301,9 @@ void iom_reset(int index)
 #define IOM_TUS_CLASS_MD    5           /* класс МД (диск):    ТУСМД@030500, канал Х'22' */
 #define IOM_TUS_CLASS_ACPU  0100        /* АЦПУ: не блок ТУС, узнаётся по каналу */
 #define IOM_ACPU_CHANNEL    4           /* канал АЦПУ0 (ТУС 017); АЦПУ1 — Х'5' (ТУС 077) */
+#define IOM_TUS_CLASS_PK    0101        /* считыватель перфокарт: ПК0 (ТУС 014), ПК1 (074) */
+#define IOM_TUS_CLASS_FS    0102        /* фотосчитыватель ленты: ФС0 (ТУС 010), ФС1 (070) */
+#define IOM_ES_CLASS(c)     ((c) >= IOM_TUS_CLASS_ACPU)   /* устройство ЕС-канала */
 #define IOM_TUS_BLOCK       020         /* записей в блоке одного класса */
 
 /* Смещение блока класса в ТУС: класс k лежит по k*16 (МБ 4*16=0100, МД 5*16=0120). */
@@ -330,6 +333,19 @@ static int iom_tus_class(IOMDATA *iom, int nus, int *unit)
     a = iom->UTA + nus;
     if (a >= MEMSIZE)
         return -1;
+
+    /*
+     * Устройства ввода тоже вне блоков классов. ФС делит канал с ПЛ
+     * (Х'9' и Х'7'), поэтому их узнаём по индексу ТУС (адап.bemsh, ТУС).
+     */
+    if ((memory[a] >> 16) & BITS48) {
+        switch (nus) {
+        case 014: *unit = 0; return IOM_TUS_CLASS_PK;
+        case 074: *unit = 1; return IOM_TUS_CLASS_PK;
+        case 010: *unit = 0; return IOM_TUS_CLASS_FS;
+        case 070: *unit = 1; return IOM_TUS_CLASS_FS;
+        }
+    }
 
     /*
      * АЦПУ стоят вне блоков классов (ТУС 017 и 077, а младшее поле там —
@@ -495,6 +511,10 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
 
         if (devclass == IOM_TUS_CLASS_ACPU)
             snprintf(zbuf, sizeof(zbuf), "АЦПУ%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
+        else if (devclass == IOM_TUS_CLASS_PK)
+            snprintf(zbuf, sizeof(zbuf), "ПК%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
+        else if (devclass == IOM_TUS_CLASS_FS)
+            snprintf(zbuf, sizeof(zbuf), "ФС%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
         else if (devclass == IOM_TUS_CLASS_MB)
             snprintf(zbuf, sizeof(zbuf), "%02o/%02o", 010 + zone / 040, zone % 040);
         else
@@ -569,6 +589,12 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
         /* КОП команды ЕС-канала — разр.31-38 СПУ (ОБЩН в ПВВ.bemsh). */
         r = svs_printer_io(dev, (int)((spu >> 30) & 0xFF), memaddr, nwords);
         break;
+    case IOM_TUS_CLASS_PK:
+        r = svs_card_io(dev, (int)((spu >> 30) & 0xFF), memaddr, nwords);
+        break;
+    case IOM_TUS_CLASS_FS:
+        r = svs_tape_io(dev, (int)((spu >> 30) & 0xFF), memaddr, nwords);
+        break;
     default:
         r = SCPE_NXDEV;
         break;
@@ -578,7 +604,9 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
         fprintf(sim_deb, "iom%d ---   %s → %s\n", iom->index,
             (devclass == IOM_TUS_CLASS_MD) ? "svs_disk_io" :
             (devclass == IOM_TUS_CLASS_MB) ? "svs_drum_io" :
-            (devclass == IOM_TUS_CLASS_ACPU) ? "svs_printer_io" : "класс не поддержан",
+            (devclass == IOM_TUS_CLASS_ACPU) ? "svs_printer_io" :
+            (devclass == IOM_TUS_CLASS_PK) ? "svs_card_io" :
+            (devclass == IOM_TUS_CLASS_FS) ? "svs_tape_io" : "класс не поддержан",
             (r == SCPE_OK) ? "OK" : "ОШИБКА");
 
     /*
@@ -606,17 +634,21 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
      * (ОШДВР2 не срабатывает), и ИНДБУД находит канал МД (Х'22') в БУДКАН ровно
      * за 18 итераций — по индексу 17, где 0x22 и стоит.
      */
-    if (devclass == IOM_TUS_CLASS_ACPU) {
+    if (IOM_ES_CLASS(devclass)) {
         /*
-         * АЦПУ стоят вне блоков классов, поэтому НУС в ДР — сам индекс ТУС.
-         * Неготовность (файл не подключён) — как у устройства ЕС: БНС
-         * (разр.1 ДР) и «есть ДРУ» (разр.12 ДР), а в ДРУ — «требуется
-         * вмешательство оператора», второй сверху разряд байта уточнённого
-         * состояния (разр.47). ДАЙКОТ собирает эти разряды в код ответа,
-         * ПЕЧАТЬ проверяет его маской КСБДР и печатает «СБОЙ АЦПУn».
+         * АЦПУ и устройства ввода стоят вне блоков классов, поэтому НУС в ДР —
+         * сам индекс ТУС.
+         * Неготовность (файл не подключён, колода или лента кончилась) —
+         * состояние устройства, а не сбой канала, и в ДР кроме НУС ничего нет:
+         *  - БНС (разр.1) при сброшенном ВУНН (разр.13) АДАП считает сбоем
+         *    обмена и сбрасывает ПВВ (ПВВ.bemsh: И ОШДР / НТЖ =В'1' / ПЕ БЕЗОШБ);
+         *  - НУС АДАП берёт как (мл16 >> 2) & 01777, то есть разр.3-12, и любой
+         *    лишний разряд там уводит ИНДБУД в чужую запись БУДКАН (ОШД12).
+         * Состояние — только в ДРУ: «требуется вмешательство оператора»,
+         * второй сверху разряд байта уточнённого состояния (разр.47). ДАЙКОТ
+         * читает ДРУ всегда; ПЕЧАТЬ проверяет код маской КСБДР, В1К — в РАБВ.
          */
-        memory[z + 5] = ((t_value)(nus << 2) & 0177777) |
-            ((r == SCPE_OK) ? 0 : (04000 | 1));
+        memory[z + 5] = (t_value)(nus << 2) & 0177777;
         memory[z + 6] = (r == SCPE_OK) ? 0 : ((t_value)1 << 46) << 16;
     } else {
         memory[z + 5] = ((t_value)((r == SCPE_OK) ? 0 : 1) << 16) |
