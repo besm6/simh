@@ -303,6 +303,7 @@ void iom_reset(int index)
 #define IOM_ACPU_CHANNEL    4           /* канал АЦПУ0 (ТУС 017); АЦПУ1 — Х'5' (ТУС 077) */
 #define IOM_TUS_CLASS_PK    0101        /* считыватель перфокарт: ПК0 (ТУС 014), ПК1 (074) */
 #define IOM_TUS_CLASS_FS    0102        /* фотосчитыватель ленты: ФС0 (ТУС 010), ФС1 (070) */
+#define IOM_TUS_CLASS_PI    0103        /* перфоратор карт: ПИ0 (ТУС 015), ПИ1 (075) */
 #define IOM_ES_CLASS(c)     ((c) >= IOM_TUS_CLASS_ACPU)   /* устройство ЕС-канала */
 #define IOM_TUS_BLOCK       020         /* записей в блоке одного класса */
 
@@ -335,8 +336,9 @@ static int iom_tus_class(IOMDATA *iom, int nus, int *unit)
         return -1;
 
     /*
-     * Устройства ввода тоже вне блоков классов. ФС делит канал с ПЛ
-     * (Х'9' и Х'7'), поэтому их узнаём по индексу ТУС (адап.bemsh, ТУС).
+     * Устройства ввода и перфоратор тоже вне блоков классов. ФС делит канал
+     * с ПЛ (Х'9' и Х'7'), ПИ0 и ПИ1 — один канал Х'6', поэтому их узнаём по
+     * индексу ТУС (адап.bemsh, ТУС).
      */
     if ((memory[a] >> 16) & BITS48) {
         switch (nus) {
@@ -344,6 +346,8 @@ static int iom_tus_class(IOMDATA *iom, int nus, int *unit)
         case 074: *unit = 1; return IOM_TUS_CLASS_PK;
         case 010: *unit = 0; return IOM_TUS_CLASS_FS;
         case 070: *unit = 1; return IOM_TUS_CLASS_FS;
+        case 015: *unit = 0; return IOM_TUS_CLASS_PI;
+        case 075: *unit = 1; return IOM_TUS_CLASS_PI;
         }
     }
 
@@ -515,6 +519,8 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
             snprintf(zbuf, sizeof(zbuf), "ПК%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
         else if (devclass == IOM_TUS_CLASS_FS)
             snprintf(zbuf, sizeof(zbuf), "ФС%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
+        else if (devclass == IOM_TUS_CLASS_PI)
+            snprintf(zbuf, sizeof(zbuf), "ПИ%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
         else if (devclass == IOM_TUS_CLASS_MB)
             snprintf(zbuf, sizeof(zbuf), "%02o/%02o", 010 + zone / 040, zone % 040);
         else
@@ -595,6 +601,16 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
     case IOM_TUS_CLASS_FS:
         r = svs_tape_io(dev, (int)((spu >> 30) & 0xFF), memaddr, nwords);
         break;
+    case IOM_TUS_CLASS_PI:
+        /*
+         * Длина — РАЗМ слов плюс НПС байтов в следующем слове: поле НПС
+         * запроса ЕС (СМ разр.41-39) ОБЩН кладёт в разр.29-31 значения ДО,
+         * т.е. в разр.44-46 64-разрядного слова. Карта ЕСПИ80 — 26 слов и
+         * 4 байта = 160.
+         */
+        r = svs_punch_io(dev, (int)((spu >> 30) & 0xFF), memaddr,
+            6 * nwords + (int)((memory[z + 2] >> 44) & 7));
+        break;
     default:
         r = SCPE_NXDEV;
         break;
@@ -606,7 +622,8 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
             (devclass == IOM_TUS_CLASS_MB) ? "svs_drum_io" :
             (devclass == IOM_TUS_CLASS_ACPU) ? "svs_printer_io" :
             (devclass == IOM_TUS_CLASS_PK) ? "svs_card_io" :
-            (devclass == IOM_TUS_CLASS_FS) ? "svs_tape_io" : "класс не поддержан",
+            (devclass == IOM_TUS_CLASS_FS) ? "svs_tape_io" :
+            (devclass == IOM_TUS_CLASS_PI) ? "svs_punch_io" : "класс не поддержан",
             (r == SCPE_OK) ? "OK" : "ОШИБКА");
 
     /*

@@ -498,6 +498,12 @@ void utf8_putc(unsigned ch, FILE *fout);
 extern DEVICE vu_dev, fs_dev;
 t_stat svs_card_io(int num, int kop, int memaddr, int nwords);
 t_stat svs_tape_io(int num, int kop, int memaddr, int nwords);
+
+/*
+ * Перфоратор карт (PI) на ЕС-канале.
+ */
+extern DEVICE pi_dev;
+t_stat svs_punch_io(int num, int kop, int memaddr, int nbytes);
 t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 
