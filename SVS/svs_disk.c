@@ -502,6 +502,7 @@ t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
      * слово несёт настоящий тег (035/036) из образа диска, и он же переносится
      * в распакованное слово через TagR (см. комментарий в svs_disk_read). */
     for (j = 0; j < ZONE_DATA_WORDS / 3; ++j) {
+        int g = (ZONE_DATA_WORDS / 3 - 1) - j;      /* S — в обратном порядке, как при чтении */
         t_value s = 0;
 
         int touched = 0;
@@ -513,7 +514,7 @@ t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
             if (off >= nwords) {
                 /* Слово вне заявки — оставляем то, что уже лежит в зоне. */
                 t_value old_d = buf[8 + ZONE_DATA_WORDS/3 + 3*j + k] & BITS48;
-                s = (s << 16) | ((buf[8 + j] >> (32 - 16*k)) & 0xFFFF);
+                s = (s << 16) | ((buf[8 + g] >> (32 - 16*k)) & 0xFFFF);
                 buf[8 + ZONE_DATA_WORDS/3 + 3*j + k] =
                     old_d | ((t_value)DISK_TAG_INSN << 48);
                 continue;
@@ -527,7 +528,7 @@ t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
             s = (s << 16) | frag;
         }
         if (touched)
-            buf[8 + j] = s | ((t_value)DISK_TAG_INSN << 48);
+            buf[8 + g] = s | ((t_value)DISK_TAG_INSN << 48);
     }
 
     if (u->dptr->dctrl & DEB_DAT)
