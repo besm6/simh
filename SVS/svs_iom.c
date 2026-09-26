@@ -299,6 +299,8 @@ void iom_reset(int index)
 #define IOM_ZONE_SERVICE    8           /* служебных слов в зоне */
 #define IOM_TUS_CLASS_MB    4           /* класс МБ (барабан): ТУСМБ@030460, канал Х'20' */
 #define IOM_TUS_CLASS_MD    5           /* класс МД (диск):    ТУСМД@030500, канал Х'22' */
+#define IOM_TUS_CLASS_ACPU  0100        /* АЦПУ: не блок ТУС, узнаётся по каналу */
+#define IOM_ACPU_CHANNEL    4           /* канал АЦПУ0 (ТУС 017); АЦПУ1 — Х'5' (ТУС 077) */
 #define IOM_TUS_BLOCK       020         /* записей в блоке одного класса */
 
 /* Смещение блока класса в ТУС: класс k лежит по k*16 (МБ 4*16=0100, МД 5*16=0120). */
@@ -328,6 +330,17 @@ static int iom_tus_class(IOMDATA *iom, int nus, int *unit)
     a = iom->UTA + nus;
     if (a >= MEMSIZE)
         return -1;
+
+    /*
+     * АЦПУ стоят вне блоков классов (ТУС 017 и 077, а младшее поле там —
+     * номер блока: 0 и 3, как у соседних МЛ). Узнаём их по номеру канала,
+     * разр.33-38 слова ТУС: Х'4' — АЦПУ0, Х'5' — АЦПУ1 (адап.bemsh, БУДКАН).
+     */
+    cls = (int)((memory[a] >> (16 + 32)) & 077);
+    if (cls == IOM_ACPU_CHANNEL || cls == IOM_ACPU_CHANNEL + 1) {
+        *unit = cls - IOM_ACPU_CHANNEL;
+        return IOM_TUS_CLASS_ACPU;
+    }
 
     cls = (int)((memory[a] >> 16) & 07777);      /* младшее поле записи ТУС */
     if (cls <= 0 || IOM_TUS_CLASS_BASE(cls) > nus)
@@ -361,7 +374,7 @@ static int iom_addr_ok(IOMDATA *iom, const char *what, uint32 addr)
  *   сл.4 СПУ — физический адрес зоны. Ответ устройства — в сл.5/6 (ДР/ДРУ).
  * dev — номер устройства МД (из НАПРУС; здесь 0 = канал 0, устройство 0).
  */
-static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
+static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, int nus)
 {
     /* Слова данных: (значение48<<16)|мл16; значащие 48 разр. — в СТАРШЕЙ
      * части 64-битного слова, поэтому извлекаем сдвигом вправо на 16
@@ -480,7 +493,9 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
          */
         char zbuf[32];
 
-        if (devclass == IOM_TUS_CLASS_MB)
+        if (devclass == IOM_TUS_CLASS_ACPU)
+            snprintf(zbuf, sizeof(zbuf), "АЦПУ%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
+        else if (devclass == IOM_TUS_CLASS_MB)
             snprintf(zbuf, sizeof(zbuf), "%02o/%02o", 010 + zone / 040, zone % 040);
         else
             snprintf(zbuf, sizeof(zbuf), "%o", zone);
@@ -550,6 +565,10 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
          */
         r = svs_drum_io(dev, zone, sector, memaddr, !is_read, nwords);
         break;
+    case IOM_TUS_CLASS_ACPU:
+        /* КОП команды ЕС-канала — разр.31-38 СПУ (ОБЩН в ПВВ.bemsh). */
+        r = svs_printer_io(dev, (int)((spu >> 30) & 0xFF), memaddr, nwords);
+        break;
     default:
         r = SCPE_NXDEV;
         break;
@@ -558,7 +577,8 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
     if (SVS_DEV_TRACE())
         fprintf(sim_deb, "iom%d ---   %s → %s\n", iom->index,
             (devclass == IOM_TUS_CLASS_MD) ? "svs_disk_io" :
-            (devclass == IOM_TUS_CLASS_MB) ? "svs_drum_io" : "класс не поддержан",
+            (devclass == IOM_TUS_CLASS_MB) ? "svs_drum_io" :
+            (devclass == IOM_TUS_CLASS_ACPU) ? "svs_printer_io" : "класс не поддержан",
             (r == SCPE_OK) ? "OK" : "ОШИБКА");
 
     /*
@@ -586,9 +606,23 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev)
      * (ОШДВР2 не срабатывает), и ИНДБУД находит канал МД (Х'22') в БУДКАН ровно
      * за 18 итераций — по индексу 17, где 0x22 и стоит.
      */
-    memory[z + 5] = ((t_value)((r == SCPE_OK) ? 0 : 1) << 16) |
-        (((t_value)(IOM_TUS_CLASS_BASE(devclass) + ((spu >> 38) & 017)) << 2) & 0177777);
-    memory[z + 6] = 0;
+    if (devclass == IOM_TUS_CLASS_ACPU) {
+        /*
+         * АЦПУ стоят вне блоков классов, поэтому НУС в ДР — сам индекс ТУС.
+         * Неготовность (файл не подключён) — как у устройства ЕС: БНС
+         * (разр.1 ДР) и «есть ДРУ» (разр.12 ДР), а в ДРУ — «требуется
+         * вмешательство оператора», второй сверху разряд байта уточнённого
+         * состояния (разр.47). ДАЙКОТ собирает эти разряды в код ответа,
+         * ПЕЧАТЬ проверяет его маской КСБДР и печатает «СБОЙ АЦПУn».
+         */
+        memory[z + 5] = ((t_value)(nus << 2) & 0177777) |
+            ((r == SCPE_OK) ? 0 : (04000 | 1));
+        memory[z + 6] = (r == SCPE_OK) ? 0 : ((t_value)1 << 46) << 16;
+    } else {
+        memory[z + 5] = ((t_value)((r == SCPE_OK) ? 0 : 1) << 16) |
+            (((t_value)(IOM_TUS_CLASS_BASE(devclass) + ((spu >> 38) & 017)) << 2) & 0177777);
+        memory[z + 6] = 0;
+    }
 
     /*
      * Связываем завершённую заявку с ДВРПВВ, чтобы обработчик ПРПВВ (ГАСИПР)
@@ -798,7 +832,7 @@ static void iom_pusk_obmen(IOMDATA *iom, int cmd_nus)
             if (SVS_DEV_TRACE())
                 fprintf(sim_deb, "iom%d --- ПУСКОБ: работа найдена в ТОЧ[%d]"
                     " (НУС из команды %d)\n", iom->index, nus, cmd_nus);
-            iom_xfer_zaiavka(iom, z, devclass, unit);
+            iom_xfer_zaiavka(iom, z, devclass, unit, nus);
             z = next;
         }
 
@@ -875,7 +909,7 @@ void iom_service_tvzp(int index)
             fprintf(sim_deb, "iom%d --- ТВЗП: класс %d устр %d по ТУС (НУС=%d)\n",
                 iom->index, devclass, unit, nus);
         }
-        iom_xfer_zaiavka(iom, z, devclass, unit);
+        iom_xfer_zaiavka(iom, z, devclass, unit, nus);
     }
 
     /* Снимаем СЕМБИТ в слоте ТВЗП — канал освободил заявку (обмен завершён).
@@ -916,7 +950,7 @@ static void iom_pobr(IOMDATA *iom, uint32 z, int nus)
         fprintf(sim_deb, "iom%d --- ПОБР: БВВ@%o класс %d устр %d\n",
             iom->index, z, devclass, unit);
 
-    r = iom_xfer_zaiavka(iom, z, devclass, unit);
+    r = iom_xfer_zaiavka(iom, z, devclass, unit, nus);
 
     /*
      * Слово состояния по ячейке 0105 (IOM_POBR_STATUS).

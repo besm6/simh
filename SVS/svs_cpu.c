@@ -286,6 +286,7 @@ DEVICE *sim_devices[] = {
     &tty_dev,           /* терминалы */
     &disk_dev,          /* магнитные диски */
     &drum_dev,          /* магнитные барабаны */
+    &printer_dev,       /* АЦПУ */
     0
 };
 
@@ -1282,7 +1283,11 @@ void cpu_one_instr(CORE *cpu)
         cpu->ACC += mmu_load(cpu, cpu->Aex);
         if (cpu->ACC & BIT49)
             cpu->ACC = (cpu->ACC + 1) & BITS48;
-        cpu->RMR = 0;
+        /*
+         * РМР сохраняется: ПВВ.bemsh кладёт адрес массива в РМР (СДА 64+16),
+         * прибавляет длину командой СЛЦ и пишет ДО командой ЗПП (ОБЩН, 4631;
+         * то же на 3791).
+         */
         cpu->RAU = SET_MULTIPLICATIVE(cpu->RAU);
         delay = MEAN_TIME(3, 6);
         break;

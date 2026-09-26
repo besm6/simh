@@ -484,6 +484,13 @@ t_stat svs_disk_io(int dev, int zone, int sysaddr, int memaddr, int is_write, in
 extern DEVICE drum_dev;
 t_stat svs_drum_io(int dev, int zone, int sector,
                    int memaddr, int is_write, int nwords);
+
+/*
+ * АЦПУ (два принтера на ЕС-канале).
+ */
+extern DEVICE printer_dev;
+t_stat svs_printer_io(int num, int kop, int memaddr, int nwords);
+void utf8_putc(unsigned ch, FILE *fout);
 t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 

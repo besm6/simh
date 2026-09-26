@@ -2477,7 +2477,7 @@ SVSD = ${SIMHD}/SVS
 SVS = ${SVSD}/svs_cpu.c ${SVSD}/svs_sys.c ${SVSD}/svs_mmu.c \
         ${SVSD}/svs_arith.c ${SVSD}/svs_trace.c ${SVSD}/svs_mpd.c \
         ${SVSD}/svs_iom.c ${SVSD}/svs_disk.c ${SVSD}/svs_drum.c \
-        ${SVSD}/svs_panel.c
+        ${SVSD}/svs_panel.c ${SVSD}/svs_printer.c
 SVS_OPT = -I ${SVSD} -DUSE_INT64 -DNUM_CORES=4 $(VIDEO_TTF_OPT)
 
 PDP6D = ${SIMHD}/PDP10
