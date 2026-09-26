@@ -27,9 +27,11 @@
  * Устройства ввода Диспака (модуль В1К), команды SIMH — как у БЭСМ-6:
  *
  *   VU  vu0 = ПК0 (ТУС 014), vu1 = ПК1 (ТУС 074) — считыватель перфокарт.
- *       attach VU0 колода.txt: текст UTF-8, строка — перфокарта в строчном
- *       коде УПП («слойка»: 12 строк по 80 пробивок, до 120 знаков), либо
- *       «картинка» из O и . (12 строк по 80), как в besm6_vu.c.
+ *       attach VU0 колода.txt: текст UTF-8, как в besm6_vu.c: строка —
+ *       перфокарта в строчном коде УПП («слойка»: 12 строк по 80 пробивок, до
+ *       120 знаков); «картинка» из O и . (12 строк по 80); строка из шести `
+ *       — карта «диспетчерский конец»; SET VUn UPDK=a-b — карты a..b в
+ *       колонном коде УПДК.
  *   FS  fs0 = ФС0 (ТУС 010), fs1 = ФС1 (ТУС 070) — фотосчитыватель ленты.
  *       attach FS0 лента.bin: восьмидорожечные кадры как есть;
  *       attach -t FS0 лента.txt: текст UTF-8 -> УПП (ГОСТ 10859 с дополнением
@@ -55,7 +57,52 @@ UNIT fs_unit[NUM_READERS] = {
 
 static REG vu_reg[] = { { 0 } };
 static REG fs_reg[] = { { 0 } };
-static MTAB vu_mod[] = { { 0 } };
+static unsigned int vu_updkstart[NUM_READERS], vu_updkend[NUM_READERS];
+
+/*
+ * SET VUn UPDK=начало-конец: карты с этими номерами — в колонном коде УПДК
+ * (0-0 — выключить, без значения — со второй карты до конца), как в
+ * besm6_vu.c.
+ */
+static t_stat vu_set_updk(UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    unsigned start, end;
+    int num = u - vu_unit;
+
+    if (!cptr) {
+        sim_printf("Range set to MAX\n");
+        vu_updkstart[num] = 1;
+        vu_updkend[num] = 0;
+        return SCPE_OK;
+    }
+    if (sscanf(cptr, "%u-%u", &start, &end) != 2 ||
+        (start == 0 && end != 0) || (end != 0 && end < start)) {
+        sim_printf("Range required, e.g. 10-100, or 0-0 to disable.\n");
+        return SCPE_ARG;
+    }
+    vu_updkstart[num] = start;
+    vu_updkend[num] = end;
+    return SCPE_OK;
+}
+
+static t_stat vu_show_updk(FILE *st, UNIT *u, int32 v, CONST void *dp)
+{
+    int num = u - vu_unit;
+
+    if (vu_updkstart[num] == 0 && vu_updkend[num] == 0)
+        fprintf(st, "UPDK disabled");
+    else if (vu_updkend[num] == 0)
+        fprintf(st, "UPDK card %d to EOF", vu_updkstart[num]);
+    else
+        fprintf(st, "UPDK cards %d-%d", vu_updkstart[num], vu_updkend[num]);
+    return SCPE_OK;
+}
+
+static MTAB vu_mod[] = {
+    { MTAB_XTD|MTAB_VUN, 0, "UPDK", "UPDK", &vu_set_updk, &vu_show_updk, NULL,
+      "Use the columnwise UPDK code for a range of cards" },
+    { 0 }
+};
 static MTAB fs_mod[] = { { 0 } };
 
 #define DEB_OPS 000001
@@ -252,88 +299,202 @@ static void put_bytes(int memaddr, int nwords, const unsigned char *buf, int n)
 }
 
 /*
- * Перфокарта: 80 колонок по 12 пробивок; разряд i колонки — строка i
- * сверху (12, 11, 0, 1, ..., 9), как vu_image в besm6_vu.c.
+ * Перфокарта — как в besm6_vu.c: vu_gost — до 120 знаков ГОСТ строки
+ * (0377 — за концом строки), vu_image — 80 колонок по 12 пробивок, разряд i
+ * колонки — строка i сверху (12, 11, 0, 1, ..., 9).
  */
-typedef unsigned short CARD[80];
+#define GOST_DOT 016                    /* непробитая позиция */
+#define GOST_O   056                    /* пробитая позиция */
+#define DISP_END "\032\032\032\032\032\032\377"   /* карта «диспетчерский конец» */
+
+static unsigned char vu_gost[NUM_READERS][120];
+static unsigned short vu_image[NUM_READERS][80];
 
 /*
- * «Картинка» карты: первая строка из 80 знаков O и . (разбор prettycard
- * в besm6_vu.c). Остальные 11 строк дочитываются из файла.
+ * Строка "0-9+-" -> 12 разрядов пробивок (punch в besm6_vu.c).
  */
-static int is_prettyline(const unsigned short *line, int len)
+static int punch(const char *s)
+{
+    int r = 0;
+
+    while (*s) {
+        r |= *s >= '0' ? 4 << (*s - '0') : *s == '+' ? 1 : *s == '-' ? 2 : 0;
+        ++s;
+    }
+    return r;
+}
+
+/*
+ * ГОСТ -> колонный код УПДК (gost_to_updk в besm6_vu.c).
+ */
+static unsigned short gost_to_updk(unsigned char ch)
+{
+    unsigned short ret;
+    static const char *upper[4] = { "", "+0", "-0", "+-" };
+    static const char *lower[2][16] = {
+        { "0", "1", "2",   "3",   "4",   "5",   "6",   "7",
+          "8", "9", "082", "083", "084", "085", "086", "087" },
+        { "390", "391",   "392",   "39210", "394",   "395",   "396",   "397",
+          "398", "39801", "39802", "39821", "39804", "39805", "39806", "39807" }
+    };
+
+    if (ch == 0377 /* заполнитель */ || ch == 017 /* пробел */)
+        ret = 0;
+    else
+        ret = punch(upper[(ch >> 4) & 3]) ^ punch(lower[ch >= 0100][ch & 0xF]);
+    return ret;
+}
+
+/*
+ * Строчный образ карты: знак i — строка i/10, колонки 8*(i%10)..+7
+ * (reverse_card в besm6_vu.c; raw — байты уже с чётностью).
+ */
+static void reverse_card(int num, int raw)
+{
+    int i, j;
+
+    memset(vu_image[num], 0, sizeof(vu_image[num]));
+    for (i = 0; i < 120; ++i) {
+        unsigned char ch = vu_gost[num][i];
+        int mask = 1 << (i / 10);
+        int pos = 8 * (i % 10);
+
+        if (!raw) {
+            if (ch == 0377)
+                break;
+            ch = gost_to_upp(ch);
+        }
+        for (j = 7; j >= 0; --j) {
+            if (ch & 1)
+                vu_image[num][pos + j] |= mask;
+            ch >>= 1;
+        }
+    }
+}
+
+/*
+ * Первая строка — 80 знаков O и . (is_prettycard в besm6_vu.c).
+ */
+static int is_prettycard(const unsigned char *s)
 {
     int i;
 
-    if (len != 80)
-        return 0;
     for (i = 0; i < 80; ++i)
-        if (line[i] != 'O' && line[i] != '.')
+        if (s[i] != GOST_DOT && s[i] != GOST_O)
+            return 0;
+    for (i = 80; i < 120; ++i)
+        if (s[i] != 0377)
             return 0;
     return 1;
 }
 
-/*
- * Прочитать из файла строку текста (до 120 знаков, остаток строки
- * отбрасывается). Возвращает длину или -1 в конце файла.
- */
-static int vu_read_line(FILE *f, unsigned short *line, int max)
+static int chad(int num, int bit, int val)
 {
-    int ch, len = 0;
+    int index = bit / 8;
 
-    ch = utf8_getc(f);
-    if (ch == EOF)
+    switch (val) {
+    case GOST_O:
+        vu_gost[num][index] <<= 1;
+        vu_gost[num][index] |= 1;
+        return 0;
+    case GOST_DOT:
+        vu_gost[num][index] <<= 1;
+        return 0;
+    default:
         return -1;
-    while (ch != EOF && ch != '\n') {
-        if (ch != '\r' && len < max)
-            line[len++] = ch;
-        ch = utf8_getc(f);
     }
-    return len;
 }
 
 /*
- * Следующая карта колоды. Возвращает 0 или -1 в конце колоды.
+ * «Картинка» карты: 12 строк по 80 знаков O и . (prettycard в besm6_vu.c).
  */
-static int vu_next_card(int num, CARD card)
+static int prettycard(UNIT *u)
 {
-    FILE *f = vu_unit[num].fileref;
-    unsigned short line[120];
-    int len, row, i, j;
+    int bit, ch;
+    int num = u - vu_unit;
 
-    len = vu_read_line(f, line, 120);
-    if (len < 0)
-        return -1;
-    memset(card, 0, sizeof(CARD));
-    ++vu_cardcnt[num];
-
-    if (is_prettyline(line, len)) {
-        for (row = 0; ; ) {
-            for (i = 0; i < 80; ++i)
-                if (line[i] == 'O')
-                    card[i] |= 1 << row;
-            if (++row == 12)
-                break;
-            len = vu_read_line(f, line, 120);
-            if (!is_prettyline(line, len)) {
-                sim_printf("VU%d: карта %d: картинка испорчена\n", num, vu_cardcnt[num]);
-                break;
-            }
-        }
-        return 0;
+    for (bit = 0; bit < 80; bit++) {
+        /* первая строка уже проверена */
+        chad(num, bit, vu_gost[num][bit]);
     }
-
-    /* Строчный код: знак i — строка i/10, колонки 8*(i%10)..+7. */
-    for (i = 0; i < len; ++i) {
-        unsigned char ch = gost_to_upp(unicode_to_gost(line[i]));
-        int mask = 1 << (i / 10);
-        int pos = 8 * (i % 10);
-
-        for (j = 7; j >= 0; --j) {
-            if (ch & 1)
-                card[pos + j] |= mask;
-            ch >>= 1;
+    for (bit = 80; bit < 12*80; bit++) {
+        ch = utf8_getc(u->fileref);
+        if (ch == '\n' && bit % 80 == 0)
+            ch = utf8_getc(u->fileref);
+        ch = unicode_to_gost(ch);
+        if (chad(num, bit, ch))
+            return -1;
+        if (bit % 80 == 79) {
+            do
+                ch = utf8_getc(u->fileref);
+            while (ch == '\r');
+            if (ch != '\n')
+                return -1;
         }
+    }
+    /* после карты может быть пустая строка */
+    ch = getc(u->fileref);
+    if (ch != '\n')
+        ungetc(ch, u->fileref);
+    return 0;
+}
+
+/*
+ * Следующая карта колоды — начало vu_event (VU_STARTING) из besm6_vu.c.
+ * Возвращает 0 или -1 в конце колоды.
+ */
+static int vu_next_card(int num)
+{
+    UNIT *u = &vu_unit[num];
+    int ch, endline = 0, i;
+
+    do
+        ch = utf8_getc(u->fileref);
+    while (ch == '\r');
+    if (ch == EOF)
+        return -1;
+
+    ++vu_cardcnt[num];
+    for (i = 0; i < 120; ++i) {
+        if (endline) {
+            vu_gost[num][i] = 0377;
+        } else {
+            int gost;
+
+            if (ch == EOF || ch == '\n') {
+                endline = 1;
+                gost = 0377;
+            } else {
+                gost = unicode_to_gost(ch);
+            }
+            vu_gost[num][i] = gost;
+            if (!endline && i != 119)
+                do
+                    ch = utf8_getc(u->fileref);
+                while (ch == '\r');
+        }
+    }
+    if (!endline) {
+        /* Строка длиннее 120 знаков: остаток до конца строки отбрасывается. */
+        do
+            ch = utf8_getc(u->fileref);
+        while (ch != '\n' && ch != EOF);
+    }
+    if (0 == memcmp(vu_gost[num], DISP_END, 7)) {
+        /* Карта «диспетчерский конец»: конец ввода образов карт. */
+        memset(vu_image[num], 0, sizeof(vu_image[num]));
+        vu_image[num][0] = vu_image[num][40] = 0xFFF;
+    } else if (is_prettycard(vu_gost[num])) {
+        if (prettycard(u) < 0)
+            sim_printf("VU-%d: A badly formatted card image at card %d, garbage will follow\n",
+                num, vu_cardcnt[num]);
+        reverse_card(num, 1);           /* как есть */
+    } else if (vu_updkstart[num] != 0 && vu_cardcnt[num] >= vu_updkstart[num] &&
+               (vu_updkend[num] == 0 || vu_cardcnt[num] <= vu_updkend[num])) {
+        for (i = 0; i < 80; ++i)
+            vu_image[num][i] = gost_to_updk(vu_gost[num][i]);
+    } else {
+        reverse_card(num, 0);           /* с чётностью */
     }
     return 0;
 }
@@ -350,7 +511,6 @@ static int vu_next_card(int num, CARD card)
 t_stat svs_card_io(int num, int kop, int memaddr, int nwords)
 {
     UNIT *u;
-    CARD card;
     unsigned char buf[160];
     int i;
 
@@ -361,7 +521,7 @@ t_stat svs_card_io(int num, int kop, int memaddr, int nwords)
         num, kop, nwords, memaddr);
     if (!(u->flags & UNIT_ATT))
         return SCPE_UNATT;
-    if (vu_next_card(num, card) < 0) {
+    if (vu_next_card(num) < 0) {
         sim_debug(DEB_OPS, &vu_dev, "ПК%d: колода кончилась\n", num);
         detach_unit(u);
         return SCPE_UNATT;
@@ -370,7 +530,7 @@ t_stat svs_card_io(int num, int kop, int memaddr, int nwords)
         int col = 0, k;
 
         for (k = 0; k < 12; ++k)                /* строка 0 — в старший разряд */
-            if (card[i] & (1 << k))
+            if (vu_image[num][i] & (1 << k))
                 col |= 1 << (11 - k);
         buf[2*i]     = (col >> 6) & 077;
         buf[2*i + 1] = col & 077;
