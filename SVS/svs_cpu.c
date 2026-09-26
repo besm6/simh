@@ -1975,7 +1975,13 @@ ret:        svs_draw_panel(1);
                 goto ret;
             op_int_1(cpu, sim_stop_messages[r]);
             // SPSW_NEXT_RK must be 0 for this interrupt; it is already
-            cpu->RPR |= RPR_INSN_CHECK;
+            /*
+             * Выборка слова с некомандным тегом — 25 р. ГРП (НКТ). Диспак
+             * снимает по нему задачу с кодом 20 «КОНТРОЛЬ КОМАНДЫ» (ВЫБОР,
+             * дисп80.bemsh:1125-1132); 15 р. — аппаратный КК, на него
+             * Диспак останавливается (СТ400, авост.bemsh:16).
+             */
+            cpu->RPR |= RPR_INSN_TAG;
             break;
         case STOP_INSN_PROT:
             if (cpu->M[PSW] & PSW_INTR_HALT)        /* ПоП */

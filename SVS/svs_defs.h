@@ -519,6 +519,7 @@ extern int ipzzt;               /* ИПЗЖТ */
  */
 #define RPR_WATCHDOG    00000000000002000LL /* 11 */
 /* Внутренние: */
+#define RPR_INSN_TAG    00000000100000000LL /* 25 - некомандный тег (НКТ) */
 #define RPR_BAD_VALUE   00000000040000000LL /* 24 */
 #define RPR_DIVZERO     00000000034000000LL /* 23-21 */
 #define RPR_OVERFLOW    00000000014000000LL /* 22-21 */
