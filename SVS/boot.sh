@@ -25,6 +25,8 @@
 # KEEP_DRUM=1 / KEEP_DISK=1 оставляют drum5.bin / svs2053-fixed.bin и
 # svs2048-fixed.bin от прошлого прогона — на них ОС читает результаты своего
 # же прошлого запуска.
+# KEEP_ARCHIVE=1 собирает образ с включённым архивом (makeSVS2053.py
+# --keep-archive) — для воспроизведения останова, связанного с задачей архива.
 
 set -e
 
@@ -48,10 +50,15 @@ if [ ! -x ../BIN/svs ]; then
     exit 2
 fi
 
+MK2053_OPTS=()
+if [ "${KEEP_ARCHIVE:-0}" = 1 ]; then
+    MK2053_OPTS+=(--keep-archive)
+fi
+
 if [ "${KEEP_DISK:-0}" = 1 ] && [ -f "$IMG" ]; then
     echo "boot.sh: образ $IMG оставлен от прошлого прогона"
 else
-    python3 tools/makeSVS2053.py "$SRC" "$IMG"
+    python3 tools/makeSVS2053.py "${MK2053_OPTS[@]}" "$SRC" "$IMG"
 fi
 
 if [ "${KEEP_DISK:-0}" = 1 ] && [ -f svs2048-fixed.bin ]; then

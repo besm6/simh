@@ -82,6 +82,19 @@
 #define DISK_TAG_DATA   2                   /* 7-й байт: число   */
 
 /*
+ * Разметка нового тома (`attach -n`) — в том же виде, что оставляет
+ * tools/makeSVS2053.py:
+ *   СС[0], СС[4]   разр.48-37 — номер зоны, НЕ удвоенный, одинаковый в обоих;
+ *   СС[1], СС[5]   разр.43, 41, 40, ключ 070707 в разр.39-25,
+ *                  номер пакета (тома) в разр.24-13;
+ *   СС[2], СС[6]   0;
+ *   СС[3], СС[7]   контрольная сумма данных — 0 для нулевых слов.
+ * Число зон — как у всех образов СВС (8379840 байт).
+ */
+#define SS_KEY_WORD 0137070700000000LL
+#define DISK_ZONES  1015
+
+/*
  * Параметры обмена с устройством МД.
  */
 typedef struct {
@@ -303,16 +316,86 @@ static void disk_load_autotime_syms(UNIT *u)
     autotime_sym_unit = u;
 }
 
+static t_stat disk_format(UNIT *u, int volume)
+{
+    const t_value tag = (t_value)DISK_TAG_DATA << 48;
+    t_value buf[ZONE_SIZE];
+    int i, zone;
+
+    for (i = 0; i < ZONE_SIZE; ++i)
+        buf[i] = tag;
+    buf[1] = buf[5] = tag | SS_KEY_WORD | ((t_value)volume << 12);
+
+    for (zone = 0; zone < DISK_ZONES; ++zone) {
+        buf[0] = buf[4] = tag | ((t_value)zone << 36);
+        if (sim_fwrite(buf, 8, ZONE_SIZE, u->fileref) != ZONE_SIZE)
+            return SCPE_IOERR;
+    }
+    return SCPE_OK;
+}
+
+/*
+ * Номер тома — самая правая группа цифр в имени файла,
+ * например "/var/tmp/svs/svs2099.bin" -> 2099.
+ */
+static int disk_volume_from_name(UNIT *u)
+{
+    char *name = sim_filepath_parts(u->filename, "n");
+    const char *pos;
+    int volume;
+
+    if (!name)
+        return 0;
+    pos = name + strlen(name);
+    while (pos > name && !isdigit((unsigned char)*--pos))
+        ;
+    while (pos > name && isdigit((unsigned char)*pos))
+        --pos;
+    if (!isdigit((unsigned char)*pos))
+        ++pos;
+    volume = (int)strtoul(pos, NULL, 10);
+    free(name);
+    return volume;
+}
+
 static t_stat disk_attach(UNIT *u, CONST char *cptr)
 {
     t_stat r;
     char *basename;
+    int format = (sim_switches & SWMASK('N')) != 0;
 
-    /* Образ диска существует заранее; принудительно требуем '-e'. */
+    /* Образ диска существует заранее; принудительно требуем '-e'.
+     * С '-n' SIMH создаёт файл заново, '-e' этому не мешает. */
     sim_switches |= SWMASK('E');
     r = attach_unit(u, cptr);
     if (r != SCPE_OK)
         return r;
+
+    if (format) {
+        int volume = disk_volume_from_name(u);
+        char *path;
+
+        if (volume < 2048 || volume > 4095) {
+            if (volume == 0)
+                r = sim_messagef(SCPE_ARG,
+                                 "%s: filename must contain volume number 2048..4095\n",
+                                 sim_uname(u));
+            else
+                r = sim_messagef(SCPE_ARG,
+                                 "%s: disk volume %d from filename %s invalid (must be 2048..4095)\n",
+                                 sim_uname(u), volume, cptr);
+            path = strdup(u->filename);
+            detach_unit(u);
+            remove(path);
+            free(path);
+            return r;
+        }
+        sim_messagef(SCPE_OK, "%s: formatting disk volume %d\n", sim_uname(u), volume);
+        r = disk_format(u, volume);
+        if (r != SCPE_OK)
+            detach_unit(u);
+        return r;
+    }
 
     /* Том 2053: имя файла содержит «2053» (svs2053.bin, 2053, …). */
     basename = sim_filepath_parts(u->filename, "n");

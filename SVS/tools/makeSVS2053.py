@@ -71,9 +71,13 @@
 Подробности и замеры - ПВВ.md §7Б.9.
 
     python3 tools/makeSVS2053.py <дистрибутив> <копия> [--pack N] [--year Г]
+                                 [--keep-archive]
 
 --pack задаёт номер пакета восьмеричным числом (по умолчанию 4005),
 --year - год, в образ идёт его младшая цифра (по умолчанию текущий).
+--keep-archive оставляет архив включённым (разр.16 ПРЕДЕЛ не гасится),
+   и задача архива запускается наравне с прочими - для воспроизведения
+   поведения дистрибутивного образа (п.3 выше выполняется только без него).
 """
 import argparse
 import shutil
@@ -119,6 +123,9 @@ def main():
                     help="номер пакета, восьмеричный (по умолчанию 4005)")
     ap.add_argument("--year", type=int, default=time.localtime().tm_year,
                     help="год; в образ идёт младшая цифра (по умолчанию текущий)")
+    ap.add_argument("--keep-archive", action="store_true",
+                    help="не выключать архив (оставить разр.16 ПРЕДЕЛ,"
+                         " задача архива будет запущена)")
     args = ap.parse_args()
     digit = args.year % 10
 
@@ -177,7 +184,7 @@ def main():
                     continue
                 off = base + (v + PREDEL) * WORD
                 raw = word(v + PREDEL)
-                if raw & E16:
+                if raw & E16 and not args.keep_archive:
                     data[off:off + WORD] = struct.pack("<Q", raw & ~E16)
                     narch += 1
                 off = base + (v + KGOD) * WORD
@@ -199,8 +206,11 @@ def main():
     print("makeSVS2053: %s -> %s" % (args.src, args.dst))
     print("             зон %d; номер пакета -> %o в %d словах;"
           " номер зоны исправлен в %d словах" % (nzones, pack, npack, nzone))
-    print("             архив выключен в %d вариантах ГЕНС-а (зона %04o)"
-          % (narch, PARAM_ZONE))
+    if args.keep_archive:
+        print("             архив ОСТАВЛЕН включённым (зона %04o)" % PARAM_ZONE)
+    else:
+        print("             архив выключен в %d вариантах ГЕНС-а (зона %04o)"
+              % (narch, PARAM_ZONE))
     print("             год %d: цифра %d в %d вариантах" % (args.year, digit, nyear))
 
 
