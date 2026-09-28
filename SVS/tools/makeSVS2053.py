@@ -71,13 +71,17 @@
 Подробности и замеры - ПВВ.md §7Б.9.
 
     python3 tools/makeSVS2053.py <дистрибутив> <копия> [--pack N] [--year Г]
-                                 [--keep-archive]
+                                 [--keep-archive] [--zero-archive-params]
 
 --pack задаёт номер пакета восьмеричным числом (по умолчанию 4005),
 --year - год, в образ идёт его младшая цифра (по умолчанию текущий).
 --keep-archive оставляет архив включённым (разр.16 ПРЕДЕЛ не гасится),
    и задача архива запускается наравне с прочими - для воспроизведения
    поведения дистрибутивного образа (п.3 выше выполняется только без него).
+--zero-archive-params обнуляет данные зоны параметров архива (phys 0755),
+   сохраняя служебные слова и пересчитывая КС зоны в 0: задача архива читает
+   зону как пустую («нет параметров»), а не как испорченную. Не зависит от
+   --keep-archive.
 """
 import argparse
 import shutil
@@ -95,6 +99,7 @@ PACK_MASK = 0o7777 << 12            # разр.24-13: номер пакета
 ZONE_MASK = 0o7777 << 36            # разр.48-37: номер зоны
 PACK_DEFAULT = 0o4005               # 2053 - то, чего ждёт ВЫЗПВВ
 PARAM_ZONE = 0o754                  # КУСПАР: параметры ГЕНС-а
+ARCH_PARAM_ZONE = 0o755             # зона параметров архива (АРХИВ.md §8.2.3.2)
 VARIANT_WORDS = 0o40                # длина варианта ГЕНС-а
 VARIANT_SIG = 0o0000056000004005    # слово 0 варианта (ИНФО)
 PREDEL = 13                         # слово варианта -> ТРАКТЫ -> ПРЕДЕЛ
@@ -126,6 +131,10 @@ def main():
     ap.add_argument("--keep-archive", action="store_true",
                     help="не выключать архив (оставить разр.16 ПРЕДЕЛ,"
                          " задача архива будет запущена)")
+    ap.add_argument("--zero-archive-params", action="store_true",
+                    help="обнулить данные зоны параметров архива (phys 0755),"
+                         " СС оставить, КС пересчитать в 0 — задача архива"
+                         " увидит «нет параметров»")
     args = ap.parse_args()
     digit = args.year % 10
 
@@ -200,6 +209,25 @@ def main():
                     data[off:off + WORD] = struct.pack(
                         "<Q", (word(i) & ~M48) | cs)
 
+        nzeroed = 0
+        if args.zero_archive_params and ARCH_PARAM_ZONE < nzones:
+            base = ARCH_PARAM_ZONE * ZONE_WORDS * WORD
+
+            def aword(i):
+                return struct.unpack("<Q", data[base + i * WORD:
+                                                  base + (i + 1) * WORD])[0]
+
+            for i in range(8, ZONE_WORDS):      # только слова данных
+                off = base + i * WORD
+                raw = aword(i)
+                if raw & M48:                   # чистим значение, тег сохраняем
+                    data[off:off + WORD] = struct.pack("<Q", raw & ~M48)
+                    nzeroed += 1
+            cs = cyclic_sum48([aword(i) for i in range(8, ZONE_WORDS)])  # = 0
+            for i in (3, 7):                    # КС зоны -> 0, СС остальные целы
+                off = base + i * WORD
+                data[off:off + WORD] = struct.pack("<Q", (aword(i) & ~M48) | cs)
+
         f.seek(0)
         f.write(data)
 
@@ -212,6 +240,9 @@ def main():
         print("             архив выключен в %d вариантах ГЕНС-а (зона %04o)"
               % (narch, PARAM_ZONE))
     print("             год %d: цифра %d в %d вариантах" % (args.year, digit, nyear))
+    if args.zero_archive_params:
+        print("             параметры архива обнулены (зона %04o), слов %d"
+              % (ARCH_PARAM_ZONE, nzeroed))
 
 
 if __name__ == "__main__":

@@ -69,9 +69,76 @@ t_stat cpu_show_window(FILE *st, UNIT *up, int32 v, CONST void *dp);
  * `set cpu0 nowindow`. Пока окно не задано, трасса печатается везде.
  * Макрос TRACE_IN_WINDOW — в svs_defs.h, им пользуется и svs_mmu.c.
  */
+/*
+ * Часы 056 и таймер 057 считают микросекунды МОДЕЛЬНОГО времени, но не
+ * событием на каждую микросекунду: такое событие держит очередь SIMH всегда
+ * занятой, и sim_idle() не может уснуть. Значения досчитываются лениво
+ * (svs_time_sync) — при обращении к регистру и на каждом такте fast_clk, а
+ * переполнение таймера — одно событие clocks[1], поставленное при записи.
+ */
 t_value svs_clock = 0;                  /* регистр часов 056, 44 разр., 1 мкс */
 t_value svs_timer = 0;                  /* регистр таймера 057, 32 разр., 1 мкс */
 static int svs_timer_run = 0;           /* счёт идёт после записи в регистр */
+static t_value svs_timer_synced;        /* svs_timer после последней сверки */
+static double svs_last_gtime;           /* sim_gtime() последней сверки */
+static double svs_usec_frac;            /* недосчитанная доля микросекунды */
+
+/*
+ * Поставить событие переполнения таймера: через 2^32 - svs_timer мкс
+ * (при нуле — через полный круг, 2^32).
+ */
+static void svs_timer_schedule(void)
+{
+    sim_cancel(&clocks[1]);
+    sim_activate_after_d(&clocks[1], (double)((1ULL << 32) - svs_timer));
+    svs_timer_synced = svs_timer;
+}
+
+/*
+ * Досчитать часы и таймер до текущего модельного времени.
+ *
+ * Часы копят приращения sim_gtime(), пересчитанные по ТЕКУЩЕЙ калибровке:
+ * так они монотонны и при смене скорости. Таймер берётся из остатка до
+ * события переполнения, чтобы прочитанное значение не расходилось с
+ * моментом прерывания. Если значение таймера поменяли из sim> (`d TIMER`),
+ * событие переставляется под новое значение.
+ */
+static void svs_clock_sync(void)
+{
+    double now = sim_gtime();
+    double ips = sim_timer_inst_per_sec();
+    t_uint64 us;
+
+    if (ips > 0 && now > svs_last_gtime)
+        svs_usec_frac += (now - svs_last_gtime) * 1e6 / ips;
+    svs_last_gtime = now;
+    if (svs_usec_frac >= 1) {
+        us = (t_uint64)svs_usec_frac;
+        svs_usec_frac -= (double)us;
+        svs_clock = (svs_clock + us) & BITS44;
+    }
+}
+
+void svs_time_sync(void)
+{
+    svs_clock_sync();
+    if (!svs_timer_run)
+        return;
+    if (svs_timer != svs_timer_synced || !sim_is_active(&clocks[1])) {
+        svs_timer_schedule();
+        return;
+    }
+    {
+        double left = sim_activate_time_usecs(&clocks[1]) - 1.0;
+
+        if (left < 0)
+            left = 0;
+        if (left > (double)(1ULL << 32))
+            left = (double)(1ULL << 32);
+        svs_timer = ((1ULL << 32) - (t_uint64)ceil(left)) & BITS(32);
+        svs_timer_synced = svs_timer;
+    }
+}
 
 int autotime;                           /* задержка СМЕ/ВРЕ после первого ЖДУ, сек (0 = выкл) */
 static int autotime_armed;              /* срок уже поставлен после первого ЖДУ */
@@ -1007,6 +1074,7 @@ static void cmd_002(CORE *cpu)
 
     case 056:
         /* Запись в регистр часов: разр.44-1 сумматора. */
+        svs_clock_sync();
         svs_clock = cpu->ACC & BITS44;
         if (CPU_TRACE(cpu, DEB_INSN))
             fprintf(sim_deb, "cpu%d --- Установка часов: %015jo\n",
@@ -1015,6 +1083,7 @@ static void cmd_002(CORE *cpu)
 
     case 0256:
         /* Чтение регистра часов: разр.44-1 в сумматор. */
+        svs_clock_sync();
         cpu->ACC = svs_clock & BITS44;
         if (CPU_TRACE(cpu, DEB_INSN))
             fprintf(sim_deb, "cpu%d --- Чтение регистра часов: %015jo\n",
@@ -1023,8 +1092,10 @@ static void cmd_002(CORE *cpu)
 
     case 057:
         /* Запись в регистр таймера: разр.32-1 сумматора, счёт пошёл. */
+        svs_clock_sync();
         svs_timer = cpu->ACC & BITS(32);
         svs_timer_run = 1;
+        svs_timer_schedule();
         if (CPU_TRACE(cpu, DEB_INSN))
             fprintf(sim_deb, "cpu%d --- Установка таймера: %011jo"
                 " (прерывание через %ju мкс)\n", cpu->index,
@@ -1034,6 +1105,7 @@ static void cmd_002(CORE *cpu)
 
     case 0257:
         /* Чтение регистра таймера: разр.32-1 в сумматор. */
+        svs_time_sync();
         cpu->ACC = svs_timer & BITS(32);
         if (CPU_TRACE(cpu, DEB_INSN))
             fprintf(sim_deb, "cpu%d --- Чтение регистра таймера: %011jo\n",
@@ -1638,6 +1710,29 @@ transfer_modifier:
     case 0210:                                      /* э21 */
 stop_as_extracode:
             cpu->Aex = ADDR(addr + cpu->M[reg]);
+            /* ОТЛАДКА: вход в э50 '7701' (формирование задачи архива).
+             * Печатаем PC вызова, СМ и регистры до порчи их экстракодом,
+             * чтобы восстановить данные, отдаваемые задаче, для dispak. */
+            if (CPU_TRACE(cpu, DEB_EXTRA) && opcode == 050 && cpu->Aex == 07701) {
+                int di, base = ADDR(cpu->ACC), da;
+                sim_printf("==Э50 7701== PC=%05o рег=%o адр=%05o СМ=%016llo РМР=%016llo\n",
+                           trace_pc, reg, addr,
+                           (unsigned long long)cpu->ACC,
+                           (unsigned long long)cpu->RMR);
+                for (di = 1; di <= 017; di++)
+                    sim_printf("   M[%02o]=%05o\n", di, cpu->M[di]);
+                /* Блок данных задачи, на который указывает СМ. В memory[]
+                 * 48-битное слово лежит в старших разрядах (val<<16), поэтому
+                 * печатаем (load>>16)&BITS48 — само слово БЭСМ. */
+                for (da = 0; da < 0100; da += 4) {
+                    sim_printf("   @%05o: %016llo %016llo %016llo %016llo\n",
+                        ADDR(base + da),
+                        (unsigned long long)((mmu_load64(cpu, ADDR(base + da),   0)>>16)&BITS48),
+                        (unsigned long long)((mmu_load64(cpu, ADDR(base + da+1), 0)>>16)&BITS48),
+                        (unsigned long long)((mmu_load64(cpu, ADDR(base + da+2), 0)>>16)&BITS48),
+                        (unsigned long long)((mmu_load64(cpu, ADDR(base + da+3), 0)>>16)&BITS48));
+                }
+            }
             /* Адрес возврата из экстракода. */
             cpu->M[ERET] = nextpc;
             /* Сохранённые режимы УУ. */
@@ -2202,35 +2297,35 @@ t_stat fast_clk(UNIT *this)
         redraw_panel = 1;
     }
 
+    /* Свежие CLOCK и TIMER для `e` из sim>; заодно ловит `d TIMER`. */
+    svs_time_sync();
+
     tmr_poll = sim_rtcn_calb(TICKS_PER_SEC, 0);               /* calibrate clock */
     return sim_activate_after(this, 1000000/TICKS_PER_SEC);   /* reactivate unit */
 }
 
 /*
- * Ход часов 056 и таймера 057 — одна микросекунда реального времени.
- * Механизм тот же, что у fast_clk: агрегат перевзводит сам себя через
- * sim_activate_after(), так что темп задаёт калибровка SIMH, а не число
- * выполненных команд.
+ * Переполнение таймера 057: счёт дошёл до 2^32. Взводится разр.4 ГРВП,
+ * таймер обнуляется и считает дальше — следующее переполнение через полный
+ * круг, если ОС не перезаведёт регистр раньше. Ставит событие запись в 057
+ * (svs_timer_schedule), так что между прерываниями очередь SIMH свободна
+ * и sim_idle() может спать.
  */
-t_stat usec_tick(UNIT *this)
+t_stat timer_expire(UNIT *this)
 {
-    svs_clock = (svs_clock + 1) & BITS44;
+    CORE *cpu;
 
-    if (svs_timer_run) {
-        svs_timer = (svs_timer + 1) & BITS(32);
-        if (svs_timer == 0) {
-            CORE *cpu;
-
-            for (cpu = &cpu_core[0]; cpu < &cpu_core[NUM_CORES]; cpu++)
-                cpu->GRVP |= GRVP_TIMER;
-        }
-    }
-    return sim_activate_after(this, 1);                 /* 1 мкс */
+    svs_clock_sync();
+    svs_timer = 0;
+    for (cpu = &cpu_core[0]; cpu < &cpu_core[NUM_CORES]; cpu++)
+        cpu->GRVP |= GRVP_TIMER;
+    svs_timer_schedule();
+    return SCPE_OK;
 }
 
 UNIT clocks[] = {
     { UDATA(fast_clk, UNIT_IDLE, 0), INSN_PER_TICK },   /* пульт и калибровка, 250 Гц */
-    { UDATA(usec_tick, UNIT_IDLE, 0), 1 },              /* часы 056 и таймер 057, 1 мкс */
+    { UDATA(timer_expire, UNIT_IDLE, 0), 0 },           /* переполнение таймера 057 */
 };
 
 t_stat clk_reset(DEVICE *dev)
@@ -2242,7 +2337,10 @@ t_stat clk_reset(DEVICE *dev)
     if (!sim_is_running) {                              /* RESET (not IORESET)? */
         tmr_poll = sim_rtcn_init(clocks[0].wait, 0);    /* init timer */
         sim_activate(&clocks[0], tmr_poll);             /* activate unit */
-        sim_activate_after(&clocks[1], 1);              /* ход часов и таймера */
+        svs_last_gtime = sim_gtime();                   /* часы 056 идут отсюда */
+        svs_usec_frac = 0;
+        if (svs_timer_run)
+            svs_timer_schedule();                       /* таймер 057 уже заведён */
     }
     return SCPE_OK;
 }

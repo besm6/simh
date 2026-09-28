@@ -27,6 +27,8 @@
 # же прошлого запуска.
 # KEEP_ARCHIVE=1 собирает образ с включённым архивом (makeSVS2053.py
 # --keep-archive) — для воспроизведения останова, связанного с задачей архива.
+# ZERO_ARCH_PARAMS=1 обнуляет зону параметров архива (makeSVS2053.py
+# --zero-archive-params) — задача архива видит пустые параметры.
 
 set -e
 
@@ -53,6 +55,9 @@ fi
 MK2053_OPTS=()
 if [ "${KEEP_ARCHIVE:-0}" = 1 ]; then
     MK2053_OPTS+=(--keep-archive)
+fi
+if [ "${ZERO_ARCH_PARAMS:-0}" = 1 ]; then
+    MK2053_OPTS+=(--zero-archive-params)
 fi
 
 if [ "${KEEP_DISK:-0}" = 1 ] && [ -f "$IMG" ]; then

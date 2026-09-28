@@ -471,8 +471,8 @@ t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords)
     }
 
     if (u->dptr->dctrl & DEB_DAT)
-        sim_debug(DEB_DAT, u->dptr, "::: чтение МД зона %04o СС@%05o данные@%05o\n",
-                  zone, sysaddr, memaddr);
+        sim_debug(DEB_DAT, u->dptr, "::: %s чтение зона %04o СС@%05o данные@%05o\n",
+                  sim_uname(u), zone, sysaddr, memaddr);
 
     /*
      * Служебные слова: 1:1, тег из файла (035/036).
