@@ -123,14 +123,16 @@ static uint32 iom_pvv_base(IOMDATA *iom)
 
 IOMDATA iom_data[4];        /* состояние ПВВ */
 
+static t_stat iom_event(UNIT *u);
+static void iom_drop_pending(int index);
+static uint32 iom_dvr_tail[4];               /* последняя заявка, связанная в ДВРПВВ */
+
 /*
- * Событие.
+ * Время выполнения одной заявки, мкс (`d iom0 diskus 10000`).
+ * 0 — обмен мгновенный, внутри ПУСКОБ, как было раньше.
  */
-static t_stat iom_event(UNIT *u)
-{
-    //TODO
-    return SCPE_OK;
-}
+static int32 iom_disk_usec = 10000;          /* МД: 10 мс */
+static int32 iom_drum_usec = 5000;           /* МБ: 5 мс */
 
 /*
  * IOM data structures
@@ -151,6 +153,8 @@ static REG iom0_reg[] = {
     { ORDATA   (UTA,    iom_data[0].UTA,  20) },
     { ORDATA   (IOQA,   iom_data[0].IOQA, 20) },
     { ORDATA   (SQA,    iom_data[0].SQA,  20) },
+    { DRDATAD  (DISKUS, iom_disk_usec, 24, "время заявки к МД, мкс (0 — мгновенно)") },
+    { DRDATAD  (DRUMUS, iom_drum_usec, 24, "время заявки к МБ, мкс (0 — мгновенно)") },
     { 0 }
 };
 
@@ -163,8 +167,7 @@ static MTAB iom_mod[] = {
  */
 static t_stat iom_dev_reset(DEVICE *dptr)
 {
-    //TODO
-    //sim_cancel(u);
+    iom_drop_pending(-1);
     return SCPE_OK;
 }
 
@@ -204,8 +207,10 @@ void iom_reset(int index)
     iom->UTA = 0;
     iom->IOQA = 0;
     iom->SQA = 0;
+    iom_dvr_tail[index] = 0;
     if (SVS_DEV_TRACE())
         fprintf(sim_deb, "iom%d --- Сброс ПВВ, PC=%05o\n", iom->index, cpu_core[index].PC);
+    iom_drop_pending(index);
 }
 
 /*
@@ -281,10 +286,10 @@ void iom_reset(int index)
  *     в АКБВВ для сверки с АНБВВ=z в АКТИВ. ДАЙМА вычитает СОДЕРЖИМОЕ ПМА
  *     (≡ ячейка АДРЕС = база переноса), поэтому мл16 = z_virt + база —
  *     см. iom_xfer_zaiavka.
- * Одна запись — одна заявка (сл.0 самой заявки, т.е. связь на следующую,
- * не трогается: ADAP оставляет её нулевой/самозамкнутой для одиночной
- * заявки, поддержка цепочки из нескольких одновременных завершений через
- * ТОЧ пока не реализована).
+ * Несколько завершённых заявок образуют цепочку: АН — первая, АК — последняя,
+ * связь — мл16 сл.0 каждой заявки (то же поле ДАЙМА, что и у звеньев ТОЧ).
+ * ППВВ забирает всю цепочку разом (СЧСНХ ДВРПВВ; ЗППР ДВРОС; И МЦПДВР;
+ * ЗППР ДВРПВВ), ГАСИПР идёт по ней через СЛЕДКЗ.
  */
 #define IOM_PVV_BASE        030000      /* ПВВ: вирт. база модуля АДАП */
 #define IOM_AKTZ            04000000    /* АКТЗ (М20В'1'): признак "активная заявка" в сл.7 заявки */
@@ -312,6 +317,246 @@ void iom_reset(int index)
 /* Ограничитель обхода очереди ТОЧ — см. цикл в iom_pusk_obmen. */
 #define IOM_QUEUE_MAX_STEPS     256
 #define IOM_NUS_MD_BASE         IOM_TUS_CLASS_BASE(IOM_TUS_CLASS_MD)
+
+/*
+ * Обмен с МД и МБ занимает время (регистры DISKUS/DRUMUS ПВВ0, мкс) и идёт
+ * в автоматическом режиме (АРВ) так, как его описывает №10.170.002 ТОП, 4.4:
+ *
+ *   ПОБ достаточно выдать один раз: канал обслуживает всю очередь устройства.
+ *   ЦП только дописывает заявки в конец очереди (КОЧ и связь прежней
+ *   последней), НОЧ не трогает. Канал берёт заявку по НОЧ, а выполнив её,
+ *   ставит в НОЧ связь из обработанного БВ и переходит к следующей; когда
+ *   очередь кончилась, гасит НОЧ и КОЧ (по нулевому КОЧ ВКЛТОЧ узнаёт пустую
+ *   очередь и снова выдаёт ПОБ).
+ *
+ * Поэтому у каждого устройства в работе не больше одной заявки — головы его
+ * очереди; перенос данных, ответ ДР/ДРУ, связывание в ДВРПВВ, продвижение
+ * НОЧ и прерывание ПРПВВ происходят по событию. Разные устройства работают
+ * одновременно, так что к приходу ГАСИПР завершённых заявок может быть
+ * несколько (см. цепочку в ДВРПВВ, iom_xfer_zaiavka).
+ */
+#define IOM_PEND_MAX        256         /* заявок в работе у канала */
+
+typedef struct {
+    int iomx;                   /* номер ПВВ */
+    uint32 z;                   /* физ. адрес заявки (голова ТОЧ[nus]) */
+    int devclass, unit, nus;
+    double due;                 /* момент завершения, в командах (sim_gtime) */
+} IOM_PENDING;
+
+static IOM_PENDING iom_pend[IOM_PEND_MAX];
+static int iom_npend;
+
+static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, int nus);
+
+/*
+ * Ячейка захвачена процессором по СЧСНХ: «считывание синхронизационное»
+ * (соп '046',(1)) взводит СЕМБИТ — разр.17 значения, то есть разр.32 ячейки;
+ * снимает его обратная запись ячейки (ОТКСЕМ, ЗППР под маской).
+ * Захватываются, в частности, ТУС(НУС) — на время работы с очередью ТОЧ
+ * устройства (ВКЛТОЧ, ВЫППВВ) — и ДВРПВВ (ППВВ забирает цепочку ответов).
+ * Пока ячейка захвачена, канал ни очередь, ни заявку, ни ДВРПВВ не трогает.
+ */
+static int iom_captured(uint32 a)
+{
+    return a != 0 && a < MEMSIZE && ((memory[a] >> 32) & 1);
+}
+
+#define IOM_CAPTURE_RETRY   10          /* через сколько команд повторить */
+#define IOM_CAPTURE_PATIENCE 1000000    /* повторов подряд, после чего — всё равно */
+
+/*
+ * Запланировать событие канала на ближайшее завершение.
+ */
+static void iom_schedule(void)
+{
+    double now = sim_gtime(), first = 0;
+    int i;
+
+    sim_cancel(&iom_unit[0]);
+    if (iom_npend == 0)
+        return;
+    for (i = 0; i < iom_npend; i++)
+        if (i == 0 || iom_pend[i].due < first)
+            first = iom_pend[i].due;
+    sim_activate(&iom_unit[0], (first - now < 1) ? 1 : (int32)(first - now));
+}
+
+/*
+ * Обмен с этим устройством идёт с задержкой (МД/МБ при ненулевом DISKUS/DRUMUS).
+ */
+static int iom_delayed(int devclass)
+{
+    return (devclass == IOM_TUS_CLASS_MD && iom_disk_usec > 0) ||
+           (devclass == IOM_TUS_CLASS_MB && iom_drum_usec > 0);
+}
+
+/*
+ * Устройство занято: у канала в работе заявка из ТОЧ[nus].
+ */
+static int iom_busy(IOMDATA *iom, int nus)
+{
+    int i;
+
+    for (i = 0; i < iom_npend; i++)
+        if (iom_pend[i].iomx == iom->index && iom_pend[i].nus == nus)
+            return 1;
+    return 0;
+}
+
+/*
+ * Начать обмен по заявке z — голове очереди ТОЧ[nus]. Возвращает 0, если
+ * канал перегружен; тогда вызывающий выполняет обмен сразу, как раньше.
+ */
+static int iom_start(IOMDATA *iom, uint32 z, int devclass, int unit, int nus)
+{
+    double now = sim_gtime();
+    double usec = (devclass == IOM_TUS_CLASS_MD) ? iom_disk_usec : iom_drum_usec;
+    IOM_PENDING *p;
+
+    if (iom_npend >= IOM_PEND_MAX)
+        return 0;
+
+    p = &iom_pend[iom_npend++];
+    p->iomx = iom->index;
+    p->z = z;
+    p->devclass = devclass;
+    p->unit = unit;
+    p->nus = nus;
+    p->due = now + usec * sim_timer_inst_per_sec() / 1000000.0;
+
+    if (SVS_DEV_TRACE())
+        fprintf(sim_deb, "iom%d --- в работу: заявка@%o %s%d, завершение через %.0f команд\n",
+            iom->index, z, (devclass == IOM_TUS_CLASS_MD) ? "МД" : "МБ", unit,
+            p->due - now);
+    iom_schedule();
+    return 1;
+}
+
+/*
+ * Адрес заявки по слову-указателю из ТОЧ или из слова связи СВ (0 — нет).
+ * Указатели хранятся относительно ПВВ, см. iom_pusk_obmen.
+ */
+static uint32 iom_link_addr(IOMDATA *iom, t_value w)
+{
+    if (IOM_DAIMA(w & BITS48) == 0)
+        return 0;
+    return IOM_PVV_BASE + IOM_DAIMA(w & BITS48) + iom_pvv_base(iom);
+}
+
+/*
+ * Сбросить заявки, взятые в работу (сброс ПВВ или всего эмулятора).
+ * index < 0 — все ПВВ.
+ */
+static void iom_drop_pending(int index)
+{
+    int i, n = 0;
+
+    for (i = 0; i < iom_npend; i++)
+        if (index >= 0 && iom_pend[i].iomx != index)
+            iom_pend[n++] = iom_pend[i];
+    if (n != iom_npend && SVS_DEV_TRACE())
+        fprintf(sim_deb, "iom --- сброшено заявок в работе: %d\n", iom_npend - n);
+    iom_npend = n;
+    iom_schedule();
+}
+
+/*
+ * Событие: завершить все заявки, чей срок наступил, в порядке сроков.
+ */
+static t_stat iom_event(UNIT *u)
+{
+    double now = sim_gtime();
+
+    for (;;) {
+        int i, k = -1;
+        IOM_PENDING p;
+
+        for (i = 0; i < iom_npend; i++)
+            if (iom_pend[i].due <= now + 0.5 && (k < 0 || iom_pend[i].due < iom_pend[k].due))
+                k = i;
+        if (k < 0)
+            break;
+
+        /*
+         * Захват (см. iom_captured). ДВРПВВ: ППВВ забирает цепочку по
+         * СЧСНХ ДВРПВВ ... ЗППР ДВРПВВ, и завершение, записанное в этом окне,
+         * затёрла бы обратная запись обработчика. ТУС(НУС): процессор в эту
+         * минуту работает с очередью и заявками устройства (ВКЛТОЧ, ВЫППВВ).
+         * В обоих случаях завершение откладывается на несколько команд.
+         */
+        {
+            static int32 patience;
+            IOMDATA *iom = &iom_data[iom_pend[k].iomx];
+            int dvr = iom_captured(iom->SQA);
+            int tus = iom->UTA != 0 && iom_captured(iom->UTA + iom_pend[k].nus);
+
+            if ((dvr || tus) && patience < IOM_CAPTURE_PATIENCE) {
+                if (SVS_DEV_TRACE() && patience == 0)
+                    fprintf(sim_deb, "iom%d --- захвачен %s%s (PC=%05o),"
+                        " завершение заявки@%o отложено\n", iom->index,
+                        dvr ? "ДВРПВВ " : "", tus ? "ТУС(НУС)" : "",
+                        cpu_core[0].PC, iom_pend[k].z);
+                patience++;
+                sim_activate(&iom_unit[0], IOM_CAPTURE_RETRY);
+                return SCPE_OK;
+            }
+            if (patience >= IOM_CAPTURE_PATIENCE && SVS_DEV_TRACE())
+                fprintf(sim_deb, "iom%d --- захват не снят за %d повторов,"
+                    " завершаю заявку@%o как есть\n", iom->index, patience,
+                    iom_pend[k].z);
+            patience = 0;
+        }
+
+        p = iom_pend[k];
+        for (i = k + 1; i < iom_npend; i++)
+            iom_pend[i - 1] = iom_pend[i];
+        iom_npend--;
+
+        {
+            IOMDATA *iom = &iom_data[p.iomx];
+            uint32 toch = iom->IOQA + 2 * p.nus;
+            /* Слово связи СВ читаем ДО обмена: iom_xfer_zaiavka его правит. */
+            t_value link = memory[p.z];
+            uint32 next = iom_link_addr(iom, link);
+            t_value noch_was = (toch + 1 < MEMSIZE) ? memory[toch] : 0;
+            t_value koch_was = (toch + 1 < MEMSIZE) ? memory[toch + 1] : 0;
+
+            if (next == p.z)
+                next = 0;               /* самозамкнутая одиночная заявка */
+
+            iom_xfer_zaiavka(iom, p.z, p.devclass, p.unit, p.nus);
+            cpu_core[0].GRVP |= GRVP_INTR_IOM;
+
+            /* Очередь устройства: НОЧ := связь обработанного БВ (4.4). */
+            if (iom->IOQA != 0 && toch + 1 < MEMSIZE) {
+                if (next != 0) {
+                    memory[toch] = link;
+                } else {
+                    memory[toch]     = 0;
+                    memory[toch + 1] = 0;
+                }
+            }
+            if (SVS_DEV_TRACE())
+                fprintf(sim_deb, "iom%d --- t=%.0f завершена заявка@%o %s%d, ПРПВВ;"
+                    " ТОЧ[%d]: %s%o (СВ=%016jo, было НОЧ=%016jo КОЧ=%016jo)\n",
+                    p.iomx, sim_gtime(), p.z,
+                    (p.devclass == IOM_TUS_CLASS_MD) ? "МД" : "МБ", p.unit, p.nus,
+                    next ? "следующая @" : "очередь пуста ", next, (uintmax_t)link,
+                    (uintmax_t)noch_was, (uintmax_t)koch_was);
+
+            /* Следующая заявка к тому же устройству. */
+            if (next != 0 && next + 7 < MEMSIZE &&
+                ! iom_start(iom, next, p.devclass, p.unit, p.nus)) {
+                iom_xfer_zaiavka(iom, next, p.devclass, p.unit, p.nus);
+                memory[toch] = 0;
+                memory[toch + 1] = 0;
+            }
+        }
+    }
+    iom_schedule();
+    return SCPE_OK;
+}
 
 /*
  * Класс устройства и номер внутри класса по индексу НУС.
@@ -701,8 +946,48 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
         uint32 zv = z - base;                   /* заявка в пространстве АДАП-а */
         t_value value48 = ((t_value)(zv - IOM_PVV_BASE) << 17) & BITS48;
         uint32 lo16 = (uint32)(zv + base) & 0177777;
-        memory[iom->SQA] = (value48 << 16) | lo16;
-        tag[iom->SQA] = TAG_NUMBER48;
+        t_value dvr = memory[iom->SQA];
+        uint32 an = (uint32)((dvr >> (16 + 17)) & 0xFFFFF);
+        uint32 tail = iom_dvr_tail[iom->index];
+
+        /*
+         * Эта заявка становится последней в цепочке. Для последней заявки
+         * ГАСИПР (АКТИВ) берёт СЛЕД из сл.0 (мл16, поле ДАЙМА) и, если он не
+         * ноль, требует у него ненулевой ДР (ПО ОШД11). Связь на саму себя
+         * (так АДАП оставляет одиночную заявку) этому удовлетворяет — ДР уже
+         * записан выше. А связь на ДРУГУЮ заявку — это звено очереди ТОЧ, и
+         * следующая по ТОЧ заявка при отложенном обмене ещё не выполнена:
+         * такую связь обнуляем.
+         */
+        if ((memory[z] & 0177777) != lo16)
+            memory[z] &= ~(t_value)0177777;
+
+        if (an != 0 && tail != 0 && (dvr & 0177777) == (tail & 0177777)) {
+            /*
+             * ДВРПВВ не пуст — прежние завершения ГАСИПР ещё не забрал.
+             * Дописываем в хвост: связь прежней последней заявки (мл16 её
+             * сл.0) указывает на эту, АН (голова) остаётся, АК — эта заявка.
+             */
+            memory[tail] = (memory[tail] & ~(t_value)0177777) | lo16;
+            memory[iom->SQA] = (dvr & ~(t_value)0177777) | lo16;
+            if (SVS_DEV_TRACE())
+                fprintf(sim_deb, "iom%d --- ДВРПВВ: заявка@%o в хвост за @%o\n",
+                    iom->index, z, tail);
+        } else {
+            /*
+             * Канал заполняет только поля адресов — НАДР (разр.33-52 ячейки)
+             * и КАДР (разр.0-19); МЦП, П, ИВС и прочие разряды ставит ОС, и
+             * они должны остаться (№10.170.002 ТОП, 4.1.4). Затирать их
+             * нельзя: выдавая следующую заявку, ИЗСО (адап.bemsh:3822)
+             * проверяет МЦП в ДВРПВВ и, не найдя, пишет ДВРПВВ заново одной
+             * маской — вместе с АН необработанного завершения, которое
+             * тогда пропадает, а заявка остаётся активной навсегда.
+             */
+            memory[iom->SQA] = (dvr & ~(((t_value)0xFFFFF << 33) | 0xFFFFF)) |
+                (value48 << 16) | lo16;
+            tag[iom->SQA] = TAG_NUMBER48;
+        }
+        iom_dvr_tail[iom->index] = z;
     }
 
     /*
@@ -728,7 +1013,12 @@ void iom_update_intr(int cpu_index)
 {
     IOMDATA *iom = &iom_data[0];        /* один ПВВ в текущей конфигурации */
 
-    if (iom->SQA != 0 && memory[iom->SQA] == 0 &&
+    /*
+     * «Пусто» — нулевое поле АН (НАДР, разр.33-52 ячейки): ППВВ забирает
+     * цепочку маской МЦПДВР, и МЦП, П и прочие разряды ОС, как и АК в мл16,
+     * в слове остаются (см. связывание в iom_xfer_zaiavka).
+     */
+    if (iom->SQA != 0 && ((memory[iom->SQA] >> 33) & 0xFFFFF) == 0 &&
         (cpu_core[cpu_index].GRVP & GRVP_INTR_IOM))
     {
         /*
@@ -764,7 +1054,7 @@ void iom_update_intr(int cpu_index)
 static void iom_pusk_obmen(IOMDATA *iom, int cmd_nus)
 {
     uint32 toch = iom->IOQA;
-    int nus, found = 0;
+    int nus, found = 0, queued = 0;
 
     if (toch == 0) {
         if (SVS_DEV_TRACE())
@@ -822,6 +1112,17 @@ static void iom_pusk_obmen(IOMDATA *iom, int cmd_nus)
             continue;
 
         /*
+         * Процессор держит ТУС(НУС) — работает с этой очередью (ВКЛТОЧ).
+         * Очередь не трогаем: заявки заберёт следующий ПУСКОБ.
+         */
+        if (iom_captured(iom->UTA + nus)) {
+            if (SVS_DEV_TRACE())
+                fprintf(sim_deb, "iom%d --- ПУСКОБ: ТУС[%d] захвачен, очередь ТОЧ[%d]"
+                    " не трогаю\n", iom->index, nus, nus);
+            continue;
+        }
+
+        /*
          * Указатели в ТОЧ и в звеньях заявок хранятся ОТНОСИТЕЛЬНО ПВВ
          * (как и поле АН в ДВРПВВ, §5.5): наблюдалось 01100 при заявке,
          * реально лежащей по 031100. Поэтому базу надо прибавить, иначе
@@ -836,6 +1137,39 @@ static void iom_pusk_obmen(IOMDATA *iom, int cmd_nus)
          * получаются нулевыми.
          */
         z = IOM_PVV_BASE + IOM_DAIMA(head) + iom_pvv_base(iom);
+
+        /*
+         * МД и МБ с задержкой — автоматический режим (см. iom_start): канал
+         * начинает обмен по голове очереди и дальше ведёт её сам; ТОЧ здесь
+         * не меняется. Если устройство уже занято, ПОБ ничего не добавляет:
+         * канал дойдёт до новых заявок по связям.
+         */
+        {
+            int unit = 0;
+            int devclass = iom_tus_class(iom, nus, &unit);
+
+            if (devclass >= 0 && iom_delayed(devclass) && z + 7 < MEMSIZE) {
+                int started = 1;
+
+                if (iom_busy(iom, nus)) {
+                    if (SVS_DEV_TRACE())
+                        fprintf(sim_deb, "iom%d --- ПУСКОБ: ТОЧ[%d] уже в работе:"
+                            " НОЧ=%016jo КОЧ=%016jo сл.0 головы@%o=%016jo\n",
+                            iom->index, nus, (uintmax_t)memory[toch + 2*nus],
+                            (uintmax_t)memory[toch + 2*nus + 1], z,
+                            (uintmax_t)memory[z]);
+                } else if (iom_start(iom, z, devclass, unit, nus)) {
+                    queued++;
+                } else {
+                    started = 0;        /* канал перегружен — обмен сразу */
+                }
+                if (started) {
+                    if (cmd_nus > 0 && cmd_nus < IOM_TUS_ENTRIES)
+                        break;
+                    continue;
+                }
+            }
+        }
 
         /*
          * Идём по цепочке заявок (связь — 0-е слово).
@@ -877,10 +1211,10 @@ static void iom_pusk_obmen(IOMDATA *iom, int cmd_nus)
                 z = next;
                 continue;
             }
-            found++;
             if (SVS_DEV_TRACE())
                 fprintf(sim_deb, "iom%d --- ПУСКОБ: работа найдена в ТОЧ[%d]"
                     " (НУС из команды %d)\n", iom->index, nus, cmd_nus);
+            found++;
             iom_xfer_zaiavka(iom, z, devclass, unit, nus);
             z = next;
         }
@@ -899,7 +1233,12 @@ static void iom_pusk_obmen(IOMDATA *iom, int cmd_nus)
         if (SVS_DEV_TRACE())
             fprintf(sim_deb, "iom%d --- ПУСКОБ: обработано заявок %d, ПРПВВ\n",
                 iom->index, found);
-    } else if (SVS_DEV_TRACE()) {
+    }
+    if (queued) {
+        if (SVS_DEV_TRACE())
+            fprintf(sim_deb, "iom%d --- ПУСКОБ: взято в работу заявок %d\n",
+                iom->index, queued);
+    } else if (! found && SVS_DEV_TRACE()) {
         fprintf(sim_deb, "iom%d --- ПУСКОБ: ТОЧ@%o пуста "
             "(заявка обслуживается на звонке ЕСВС из ТВЗП, см. iom_service_tvzp)\n",
             iom->index, toch);

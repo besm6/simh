@@ -142,7 +142,16 @@ void svs_time_sync(void)
 
 int autotime;                           /* задержка СМЕ/ВРЕ после первого ЖДУ, сек (0 = выкл) */
 static int autotime_armed;              /* срок уже поставлен после первого ЖДУ */
-static uint32 autotime_due_msec;        /* sim_os_msec(), когда можно звать setup */
+/*
+ * Сроки autotime — в МОДЕЛЬНОМ времени (sim_gtime(), команды): при
+ * `set clock nocalibrate=…` загрузка тогда повторяется команда в команду.
+ */
+static double autotime_due;             /* sim_gtime(), когда можно звать setup */
+
+static double autotime_after(double sec)
+{
+    return sim_gtime() + sec * sim_timer_inst_per_sec();
+}
 int svs_trace_window = 0;
 t_addr svs_trace_lo = 0, svs_trace_hi = 0;
 
@@ -619,6 +628,8 @@ void check_initial_setup(CORE *cpu)
         cpu->pult[5] = 1 << 21;
         cpu->GRVP |= GRVP_PANEL_REQ;
         printf("CME was 0, sending CME\r\n");
+        if (sim_deb)
+            fprintf(sim_deb, "autotime --- приказ СМЕ, время %.0f\n", sim_gtime());
     } else {
         struct tm * d;
         static int times = 0;
@@ -631,7 +642,7 @@ void check_initial_setup(CORE *cpu)
              * задержка autotime, что и перед первым приказом.
              */
             cme_accepted = 1;
-            autotime_due_msec = sim_os_msec() + (uint32)autotime * 1000u;
+            autotime_due = autotime_after(autotime);
             return;
         }
 
@@ -664,6 +675,8 @@ void check_initial_setup(CORE *cpu)
             (d->tm_min % 10);
         cpu->GRVP |= GRVP_PANEL_REQ;
         printf("CME was non-0, setting DAT, sending TIM %d time\r\n", ++times);
+        if (sim_deb)
+            fprintf(sim_deb, "autotime --- ДАТА и приказ ВРЕ, время %.0f\n", sim_gtime());
         if (times > 5) {
             printf("Enough already, done\r\n");
             done = 1;
@@ -686,7 +699,7 @@ t_stat cpu_set_autotime(UNIT *u, int32 val, CONST char *cptr, void *desc)
         return r;
     autotime = (int)n;
     autotime_armed = 0;
-    autotime_due_msec = 0;
+    autotime_due = 0;
     return SCPE_OK;
 }
 
@@ -1946,18 +1959,17 @@ branch_zero:
         }
         if (autotime > 0) {
             if (!autotime_armed) {
-                autotime_due_msec = sim_os_msec() + (uint32)autotime * 1000u;
+                autotime_due = autotime_after(autotime);
                 autotime_armed = 1;
             }
-            if ((int32)(sim_os_msec() - autotime_due_msec) >= 0) {
-                /* Не чаще 10 раз в секунду. */
-                static uint32 last_setup_msec;
+            if (sim_gtime() >= autotime_due) {
+                /* Не чаще 10 раз в модельную секунду. */
+                static double next_setup;
                 static int setup_called;
-                uint32 now = sim_os_msec();
 
-                if (!setup_called || now - last_setup_msec >= 100) {
+                if (!setup_called || sim_gtime() >= next_setup) {
                     setup_called = 1;
-                    last_setup_msec = now;
+                    next_setup = autotime_after(0.1);
                     check_initial_setup(cpu);
                 }
             }
