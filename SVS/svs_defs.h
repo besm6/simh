@@ -504,6 +504,12 @@ t_stat svs_tape_io(int num, int kop, int memaddr, int nwords);
  */
 extern DEVICE pi_dev;
 t_stat svs_punch_io(int num, int kop, int memaddr, int nbytes);
+
+/*
+ * Дисплеи ЕС-7920 (DISPLAY) на ЕС-канале, клиенты tn3270. См. АЦД.md.
+ */
+extern DEVICE disp_dev;
+t_stat svs_display_io(int num, int kop, int memaddr, int nbytes);
 t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 

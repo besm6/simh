@@ -309,6 +309,9 @@ void iom_reset(int index)
 #define IOM_TUS_CLASS_PK    0101        /* считыватель перфокарт: ПК0 (ТУС 014), ПК1 (074) */
 #define IOM_TUS_CLASS_FS    0102        /* фотосчитыватель ленты: ФС0 (ТУС 010), ФС1 (070) */
 #define IOM_TUS_CLASS_PI    0103        /* перфоратор карт: ПИ0 (ТУС 015), ПИ1 (075) */
+#define IOM_TUS_CLASS_DISP  0104        /* дисплеи ЕС-7920: ТУС 020-037, канал Х'01' */
+#define IOM_DISP_CHANNEL    1
+#define IOM_DISP_TUS        020
 #define IOM_ES_CLASS(c)     ((c) >= IOM_TUS_CLASS_ACPU)   /* устройство ЕС-канала */
 #define IOM_TUS_BLOCK       020         /* записей в блоке одного класса */
 
@@ -607,6 +610,16 @@ static int iom_tus_class(IOMDATA *iom, int nus, int *unit)
         return IOM_TUS_CLASS_ACPU;
     }
 
+    /*
+     * Дисплеи ЕС-7920 (АЦД): блок ТУС 020-037 на канале Х'01'
+     * (адап.bemsh, «АЦД 1-20»). Младшее поле этих записей — не номер
+     * класса, поэтому узнаём их, как и АЦПУ, по каналу. См. АЦД.md.
+     */
+    if (cls == IOM_DISP_CHANNEL && nus >= IOM_DISP_TUS && nus < IOM_DISP_TUS + 020) {
+        *unit = nus - IOM_DISP_TUS;
+        return IOM_TUS_CLASS_DISP;
+    }
+
     cls = (int)((memory[a] >> 16) & 07777);      /* младшее поле записи ТУС */
     if (cls <= 0 || IOM_TUS_CLASS_BASE(cls) > nus)
         return -1;
@@ -766,6 +779,8 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
             snprintf(zbuf, sizeof(zbuf), "ФС%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
         else if (devclass == IOM_TUS_CLASS_PI)
             snprintf(zbuf, sizeof(zbuf), "ПИ%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
+        else if (devclass == IOM_TUS_CLASS_DISP)
+            snprintf(zbuf, sizeof(zbuf), "АЦД%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
         else if (devclass == IOM_TUS_CLASS_MB)
             snprintf(zbuf, sizeof(zbuf), "%02o/%02o", 010 + zone / 040, zone % 040);
         else
@@ -856,6 +871,11 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
         r = svs_punch_io(dev, (int)((spu >> 30) & 0xFF), memaddr,
             6 * nwords + (int)((memory[z + 2] >> 44) & 7));
         break;
+    case IOM_TUS_CLASS_DISP:
+        /* Длина — как у перфоратора: РАЗМ слов плюс НПС байтов. */
+        r = svs_display_io(dev, (int)((spu >> 30) & 0xFF), memaddr,
+            6 * nwords + (int)((memory[z + 2] >> 44) & 7));
+        break;
     default:
         r = SCPE_NXDEV;
         break;
@@ -868,7 +888,8 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
             (devclass == IOM_TUS_CLASS_ACPU) ? "svs_printer_io" :
             (devclass == IOM_TUS_CLASS_PK) ? "svs_card_io" :
             (devclass == IOM_TUS_CLASS_FS) ? "svs_tape_io" :
-            (devclass == IOM_TUS_CLASS_PI) ? "svs_punch_io" : "класс не поддержан",
+            (devclass == IOM_TUS_CLASS_PI) ? "svs_punch_io" :
+            (devclass == IOM_TUS_CLASS_DISP) ? "svs_display_io" : "класс не поддержан",
             (r == SCPE_OK) ? "OK" : "ОШИБКА");
 
     /*
