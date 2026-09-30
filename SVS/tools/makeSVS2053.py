@@ -53,7 +53,8 @@
 
        СЧ ПРЕДЕЛ / И Е16 / ПО АРХНЕТ
 
-   Скрипт гасит Е16 в слове 13 всех вариантов.
+   По умолчанию Е16 НЕ трогается (как в дистрибутиве); --set-archive 0/1
+   гасит/зажигает Е16 в слове 13 всех вариантов.
 
 4. ГОД (там же, слово 15 варианта).  Слово 15 становится КГОД ("МЛ.ЦИФРА
    ГОДА, ЧИСЛО И НАЧ.N ОБЩ.ДИСК", ГЕНС.bemsh), а ГЕНС1 собирает из него ГОД:
@@ -71,17 +72,17 @@
 Подробности и замеры - ПВВ.md §7Б.9.
 
     python3 tools/makeSVS2053.py <дистрибутив> <копия> [--pack N] [--year Г]
-                                 [--keep-archive] [--zero-archive-params]
+                                 [--set-archive 0|1] [--zero-archive-params]
 
 --pack задаёт номер пакета восьмеричным числом (по умолчанию 4005),
 --year - год, в образ идёт его младшая цифра (по умолчанию текущий).
---keep-archive оставляет архив включённым (разр.16 ПРЕДЕЛ не гасится),
-   и задача архива запускается наравне с прочими - для воспроизведения
-   поведения дистрибутивного образа (п.3 выше выполняется только без него).
+--set-archive 0 гасит разр.16 ПРЕДЕЛ (архив выключен), 1 - зажигает
+   (архив включён, задача архива запускается). Без опции разряд не трогается
+   (остаётся как в дистрибутиве).
 --zero-archive-params обнуляет данные зоны параметров архива (phys 0755),
    сохраняя служебные слова и пересчитывая КС зоны в 0: задача архива читает
    зону как пустую («нет параметров»), а не как испорченную. Не зависит от
-   --keep-archive.
+   --set-archive.
 """
 import argparse
 import shutil
@@ -128,9 +129,9 @@ def main():
                     help="номер пакета, восьмеричный (по умолчанию 4005)")
     ap.add_argument("--year", type=int, default=time.localtime().tm_year,
                     help="год; в образ идёт младшая цифра (по умолчанию текущий)")
-    ap.add_argument("--keep-archive", action="store_true",
-                    help="не выключать архив (оставить разр.16 ПРЕДЕЛ,"
-                         " задача архива будет запущена)")
+    ap.add_argument("--set-archive", type=int, choices=(0, 1), default=None,
+                    help="0 — выключить архив (разр.16 ПРЕДЕЛ), 1 — включить;"
+                         " по умолчанию разряд не трогается")
     ap.add_argument("--zero-archive-params", action="store_true",
                     help="обнулить данные зоны параметров архива (phys 0755),"
                          " СС оставить, КС пересчитать в 0 — задача архива"
@@ -191,11 +192,13 @@ def main():
             for v in range(8, ZONE_WORDS - VARIANT_WORDS + 1, VARIANT_WORDS):
                 if word(v) & M48 != VARIANT_SIG:
                     continue
-                off = base + (v + PREDEL) * WORD
-                raw = word(v + PREDEL)
-                if raw & E16 and not args.keep_archive:
-                    data[off:off + WORD] = struct.pack("<Q", raw & ~E16)
-                    narch += 1
+                if args.set_archive is not None:
+                    off = base + (v + PREDEL) * WORD
+                    raw = word(v + PREDEL)
+                    new = (raw | E16) if args.set_archive else (raw & ~E16)
+                    if new != raw:
+                        data[off:off + WORD] = struct.pack("<Q", new)
+                        narch += 1
                 off = base + (v + KGOD) * WORD
                 raw = word(v + KGOD)
                 new = (raw & ~YEAR_MASK) | (digit << YEAR_SHIFT)
@@ -234,11 +237,11 @@ def main():
     print("makeSVS2053: %s -> %s" % (args.src, args.dst))
     print("             зон %d; номер пакета -> %o в %d словах;"
           " номер зоны исправлен в %d словах" % (nzones, pack, npack, nzone))
-    if args.keep_archive:
-        print("             архив ОСТАВЛЕН включённым (зона %04o)" % PARAM_ZONE)
+    if args.set_archive is None:
+        print("             архив: разр.16 ПРЕДЕЛ не тронут (зона %04o)" % PARAM_ZONE)
     else:
-        print("             архив выключен в %d вариантах ГЕНС-а (зона %04o)"
-              % (narch, PARAM_ZONE))
+        print("             архив %s (разр.16 ПРЕДЕЛ) в %d вариантах ГЕНС-а (зона %04o)"
+              % ("включён" if args.set_archive else "выключен", narch, PARAM_ZONE))
     print("             год %d: цифра %d в %d вариантах" % (args.year, digit, nyear))
     if args.zero_archive_params:
         print("             параметры архива обнулены (зона %04o), слов %d"

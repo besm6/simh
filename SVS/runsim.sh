@@ -14,8 +14,12 @@ OUT=dispak.out            # stdout симулятора — рядом с про
 LIMIT=$((LIMIT_GB * 1024 * 1024 * 1024))
 SAMPLE=$((32 * 1024 * 1024))   # сколько байт с начала и с конца сохранять при срыве
 
+killall -9 svs 2>/dev/null || true   # снять зависший симулятор от прошлого прогона
+                                     # (SIGKILL: svs игнорирует SIGTERM)
 rm -f "$TRACE" "$OUT" "$TRACE".head "$TRACE".tail "$OUT".head "$OUT".tail
-timeout "$TIMEOUT" ../BIN/svs "$INI" > "$OUT" 2>&1 &
+# -s KILL: svs ловит и игнорирует SIGTERM, поэтому по таймауту бьём SIGKILL,
+# иначе симулятор живёт после срабатывания timeout.
+timeout -s KILL "$TIMEOUT" ../BIN/svs "$INI" > "$OUT" 2>&1 &
 SIM=$!
 
 while kill -0 $SIM 2>/dev/null; do

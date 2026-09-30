@@ -26,7 +26,8 @@
 # svs2048-fixed.bin от прошлого прогона — на них ОС читает результаты своего
 # же прошлого запуска.
 # KEEP_ARCHIVE=1 собирает образ с включённым архивом (makeSVS2053.py
-# --keep-archive) — для воспроизведения останова, связанного с задачей архива.
+# --set-archive 1); по умолчанию архив выключен (--set-archive 0), чтобы задача
+# архива не зацикливалась на загрузке.
 # ZERO_ARCH_PARAMS=1 обнуляет зону параметров архива (makeSVS2053.py
 # --zero-archive-params) — задача архива видит пустые параметры.
 
@@ -54,7 +55,9 @@ fi
 
 MK2053_OPTS=()
 if [ "${KEEP_ARCHIVE:-0}" = 1 ]; then
-    MK2053_OPTS+=(--keep-archive)
+    MK2053_OPTS+=(--set-archive 1)
+else
+    MK2053_OPTS+=(--set-archive 0)
 fi
 if [ "${ZERO_ARCH_PARAMS:-0}" = 1 ]; then
     MK2053_OPTS+=(--zero-archive-params)
