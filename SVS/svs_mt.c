@@ -413,6 +413,7 @@ t_stat svs_mt_io(int num, int kop, int memaddr, int nwords, int nps, int ttg,
         st->dr48 |= DR_OSU;
         break;
     case MTSE_BOT:                      /* шаг назад от начала */
+        st->dr48 |= DR_SBU;             /* сбой в устройстве, как у 3420 */
         st->drlow = DR_DRU;
         st->dru48 = DRU_READY | DRU_LOADPT;
         break;

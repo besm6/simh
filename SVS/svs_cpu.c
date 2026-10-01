@@ -1811,14 +1811,7 @@ transfer_modifier:
         }
         delay = MEAN_TIME(2, 2);
         break;
-    case 047:                                       /* э47, x47 */
-        cpu->Aex = addr;
-        if (! IS_SUPERVISOR(cpu->RUU))
-            longjmp(cpu->exception, STOP_BADCMD);
-        cpu->M[cpu->Aex & 017] = ADDR(cpu->M[cpu->Aex & 017] + cpu->Aex);
-        cpu->M[0] = 0;
-        delay = 6;
-        break;
+    case 047:                                       /* э47 */
     case 050: case 051: case 052: case 053:
     case 054: case 055: case 056: case 057:
     case 060: case 061: case 062: case 063:
