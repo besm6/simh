@@ -304,6 +304,8 @@ void iom_reset(int index)
 #define IOM_ZONE_SERVICE    8           /* служебных слов в зоне */
 #define IOM_TUS_CLASS_MB    4           /* класс МБ (барабан): ТУСМБ@030460, канал Х'20' */
 #define IOM_TUS_CLASS_MD    5           /* класс МД (диск):    ТУСМД@030500, канал Х'22' */
+#define IOM_TUS_CLASS_MD2   6           /* второй блок МД: ТУС 0140-0144, канал Х'24' -> DISK8-12 */
+#define IOM_MD2_UNIT        8
 #define IOM_TUS_CLASS_ACPU  0100        /* АЦПУ: не блок ТУС, узнаётся по каналу */
 #define IOM_ACPU_CHANNEL    4           /* канал АЦПУ0 (ТУС 017); АЦПУ1 — Х'5' (ТУС 077) */
 #define IOM_TUS_CLASS_PK    0101        /* считыватель перфокарт: ПК0 (ТУС 014), ПК1 (074) */
@@ -312,6 +314,8 @@ void iom_reset(int index)
 #define IOM_TUS_CLASS_DISP  0104        /* дисплеи ЕС-7920: ТУС 020-037, канал Х'01' */
 #define IOM_DISP_CHANNEL    1
 #define IOM_DISP_TUS        020
+#define IOM_TUS_CLASS_MT    0105        /* ленты: ТУС 040-047 (Х'0C'), 060-067 (Х'0D') */
+#define IOM_MT_CHANNEL      0x0C
 #define IOM_ES_CLASS(c)     ((c) >= IOM_TUS_CLASS_ACPU)   /* устройство ЕС-канала */
 #define IOM_TUS_BLOCK       020         /* записей в блоке одного класса */
 
@@ -620,9 +624,30 @@ static int iom_tus_class(IOMDATA *iom, int nus, int *unit)
         return IOM_TUS_CLASS_DISP;
     }
 
+    /*
+     * Ленты: ТУС 040-047 на канале Х'0C' (МЛ 30-37) и 060-067 на Х'0D'
+     * (МЛ 40-47), адап.bemsh:706-711. Младшее поле там — номер блока (2, 3),
+     * а не класс, поэтому — по каналу. Юнит MT = (канал-Х'0C')*8 + устр.
+     */
+    if (cls == IOM_MT_CHANNEL || cls == IOM_MT_CHANNEL + 1) {
+        *unit = (cls - IOM_MT_CHANNEL) * 8 + (nus & 7);
+        return IOM_TUS_CLASS_MT;
+    }
+
     cls = (int)((memory[a] >> 16) & 07777);      /* младшее поле записи ТУС */
     if (cls <= 0 || IOM_TUS_CLASS_BASE(cls) > nus)
         return -1;
+
+    /*
+     * Второй блок дисков (класс 6, канал Х'24'): его ТУС 0140-0144 и строку
+     * ТОУ заводит конфигурация на томе 2053, в исходнике АДАП-а ТУС 140-157
+     * свободны. Это второе направление МД: накопители DISK8-12 (svs_disk.c,
+     * направление = номер/8).
+     */
+    if (cls == IOM_TUS_CLASS_MD2) {
+        *unit = IOM_MD2_UNIT + nus - IOM_TUS_CLASS_BASE(cls);
+        return IOM_TUS_CLASS_MD;
+    }
 
     *unit = nus - IOM_TUS_CLASS_BASE(cls);
     return cls;
@@ -662,6 +687,7 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
     t_value so   = (memory[z + 3] >> 16) & BITS48;  /* СО  */
     t_value spu  = (memory[z + 4] >> 16) & BITS48;  /* СПУ */
     int is_read  = (int)((so >> 47) & 1);       /* разр.48: ТЕГ48 чтение */
+    IOM_ES_STATUS es_st = { 0, 0, 0 };          /* ответ ленты (svs_mt.c) */
     /*
      * Физический адрес зоны — в РМР слова СПУ (младшие 16 разр. 64-битного слова,
      * §5.4: "копия младших 16 разр. адреса в РМР"). ТУСЗ не настроена → тип ёмкости 0
@@ -781,6 +807,8 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
             snprintf(zbuf, sizeof(zbuf), "ПИ%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
         else if (devclass == IOM_TUS_CLASS_DISP)
             snprintf(zbuf, sizeof(zbuf), "АЦД%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
+        else if (devclass == IOM_TUS_CLASS_MT)
+            snprintf(zbuf, sizeof(zbuf), "МЛ%d КОП=%02X", dev, (int)((spu >> 30) & 0xFF));
         else if (devclass == IOM_TUS_CLASS_MB)
             snprintf(zbuf, sizeof(zbuf), "%02o/%02o", 010 + zone / 040, zone % 040);
         else
@@ -876,6 +904,11 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
         r = svs_display_io(dev, (int)((spu >> 30) & 0xFF), memaddr,
             6 * nwords + (int)((memory[z + 2] >> 44) & 7));
         break;
+    case IOM_TUS_CLASS_MT:
+        /* ТГГ — разр.40-38 СО: 6 — 6 байт на слово, 4 — 8 байт (svs_mt.c). */
+        r = svs_mt_io(dev, (int)((spu >> 30) & 0xFF), memaddr, nwords,
+            (int)((memory[z + 2] >> 44) & 7), (int)((so >> 37) & 7), &es_st);
+        break;
     default:
         r = SCPE_NXDEV;
         break;
@@ -889,7 +922,8 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
             (devclass == IOM_TUS_CLASS_PK) ? "svs_card_io" :
             (devclass == IOM_TUS_CLASS_FS) ? "svs_tape_io" :
             (devclass == IOM_TUS_CLASS_PI) ? "svs_punch_io" :
-            (devclass == IOM_TUS_CLASS_DISP) ? "svs_display_io" : "класс не поддержан",
+            (devclass == IOM_TUS_CLASS_DISP) ? "svs_display_io" :
+            (devclass == IOM_TUS_CLASS_MT) ? "svs_mt_io" : "класс не поддержан",
             (r == SCPE_OK) ? "OK" : "ОШИБКА");
 
     /*
@@ -931,11 +965,26 @@ static t_stat iom_xfer_zaiavka(IOMDATA *iom, uint32 z, int devclass, int dev, in
          * второй сверху разряд байта уточнённого состояния (разр.47). ДАЙКОТ
          * читает ДРУ всегда; ПЕЧАТЬ проверяет код маской КСБДР, В1К — в РАБВ.
          */
-        memory[z + 5] = (t_value)(nus << 2) & 0177777;
-        memory[z + 6] = (r == SCPE_OK) ? 0 : ((t_value)1 << 46) << 16;
+        if (devclass == IOM_TUS_CLASS_MT && r == SCPE_OK) {
+            /* Лента формирует ДР/ДРУ сама (метки, начало ленты, ВУН). */
+            memory[z + 5] = (es_st.dr48 << 16) |
+                ((t_value)((nus << 2) | es_st.drlow) & 0177777);
+            memory[z + 6] = es_st.dru48 << 16;
+        } else {
+            memory[z + 5] = (t_value)(nus << 2) & 0177777;
+            memory[z + 6] = (r == SCPE_OK) ? 0 : ((t_value)1 << 46) << 16;
+        }
     } else {
+        /*
+         * НУС — база блока из самой заявки плюс номер из СПУ: у второго
+         * блока МД (класс 6, DISK8-12) НУС 0140-0144, а не 0120+номер.
+         * Накопитель без образа — «не готов»: БНС в мл16. Только его смотрит
+         * опрос готовности ОПГД (КОП 0x99, адап.bemsh), а без БНС ОС считает
+         * пустой накопитель готовым, читает его СС и печатает «ПР.МД».
+         */
         memory[z + 5] = ((t_value)((r == SCPE_OK) ? 0 : 1) << 16) |
-            (((t_value)(IOM_TUS_CLASS_BASE(devclass) + ((spu >> 38) & 017)) << 2) & 0177777);
+            ((devclass == IOM_TUS_CLASS_MD && r == SCPE_UNATT) ? 1 : 0) |
+            (((t_value)((nus & ~017) + ((spu >> 38) & 017)) << 2) & 0177777);
         memory[z + 6] = 0;
     }
 

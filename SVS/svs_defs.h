@@ -512,6 +512,17 @@ t_stat svs_punch_io(int num, int kop, int memaddr, int nbytes);
  */
 extern DEVICE disp_dev;
 t_stat svs_display_io(int num, int kop, int memaddr, int nbytes);
+
+/* Ответ устройства ЕС-канала, которое формирует ДР/ДРУ само (МЛ). */
+typedef struct {
+    t_value dr48;                       /* ДР: 48-разрядное значение */
+    int     drlow;                      /* ДР: мл16 без НУС (БНС, ДРУ, ВУН) */
+    t_value dru48;                      /* ДРУ: 48-разрядное значение */
+} IOM_ES_STATUS;
+
+extern DEVICE mt_dev;
+t_stat svs_mt_io(int num, int kop, int memaddr, int nwords, int nps, int ttg,
+                 IOM_ES_STATUS *st);
 t_stat svs_disk_read(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 t_stat svs_disk_write(UNIT *u, int zone, int sysaddr, int memaddr, int nwords);
 
