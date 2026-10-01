@@ -75,6 +75,14 @@ t_stat cpu_show_window(FILE *st, UNIT *up, int32 v, CONST void *dp);
  * занятой, и sim_idle() не может уснуть. Значения досчитываются лениво
  * (svs_time_sync) — при обращении к регистру и на каждом такте fast_clk, а
  * переполнение таймера — одно событие clocks[1], поставленное при записи.
+ *
+ * При сбросе часы выставляются на время суток хоста (svs_clock_preset) в том
+ * формате, в каком их пишет ОС сборки 2153: приказ ВРЕ (прик4) и смена суток
+ * в СТАТ1С — разр.44-40 = 025 («часы выставлены»), разр.39-1 = ВРЕМЯ ×
+ * 625000/33 (ВРЕМЯ идёт 50 раз в секунду). ГЕНС2 при выходе (ВЫХ777) с
+ * ТР1 разр.45 сверяет признак 025 и, если на месте ещё смена (МГРП) и дата
+ * (ГОД), берёт ВРЕМЯ из часов вместо приказа ВРЕ — re-dispsvs/src/gens2.bemsh,
+ * prik4.bemsh, stat1s.bemsh. Сами часы считают по 1 мкс, а не по 33/31,25.
  */
 t_value svs_clock = 0;                  /* регистр часов 056, 44 разр., 1 мкс */
 t_value svs_timer = 0;                  /* регистр таймера 057, 32 разр., 1 мкс */
@@ -117,6 +125,26 @@ static void svs_clock_sync(void)
         svs_usec_frac -= (double)us;
         svs_clock = (svs_clock + us) & BITS44;
     }
+}
+
+/*
+ * Выставить часы на время суток хоста с признаком 025, как приказ ВРЕ.
+ */
+#define CLOCK_SET_MARK  ((t_value) 025 << 39)   /* КОД25 в ГЕНС2, СТАЙМ в СТАТ1С */
+
+static void svs_clock_preset(void)
+{
+    time_t t;
+    struct tm *d;
+    double sec;
+
+    sim_get_time(&t);
+    d = localtime(&t);
+    sec = d->tm_hour * 3600 + d->tm_min * 60 + d->tm_sec;
+    /* 50 тиков ВРЕМЯ в секунду, 625000/33 единицы часов на тик (КТАЙМ) */
+    svs_clock = CLOCK_SET_MARK | (t_value) (sec * 50 * 625000 / 33);
+    svs_last_gtime = sim_gtime();
+    svs_usec_frac = 0;
 }
 
 void svs_time_sync(void)
@@ -492,6 +520,9 @@ t_stat cpu_reset(DEVICE *dev)
     cpu->OPOP = 0;
     cpu->RKP = 0;
 
+    if (cpu->index == 0)
+        svs_clock_preset();     /* часы общие: выставить один раз */
+
     // Disabled due to a conflict with loading
     // cpu->PC = 1;             /* "reset cpu; go" should start from 1  */
 
@@ -567,6 +598,36 @@ t_stat cpu_set_debug(UNIT *u, int32 val, CONST char *cptr, void *desc)
 }
 
 /*
+ * Записать в ячейку ГОД сегодняшнюю дату хоста (вместо директивы ДАТА).
+ * Возвращает разобранное время хоста (localtime, месяц уже с 1).
+ */
+static struct tm *autotime_set_date(void)
+{
+    struct tm *d;
+    time_t t;
+    t_value date;
+
+    sim_get_time(&t);
+    d = localtime(&t);
+    ++d->tm_mon;
+    /*
+     * Раскладка ГОД в Диспаке СВС — как её пишет директива ДАТА
+     * (ПРИК4.bemsh): месяц в 25-29 р., число в 30-35 р., оба
+     * десятичными цифрами, как их набирают в ТР5; младшая цифра
+     * года — в 21-24 р. (её печатает ПРВР). Остальные разряды, в том
+     * числе № ЭВМ в 1-3 р., сохраняются.
+     */
+    date = (memory[autotime_year] >> 16) &
+        ~((t_value) 03777 << 24 | (t_value) 017 << 20);
+    date |= (t_value) (((d->tm_mday / 10) << 4 | d->tm_mday % 10) << 5 |
+                       ((d->tm_mon / 10) << 4 | d->tm_mon % 10)) << 24 |
+        (t_value) (d->tm_year % 10) << 20;
+    memory[autotime_year] = (date << 16) | (memory[autotime_year] & 0xffff);
+    tag[autotime_year] = TAG_NUMBER48;
+    return d;
+}
+
+/*
  * Приказы оператора СМЕ и ВРЕ при загрузке — как в besm6_cpu.c.
  *
  * Зовётся из цикла «ЖДУ» Диспака. Приказ подаётся с пульта: номер приказа и
@@ -587,6 +648,7 @@ void check_initial_setup(CORE *cpu)
 
     t_value taken;
     static int done = 0;
+    static int date_set = 0;              /* ГОД уже записан */
 
     if (!autotime_year || !autotime_taken || !autotime_mgrp)
         return;
@@ -611,6 +673,14 @@ void check_initial_setup(CORE *cpu)
 
     if (taken & ALL_REQS_ENABLED) {                 /* all done */
         if (!done) {
+            /*
+             * ГЕНС2 взял ВРЕМЯ из выставленных часов (svs_clock_preset) и
+             * сам разрешил приказы, но дату оставил из зоны статистики.
+             */
+            if (!date_set) {
+                autotime_set_date();
+                printf("Time taken from clock register, setting DAT\r\n");
+            }
             printf("Initial setup done, per TAKEN\r\n");
             done = 1;
             return;
@@ -648,25 +718,8 @@ void check_initial_setup(CORE *cpu)
         }
 
         /* Яч. ГОД обновляем самостоятельно */
-        time_t t;
-        t_value date;
-        sim_get_time(&t);
-        d = localtime(&t);
-        ++d->tm_mon;
-        /*
-         * Раскладка ГОД в Диспаке СВС — как её пишет директива ДАТА
-         * (ПРИК4.bemsh): месяц в 25-29 р., число в 30-35 р., оба
-         * десятичными цифрами, как их набирают в ТР5; младшая цифра
-         * года — в 21-24 р. (её печатает ПРВР). Остальные разряды, в том
-         * числе № ЭВМ в 1-3 р., сохраняются.
-         */
-        date = (memory[autotime_year] >> 16) &
-            ~((t_value) 03777 << 24 | (t_value) 017 << 20);
-        date |= (t_value) (((d->tm_mday / 10) << 4 | d->tm_mday % 10) << 5 |
-                           ((d->tm_mon / 10) << 4 | d->tm_mon % 10)) << 24 |
-            (t_value) (d->tm_year % 10) << 20;
-        memory[autotime_year] = (date << 16) | (memory[autotime_year] & 0xffff);
-        tag[autotime_year] = TAG_NUMBER48;
+        d = autotime_set_date();
+        date_set = 1;
         /* приказ ВРЕ: ТР6 = 016, ТР5 = 9-14 р.-часы, 1-8 р.-минуты */
         cpu->pult[6] = 016;
         cpu->pult[4] = 0;
@@ -760,6 +813,8 @@ t_stat cpu_show_window(FILE *st, UNIT *up, int32 v, CONST void *dp)
  * 00000000.0xxxxxxx -> 0xxxxxxx
  * 00000xxx.xxyyyyyy -> 110xxxxx, 10yyyyyy
  * xxxxyyyy.yyzzzzzz -> 1110xxxx, 10yyyyyy, 10zzzzzz
+ * 000wwwxx.xxxxyyyy.yyzzzzzz -> 11110www, 10xxxxxx, 10yyyyyy, 10zzzzzz
+ *   (знаки выше U+FFFF, напр. жирные Mathematical Bold в АЦПУ)
  */
 void
 utf8_putc(unsigned ch, FILE *fout)
@@ -770,6 +825,13 @@ utf8_putc(unsigned ch, FILE *fout)
     }
     if (ch < 0x800) {
         putc(ch >> 6 | 0xc0, fout);
+        putc((ch & 0x3f) | 0x80, fout);
+        return;
+    }
+    if (ch >= 0x10000) {
+        putc(ch >> 18 | 0xf0, fout);
+        putc(((ch >> 12) & 0x3f) | 0x80, fout);
+        putc(((ch >> 6) & 0x3f) | 0x80, fout);
         putc((ch & 0x3f) | 0x80, fout);
         return;
     }

@@ -61,10 +61,42 @@
 
        СЧ NБЭСМ / И Е39П1 / ИЛИ КГОД / ЗП ГОД
 
-   Младшая цифра года - разр.21-24 (ГЕНС берёт её так же для ПЧГОД:
-   П17 << 20 & КГОД).  В вариантах образа там 0, 1, 7, 8 и 9 - в варианте
-   СВС 1, выбираемом при загрузке, 1, отсюда "91" в отчётах о задачах.
-   Скрипт ставит во все варианты младшую цифру года --year.
+   Год хранится двумя десятичными цифрами: единицы - разр.24-21, десятки -
+   разр.20-17.  Обе печатает сборка 2153: ГЕНС2 (ПДАТ, «ДД.ММ.ГГ») и
+   директива ДАТА/ВРЕ (ПРВР), - разр.20-17 берутся как СЧ П17 / СДА 64-16 /
+   И ГОД.  В вариантах образа там 9 или 8 (199x/198x), отсюда «96» при
+   2026 годе.  Скрипт ставит во все варианты обе цифры года --year.
+
+5. ЗОНА СТАТИСТИКИ (логическая зона 030 тома статистики НОММЛ - системного
+   диска, в образе зона 034: физическая = логическая + 4).  В дистрибутиве
+   она не размечена (нет ключа КЛЮЧСТ), и ГЕНС2 (ПДАТ1) ставит нулевую дату
+   «00.00.96 00.00.00»; проверка часов в ГЕНС2 (ВЫХ777) без даты в ГОД не
+   проходит.  Скрипт размечает зону так, как это делает сама ОС после
+   первого прогона (СТАТ1С: ЧТЗОНЫ/РОСПИС, НАЧС30, НОРМ; СТАТ2С), на
+   текущие дату и время (--year для младшей цифры года).  Слова - состав.bemsh:
+
+       0    СПЕЦ    ГОД<<36 | ГОД&Е35П17 | Е10   (дата машинная, разр.10-1 -
+                    указатель свободного слова буфера накопления = 01000)
+       1    ШКРЗСТ  по 6 разр. на ЭВМ (поле n-1 для ЭВМ n): текущая зона = 030
+       2    ШКЗЗСТ  Е48 - зона 030 занята; разр.6-1 - последняя выданная, 030
+       015  КЛЮЧСТ  П'КЛЮЧСТ'
+       016  ГОДСТ   ГОД (дата астрономическая)
+       0532 СЧЕТЧ   ВРЕМЯ<<18 (ВРЕМЯ - 50 в секунду от полуночи)
+       0533 ДАТГЕН  ГОД
+
+   ГОД - как его собирает ГЕНС: КГОД (слово 15) первого варианта ГЕНС-а
+   для СВС --svs без разр.12-4, № ЭВМ (слово 14) в разр.3-1, число и месяц
+   десятичными цифрами в разр.36-25 (как пишет директива ДАТА).
+   Остальные слова данных - нули, тег 1, как у ОС.
+
+6. СМЕНА В МГРП.  Номер смены (разр.24-22 ячейки МГРП резидента ДИСП70,
+   а не аппаратного регистра) ставит приказ СМЕ только в памяти; резидент
+   при каждом вызове ОС заново читается с диска, и на диске смена 0.
+   Проверка часов в ГЕНС2 (ВЫХ777) без смены не проходит.  Скрипт пишет
+   смену --shift (по умолчанию 1) в МГРП на диске: адрес МГРП (01464) - из
+   таблицы имён тома (зоны 0504/0742, как в svs_disk.c), слово лежит в
+   странице 0 резидента, которую ГЕНС читает из логической зоны 0621
+   (КУСЧТЗ, «ДИСП70,КИТ,ДИСКИ,КАЧКА») = зона образа 0625.
 
 После правок пересчитывается контрольная сумма зоны СС[3]/СС[7] - сумма слов
 данных с циклическим переносом по 48 разрядам (ПОДКС в ВЫЗСВС; иначе СТОП 204).
@@ -73,9 +105,10 @@
 
     python3 tools/makeSVS2053.py <дистрибутив> <копия> [--pack N] [--year Г]
                                  [--set-archive 0|1] [--zero-archive-params]
+                                 [--svs N] [--no-stat-zone] [--shift N]
 
 --pack задаёт номер пакета восьмеричным числом (по умолчанию 4005),
---year - год, в образ идёт его младшая цифра (по умолчанию текущий).
+--year - год, в образ идут две его младшие цифры (по умолчанию текущий).
 --set-archive 0 гасит разр.16 ПРЕДЕЛ (архив выключен), 1 - зажигает
    (архив включён, задача архива запускается). Без опции разряд не трогается
    (остаётся как в дистрибутиве).
@@ -83,6 +116,10 @@
    сохраняя служебные слова и пересчитывая КС зоны в 0: задача архива читает
    зону как пустую («нет параметров»), а не как испорченную. Не зависит от
    --set-archive.
+--svs N - номер СВС, для которой размечается зона статистики (по умолчанию 1,
+   как NSVS в svs.ini); --no-stat-zone оставляет зону как в дистрибутиве.
+--shift N - номер смены (0-7) в МГРП резидента на диске (по умолчанию 1);
+   0 оставляет МГРП как в дистрибутиве.
 """
 import argparse
 import shutil
@@ -106,8 +143,20 @@ VARIANT_SIG = 0o0000056000004005    # слово 0 варианта (ИНФО)
 PREDEL = 13                         # слово варианта -> ТРАКТЫ -> ПРЕДЕЛ
 E16 = 1 << 15                       # АРХИВ ДА
 KGOD = 15                           # слово варианта -> КГОД -> ГОД
-YEAR_SHIFT = 20                     # разр.21-24: младшая цифра года
-YEAR_MASK = 0o17 << YEAR_SHIFT
+YEAR_SHIFT = 20                     # разр.24-21: единицы года
+TENS_SHIFT = 16                     # разр.20-17: десятки года
+YEAR_MASK = 0o17 << YEAR_SHIFT | 0o17 << TENS_SHIFT
+NSVS_WORD = 14                      # слово варианта: номер СВС (NБЭСМ)
+STAT_ZONE = 0o30 + 4                # зона статистики: логическая 030 + 4
+STAT_KEY = 0o1242547515630462       # П'КЛЮЧСТ'
+STAT_TAG = 1                        # тег слов, которые пишет ОС
+SPEC, SHKRZST, SHKZZST, KLUCHST, GODST = 0, 1, 2, 0o15, 0o16
+SCHETCH, DATGEN = 0o532, 0o533      # состав.bemsh
+E35P17 = 0o1777777 << 16            # разр.35-17
+SYM_NAMES, SYM_ADDRS = 0o504, 0o742 # таблица имён тома: имена / адреса
+SYM_MGRP = 0x2c23302f0f0f           # МГРП·· (ГОСТ)
+RES_ZONE = 0o621 + 4                # страница 0 резидента: логическая 0621 + 4
+SHIFT_SHIFT = 21                    # разр.24-22 МГРП: номер смены
 
 
 def cyclic_sum48(words):
@@ -119,6 +168,55 @@ def cyclic_sum48(words):
     return s
 
 
+def stat_zone_words(kgod, nsvs, now):
+    """Слова данных зоны статистики, как их оставляет ОС (см. п.5)."""
+    mday, mon = now.tm_mday, now.tm_mon
+    date = ((mday // 10) << 4 | mday % 10) << 5 | ((mon // 10) << 4 | mon % 10)
+    god = (kgod & ~0o7770 & 0o77777777) | (nsvs & 7) | (date << 24)
+    vremya = (now.tm_hour * 3600 + now.tm_min * 60 + now.tm_sec) * 50
+    w = [0] * 1024
+    w[SPEC] = ((god & 0o7777) << 36) | (god & E35P17) | (1 << 9)
+    w[SHKRZST] = 0o30 << (6 * (nsvs - 1))
+    w[SHKZZST] = (1 << 47) | 0o30
+    w[KLUCHST] = STAT_KEY
+    w[GODST] = god
+    w[SCHETCH] = vremya << 18
+    w[DATGEN] = god
+    return w
+
+
+def zone_data(data, z):
+    """1024 слова данных зоны z (без тегов)."""
+    base = (z * ZONE_WORDS + 8) * WORD
+    return [struct.unpack("<Q", data[base + i * WORD:base + (i + 1) * WORD])[0]
+            & M48 for i in range(1024)]
+
+
+def sym_addr(data, name):
+    """Адрес ячейки из таблицы имён тома (как disk_load_autotime_syms)."""
+    names, addrs = zone_data(data, SYM_NAMES), zone_data(data, SYM_ADDRS)
+    for i, n in enumerate(names):
+        if n == name:
+            w = addrs[i // 2]
+            return (w >> 24) & 0o77777777 if i % 2 == 0 else w & 0o77777777
+    return None
+
+
+def patch_word(data, z, i, fn):
+    """Заменить слово данных i зоны z на fn(старое), пересчитать КС зоны."""
+    base = z * ZONE_WORDS * WORD
+    off = base + (8 + i) * WORD
+    raw = struct.unpack("<Q", data[off:off + WORD])[0]
+    old = raw & M48
+    data[off:off + WORD] = struct.pack("<Q", (raw & ~M48) | (fn(old) & M48))
+    cs = cyclic_sum48(zone_data(data, z))
+    for k in (3, 7):
+        o = base + k * WORD
+        r = struct.unpack("<Q", data[o:o + WORD])[0]
+        data[o:o + WORD] = struct.pack("<Q", (r & ~M48) | cs)
+    return old
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -128,7 +226,7 @@ def main():
     ap.add_argument("--pack", default="%o" % PACK_DEFAULT,
                     help="номер пакета, восьмеричный (по умолчанию 4005)")
     ap.add_argument("--year", type=int, default=time.localtime().tm_year,
-                    help="год; в образ идёт младшая цифра (по умолчанию текущий)")
+                    help="год; в образ идут две младшие цифры (по умолчанию текущий)")
     ap.add_argument("--set-archive", type=int, choices=(0, 1), default=None,
                     help="0 — выключить архив (разр.16 ПРЕДЕЛ), 1 — включить;"
                          " по умолчанию разряд не трогается")
@@ -136,8 +234,15 @@ def main():
                     help="обнулить данные зоны параметров архива (phys 0755),"
                          " СС оставить, КС пересчитать в 0 — задача архива"
                          " увидит «нет параметров»")
+    ap.add_argument("--svs", type=int, default=1, choices=range(1, 9),
+                    help="номер СВС для зоны статистики (по умолчанию 1)")
+    ap.add_argument("--no-stat-zone", action="store_true",
+                    help="не размечать зону статистики (оставить как в дистрибутиве)")
+    ap.add_argument("--shift", type=int, default=1, choices=range(0, 8),
+                    help="номер смены в МГРП резидента (по умолчанию 1, 0 - не трогать)")
     args = ap.parse_args()
     digit = args.year % 10
+    tens = args.year // 10 % 10
 
     try:
         pack = int(args.pack, 8)
@@ -182,6 +287,8 @@ def main():
                     npack += 1
 
         narch = nyear = 0
+        kgod = None                             # КГОД первого варианта СВС --svs
+        nvar = 0                                # вариантов ГЕНС-а в образе
         if PARAM_ZONE < nzones:                 # архив выключен, год
             base = PARAM_ZONE * ZONE_WORDS * WORD
 
@@ -192,6 +299,7 @@ def main():
             for v in range(8, ZONE_WORDS - VARIANT_WORDS + 1, VARIANT_WORDS):
                 if word(v) & M48 != VARIANT_SIG:
                     continue
+                nvar += 1
                 if args.set_archive is not None:
                     off = base + (v + PREDEL) * WORD
                     raw = word(v + PREDEL)
@@ -201,10 +309,13 @@ def main():
                         narch += 1
                 off = base + (v + KGOD) * WORD
                 raw = word(v + KGOD)
-                new = (raw & ~YEAR_MASK) | (digit << YEAR_SHIFT)
+                new = ((raw & ~YEAR_MASK) | (digit << YEAR_SHIFT)
+                       | (tens << TENS_SHIFT))
                 if new != raw:
                     data[off:off + WORD] = struct.pack("<Q", new)
                     nyear += 1
+                if kgod is None and word(v + NSVS_WORD) & 7 == args.svs:
+                    kgod = new & M48
             if narch or nyear:
                 cs = cyclic_sum48([word(i) for i in range(8, ZONE_WORDS)])
                 for i in (3, 7):
@@ -231,6 +342,35 @@ def main():
                 off = base + i * WORD
                 data[off:off + WORD] = struct.pack("<Q", (aword(i) & ~M48) | cs)
 
+        stat_done = False
+        # Без вариантов ГЕНС-а образ не системный (svs2048): зону не трогаем.
+        if not args.no_stat_zone and nvar:
+            if kgod is None:
+                sys.exit("makeSVS2053: нет варианта ГЕНС-а для СВС %d" % args.svs)
+            if STAT_ZONE >= nzones:
+                sys.exit("makeSVS2053: в образе нет зоны статистики %04o" % STAT_ZONE)
+            now = time.localtime()
+            words = stat_zone_words(kgod, args.svs, now)
+            base = STAT_ZONE * ZONE_WORDS * WORD
+            for i, v in enumerate(words):
+                off = base + (8 + i) * WORD
+                data[off:off + WORD] = struct.pack("<Q", (STAT_TAG << 48) | v)
+            cs = cyclic_sum48(words)
+            for i in (3, 7):
+                off = base + i * WORD
+                raw = struct.unpack("<Q", data[off:off + WORD])[0]
+                data[off:off + WORD] = struct.pack("<Q", (raw & ~M48) | cs)
+            stat_done = True
+
+        mgrp = mgrp_old = None
+        if args.shift and nvar:
+            mgrp = sym_addr(data, SYM_MGRP)
+            if mgrp is None or mgrp >= 1024:
+                sys.exit("makeSVS2053: МГРП не найден в странице 0 резидента")
+            mgrp_old = patch_word(
+                data, RES_ZONE, mgrp,
+                lambda v: (v & ~(7 << SHIFT_SHIFT)) | (args.shift << SHIFT_SHIFT))
+
         f.seek(0)
         f.write(data)
 
@@ -242,7 +382,17 @@ def main():
     else:
         print("             архив %s (разр.16 ПРЕДЕЛ) в %d вариантах ГЕНС-а (зона %04o)"
               % ("включён" if args.set_archive else "выключен", narch, PARAM_ZONE))
-    print("             год %d: цифра %d в %d вариантах" % (args.year, digit, nyear))
+    print("             год %d: цифры %d%d в %d вариантах"
+          % (args.year, tens, digit, nyear))
+    if mgrp is not None:
+        print("             смена %d в МГРП (%05o, зона %04o): %016o -> %016o"
+              % (args.shift, mgrp, RES_ZONE, mgrp_old,
+                 (mgrp_old & ~(7 << SHIFT_SHIFT)) | (args.shift << SHIFT_SHIFT)))
+    if not stat_done and not args.no_stat_zone:
+        print("             зона статистики не тронута: в образе нет вариантов ГЕНС-а")
+    if stat_done:
+        print("             зона статистики %04o (лог. 030) размечена: СВС %d, %s"
+              % (STAT_ZONE, args.svs, time.strftime("%d.%m.%Y %H:%M:%S", now)))
     if args.zero_archive_params:
         print("             параметры архива обнулены (зона %04o), слов %d"
               % (ARCH_PARAM_ZONE, nzeroed))
