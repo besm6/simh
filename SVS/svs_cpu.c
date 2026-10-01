@@ -180,17 +180,6 @@ static double autotime_after(double sec)
 {
     return sim_gtime() + sec * sim_timer_inst_per_sec();
 }
-int svs_trace_window = 0;
-t_addr svs_trace_lo = 0, svs_trace_hi = 0;
-
-/*
- * CPU data structures
- *
- * cpu_dev[]    CPU device descriptors
- * cpu_unit[]   CPU unit descriptors
- * cpu0_reg     CPU register list
- * cpu_mod      CPU modifiers list
- */
 
 /*
  * Номер СВС работающего процессора (то, что читает команда РЕГ '250' и что
@@ -202,6 +191,61 @@ t_addr svs_trace_lo = 0, svs_trace_hi = 0;
  * Задаётся из .ini: `d NSVS 1` (см. dispak.ini, ПВВ.md §5.3).
  */
 int cpu_svs_number = 0;
+
+/*
+ * СКП — сигнал контроля процессора («мёртвая рука»). ЗПР с Аисп = 0140
+ * гасит его таймер, и СКП не вырабатывается ~0,52 с (ИЫ3.055.006 Т04,
+ * лист 92). Не погашен вовремя — СКП процессора k защёлкивается в регистре
+ * аварийных внешних прерываний: СКОП (ЦП 0-9) — разр.42-33 сумматора, СКОМП
+ * (ПВВ 0-3) — разр.46-43; гашение РЕГ '55' (по И, как ГРВП), чтение РЕГ '255'
+ * (§16.8, лист 127). Сборка регистра под маской РКП — разряд 6 ГРВП
+ * «аварийные прерывания от процессоров» (табл.12), его разбирает АДАП
+ * (АВСВС -> АВАР, ВЫХАВ): аварийные процессоры выбрасываются из
+ * конфигурации, только если на ТР1 стоит разр.48 (БЛОАВ, `СЧМ 1 / И БЛОАВ /
+ * ПО ВЫХАВ`), себя — если ещё и на ТР3 есть разряды 42-33; иначе ВЫХАВ
+ * переключает разр.6 ГРМ и гасит регистр. Срок считается в модельном
+ * времени (команды).
+ */
+#define SKP_PERIOD  0.52                /* с */
+#define SKOP_MASK   (0x3fffLL << 32)    /* разр.46-33: СКОМП и СКОП */
+t_value svs_skop;                       /* регистр аварийных прерываний 055 */
+static double skp_deadline;             /* sim_gtime(), когда сработает СКП */
+static int skp_armed;                   /* срок поставлен (после сброса) */
+
+/* Погасить таймер СКП: следующий СКП не раньше чем через SKP_PERIOD. */
+static void skp_reset_timer(void)
+{
+    skp_deadline = autotime_after(SKP_PERIOD);
+    skp_armed = 1;
+}
+
+/* Проверить таймер СКП (с тактового агрегата). */
+static void skp_check(void)
+{
+    t_value bit = 1LL << (41 - cpu_svs_number);   /* как в РЕГ '250' */
+
+    if (!skp_armed) {                   /* после сброса: срок от первого такта */
+        skp_reset_timer();
+        return;
+    }
+    if (sim_gtime() < skp_deadline || (svs_skop & bit))
+        return;
+    svs_skop |= bit;
+    if (sim_deb && CPU_DEB(&cpu_core[0], DEB_DEV))
+        fprintf(sim_deb, "cpu0 --- СКП: таймер не погашен, СКОП=%016jo, PC=%05o\n",
+            (uintmax_t)svs_skop, cpu_core[0].PC);
+}
+int svs_trace_window = 0;
+t_addr svs_trace_lo = 0, svs_trace_hi = 0;
+
+/*
+ * CPU data structures
+ *
+ * cpu_dev[]    CPU device descriptors
+ * cpu_unit[]   CPU unit descriptors
+ * cpu0_reg     CPU register list
+ * cpu_mod      CPU modifiers list
+ */
 
 UNIT cpu_unit[4] = {
     { UDATA(NULL, UNIT_FIX, MEMSIZE) },
@@ -269,6 +313,7 @@ REG cpu0_reg[] = {
     { ORDATAVM (POP,    cpu_core[0].POP,        48) },  /* interrupts from processors */
     { ORDATAVM (OPOP,   cpu_core[0].OPOP,       48) },  /* responds from processors */
     { ORDATAVM (RKP,    cpu_core[0].RKP,        48) },  /* configuration of processors */
+    { ORDATAVM (SKOP,   svs_skop,               48) },  /* аварийные прерывания (СКП), 055 */
     { DRDATA   (NSVS,   cpu_svs_number,         4)  },  /* номер СВС для РЕГ '250' */
     { 0 }
 };
@@ -519,6 +564,10 @@ t_stat cpu_reset(DEVICE *dev)
     cpu->POP = 0;
     cpu->OPOP = 0;
     cpu->RKP = 0;
+    if (cpu->index == 0) {
+        svs_skop = 0;
+        skp_armed = 0;                  /* таймер СКП пойдёт с первого такта */
+    }
 
     if (cpu->index == 0)
         svs_clock_preset();     /* часы общие: выставить один раз */
@@ -1135,17 +1184,17 @@ static void cmd_002(CORE *cpu)
         break;
 
     case 055:
-        /* Запись в регистр аварии процессоров */
+        /* Гашение регистра аварийных прерываний (СКОП, СКОМП): по И. */
         if (CPU_TRACE(cpu, DEB_INSN))
-            fprintf(sim_deb, "cpu%d --- Запись в регистр аварии процессоров\n", cpu->index);
-        /* игнорируем */
+            fprintf(sim_deb, "cpu%d --- Гашение СКОП\n", cpu->index);
+        svs_skop &= cpu->ACC;
         break;
 
     case 0255:
-        /* Чтение регистра аварии процессоров */
+        /* Чтение регистра аварийных прерываний (СКОП, СКОМП) */
         if (CPU_TRACE(cpu, DEB_INSN))
-            fprintf(sim_deb, "cpu%d --- Чтение регистра аварии процессоров\n", cpu->index);
-        cpu->ACC = 0;
+            fprintf(sim_deb, "cpu%d --- Чтение СКОП\n", cpu->index);
+        cpu->ACC = svs_skop & SKOP_MASK;
         break;
 
     case 056:
@@ -1217,20 +1266,13 @@ static void cmd_002(CORE *cpu)
         break;
 
     case 0140:
-        /* Сброс контрольных признаков (СКП). */
+        /* Гашение таймера СКП (сигнала контроля процессора). */
         if (CPU_TRACE(cpu, DEB_INSN))
-            fprintf(sim_deb, "cpu%d --- Сброс контрольных признаков\n",
-                cpu->index);
-        //TODO
+            fprintf(sim_deb, "cpu%d --- Гашение СКП\n", cpu->index);
+        skp_reset_timer();
         break;
 
     default:
-#if 0
-        if ((cpu->Aex & 0340) == 0140) {
-            /* TODO: watchdog reset mechanism */
-            longjmp(cpu->exception, STOP_UNIMPLEMENTED);
-        }
-#endif
         /* Неиспользуемые адреса */
         svs_debug("--- %05o%s: РЕГ %o - неизвестный спец.регистр",
             cpu->PC, (cpu->RUU & RUU_RIGHT_INSTR) ? "п" : "л", cpu->Aex);
@@ -2005,6 +2047,11 @@ branch_zero:
         /* Внешние прерывания отсутствуют. */
         cpu->GRVP &= ~GRVP_REQUEST;
     }
+    /* Разряд 6 — сборка СКОП/СКОМП под маской РКП, нехранящий. */
+    if (svs_skop & cpu->RKP & SKOP_MASK)
+        cpu->GRVP |= GRVP_IOM_FAIL;
+    else
+        cpu->GRVP &= ~GRVP_IOM_FAIL;
 
     /* Трассировка изменённых регистров. */
     if (CPU_DEB(cpu, DEB_REGS) && TRACE_IN_WINDOW(trace_pc)) {
@@ -2374,6 +2421,7 @@ t_stat fast_clk(UNIT *this)
 
     /* Свежие CLOCK и TIMER для `e` из sim>; заодно ловит `d TIMER`. */
     svs_time_sync();
+    skp_check();                        /* «мёртвая рука» СКП */
 
     tmr_poll = sim_rtcn_calb(TICKS_PER_SEC, 0);               /* calibrate clock */
     return sim_activate_after(this, 1000000/TICKS_PER_SEC);   /* reactivate unit */

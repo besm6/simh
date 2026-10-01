@@ -552,7 +552,7 @@ extern int ipzzt;               /* ИПЗЖТ */
 #define GRVP_PROGRAM    0400LL
 #define GRVP_REQUEST    0200LL
 #define GRVP_RESPONSE   0100LL
-#define GRVP_IOM_FAIL   0040LL
+#define GRVP_IOM_FAIL   0040LL  /* 6: аварийные прерывания от процессоров (СКОП/СКОМП) */
 #define GRVP_RAM_FAIL   0020LL
 #define GRVP_TIMER      0010LL
 #define GRVP_INTR_IOM   0004LL
