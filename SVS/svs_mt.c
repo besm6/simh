@@ -23,6 +23,7 @@
  */
 #include "svs_defs.h"
 #include "sim_tape.h"
+#include <ctype.h>
 
 /*
  * Ленты (МЛ) Диспака СВС — накопители ЕС на ЕС-канале (см. ПВВ.md, МЛ):
@@ -56,6 +57,19 @@
  *   ДРУ (только при особом состоянии: шаг назад от начала ленты, конец
  *   записанной части, нет кольца, ошибка образа): разр.44 — сбой данных,
  *   39 — готов, 36 — начало ленты, 34 — нет кольца записи.
+ *
+ * Разметка (как mg_attach в BESM6/besm6_mg.c): `attach -n MTn …/0123.tap`,
+ * а также attach несуществующего файла, создаёт образ и размечает его —
+ * номер бобины берётся из самой правой группы цифр в имени файла (1..2047).
+ * Формат — тот, что пишет ЕСМЛ при дисковой упаковке без дублирования
+ * (УПНОВ=1, БЕЗДУБ=1): блок ДОМЛМД из 784 слов (адап.bemsh:1327) — СС[0..7],
+ * 8 пустых слов и 768 слов упакованной зоны; данные нулевые, поэтому и
+ * контрольная сумма СС[7] = 0. Зона z — блок z от начала ленты:
+ *   СС[2] = бобина<<30 | бобина | 0777<<15 | флаги (ПРОБА1, есмл.bemsh:1627);
+ *   СС[3] = СС[6] = 070707<<24 | z<<12 | z (ключ и зона, дмлмб.bemsh:1243).
+ * Каждая зона — отдельный «файл»: метка, зона, метка, зона, …, метка, метка
+ * (опознание от начала ленты ждёт метку перед зоной 0, а по зонам ЕСМЛ ходит
+ * пропуском файла 2F/3F). Зон 2048 (предел при БЕЗДУБ, ОГР дисп80.bemsh:734).
  */
 #define NUM_MT          16
 #define MT_MAXREC       (8 * 2048)          /* байт в записи, с запасом */
@@ -128,10 +142,100 @@ static t_stat mt_reset(DEVICE *dptr)
     return SCPE_OK;
 }
 
+#define MT_ZONES        2048                /* зон на размеченной ленте */
+#define MT_BLKWORDS     01420               /* слов в блоке (ДОМЛМД) */
+#define MT_KEY          070707LL            /* ключ зоны в СС[3], СС[6] */
+#define MT_FLAGS        (1LL << 46 | 1LL << 45 | 1LL << 28 | 1LL << 27) /* БЕЗДУБ, УПНОВ */
+
+/*
+ * Разметка ленты бобины reel: все зоны с СС и нулевыми данными, две метки,
+ * перемотка.
+ */
+static t_stat mt_format(UNIT *u, int reel)
+{
+    t_value blk[MT_BLKWORDS];
+    t_stat r = MTSE_OK;
+    int z, i, k, n;
+
+    sim_messagef(SCPE_OK, "%s: formatting tape volume %d\n", sim_uname(u), reel);
+    memset(blk, 0, sizeof(blk));
+    blk[1] = (t_value)0x987654321000LL << 16;   /* шифр задачи разметки */
+    blk[2] = ((t_value)reel << 30 | reel | 0777LL << 15 | MT_FLAGS) << 16;
+    /*
+     * Каждой зоне предшествует метка: опознание от начала ленты (ПРК3/ПРК4,
+     * есмл.bemsh:995-1040) шагает на блок вперёд и читает СС следующей
+     * зоны, только если прошло метку (ОСУ, «стоим перед зоной»); пройдя
+     * обычный блок, оно возвращается, ничего не прочитав. А по зонам ЕСМЛ
+     * ходит пропуском файла (2F/3F, «ШАГ НА ЗОНУ» в ТОП), то есть зоны
+     * разделены метками.
+     */
+    r = sim_tape_wrtmk(u);
+    for (z = 0; z < MT_ZONES && r == MTSE_OK; ++z) {
+        blk[3] = blk[6] = (MT_KEY << 24 | (t_value)z << 12 | z) << 16;
+        for (i = n = 0; i < MT_BLKWORDS; ++i)
+            for (k = 7; k >= 0; --k)
+                mt_buf[n++] = (uint8)(blk[i] >> (8 * k));
+        r = sim_tape_wrrecf(u, mt_buf, n);
+        if (r == MTSE_OK)
+            r = sim_tape_wrtmk(u);      /* зона — отдельный «файл» */
+    }
+    if (r == MTSE_OK)
+        r = sim_tape_wrtmk(u);          /* вторая метка — конец записи */
+    sim_tape_rewind(u);
+    return (r == MTSE_OK) ? SCPE_OK : SCPE_IOERR;
+}
+
+/*
+ * Номер бобины — самая правая группа цифр в имени файла (без каталога и
+ * расширения): «/tmp/0123.tap» -> 123. 0 — цифр нет.
+ */
+static int mt_reel_from_name(UNIT *u)
+{
+    char *name = sim_filepath_parts(u->filename, "n");
+    char *pos = name + strlen(name);
+    int reel;
+
+    while (pos > name && !isdigit((unsigned char)*--pos))
+        ;
+    while (pos > name && isdigit((unsigned char)pos[-1]))
+        --pos;
+    reel = isdigit((unsigned char)*pos) ? (int)strtoul(pos, NULL, 10) : 0;
+    free(name);
+    return reel;
+}
+
 static t_stat mt_attach(UNIT *u, CONST char *cptr)
 {
+    int32 saved_switches = sim_switches;
+    t_stat r;
+
     mt_offbot[u - mt_unit] = 0;
-    return sim_tape_attach(u, cptr);
+    sim_switches |= SWMASK('E');
+    for (;;) {
+        r = sim_tape_attach(u, cptr);
+        if (r == SCPE_OK && (sim_switches & SWMASK('N'))) {
+            int reel = mt_reel_from_name(u);
+
+            if (reel < 1 || reel >= 2048) {
+                char *fname = strdup(u->filename);
+
+                r = sim_messagef(SCPE_ARG, "%s: в имени файла нужен номер"
+                    " бобины 1..2047 (%s)\n", sim_uname(u), cptr);
+                sim_tape_detach(u);
+                remove(fname);
+                free(fname);
+                return r;
+            }
+            r = mt_format(u, reel);
+            break;
+        }
+        if (r == SCPE_OK || (saved_switches & SWMASK('E')) ||
+            (sim_switches & SWMASK('N')))
+            break;
+        sim_switches |= SWMASK('N');    /* файла нет — создать и разметить */
+    }
+    sim_switches = saved_switches;
+    return r;
 }
 
 static t_stat mt_detach(UNIT *u)
