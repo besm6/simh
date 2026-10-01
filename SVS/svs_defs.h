@@ -490,6 +490,8 @@ t_stat svs_drum_io(int dev, int zone, int sector,
  */
 extern DEVICE printer_dev;
 t_stat svs_printer_io(int num, int kop, int memaddr, int nwords);
+unsigned svs_dkoi_unicode(unsigned char b);
+void svs_put_unknown(unsigned char b, FILE *f);
 void utf8_putc(unsigned ch, FILE *fout);
 
 /*

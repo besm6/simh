@@ -30,6 +30,8 @@
 # архива не зацикливалась на загрузке.
 # ZERO_ARCH_PARAMS=1 обнуляет зону параметров архива (makeSVS2053.py
 # --zero-archive-params) — задача архива видит пустые параметры.
+# PPM=N[,N…] отмечает терминалы как ЕС-7934 (makeSVS2053.py --ppm); печать
+# на них — при ТР7 разр.23/22 и attach -p DISPLAYn <файл> (АЦД.md).
 
 set -e
 
@@ -61,6 +63,9 @@ else
 fi
 if [ "${ZERO_ARCH_PARAMS:-0}" = 1 ]; then
     MK2053_OPTS+=(--zero-archive-params)
+fi
+if [ -n "${PPM:-}" ]; then
+    MK2053_OPTS+=(--ppm "$PPM")
 fi
 
 if [ "${KEEP_DISK:-0}" = 1 ] && [ -f "$IMG" ]; then

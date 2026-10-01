@@ -98,6 +98,14 @@
    странице 0 резидента, которую ГЕНС читает из логической зоны 0621
    (КУСЧТЗ, «ДИСП70,КИТ,ДИСКИ,КАЧКА») = зона образа 0625.
 
+7. ЕС-7934 (--ppm).  Печать на ЕС-7934 (печать на контроллере дисплеев):
+   терминал n отмечается разр.48-n в слове 032 варианта (ШКППМ, ПАРОС 071772)
+   и в слове 027 (ШКУСТР, 071767, шкала дисплеев) - ГЕНС1 переписывает их в
+   МОТТ.  В вариантах СВС 1, выбираемых по умолчанию, ШКППМ = 0.  Скрипт
+   взводит эти разряды во всех вариантах СВС --svs.  Печать уходит на
+   ЕС-7934 при ТР7 разр.23 (АЦПУ0) / 22 (АЦПУ1), печсвс.bemsh:71-80; в
+   симуляторе - attach -p DISPLAYn <файл> (АЦД.md).
+
 После правок пересчитывается контрольная сумма зоны СС[3]/СС[7] - сумма слов
 данных с циклическим переносом по 48 разрядам (ПОДКС в ВЫЗСВС; иначе СТОП 204).
 
@@ -106,6 +114,7 @@
     python3 tools/makeSVS2053.py <дистрибутив> <копия> [--pack N] [--year Г]
                                  [--set-archive 0|1] [--zero-archive-params]
                                  [--svs N] [--no-stat-zone] [--shift N]
+                                 [--ppm N[,N...]]
 
 --pack задаёт номер пакета восьмеричным числом (по умолчанию 4005),
 --year - год, в образ идут две его младшие цифры (по умолчанию текущий).
@@ -120,6 +129,7 @@
    как NSVS в svs.ini); --no-stat-zone оставляет зону как в дистрибутиве.
 --shift N - номер смены (0-7) в МГРП резидента на диске (по умолчанию 1);
    0 оставляет МГРП как в дистрибутиве.
+--ppm N[,N...] - терминалы ЕС-7934 (0-15) в вариантах ГЕНС-а СВС --svs.
 """
 import argparse
 import shutil
@@ -143,6 +153,8 @@ VARIANT_SIG = 0o0000056000004005    # слово 0 варианта (ИНФО)
 PREDEL = 13                         # слово варианта -> ТРАКТЫ -> ПРЕДЕЛ
 E16 = 1 << 15                       # АРХИВ ДА
 KGOD = 15                           # слово варианта -> КГОД -> ГОД
+SHKUSTR = 0o27                      # слово варианта: шкала дисплеев
+SHKPPM = 0o32                       # слово варианта: шкала ЕС-7934
 YEAR_SHIFT = 20                     # разр.24-21: единицы года
 TENS_SHIFT = 16                     # разр.20-17: десятки года
 YEAR_MASK = 0o17 << YEAR_SHIFT | 0o17 << TENS_SHIFT
@@ -238,10 +250,22 @@ def main():
                     help="номер СВС для зоны статистики (по умолчанию 1)")
     ap.add_argument("--no-stat-zone", action="store_true",
                     help="не размечать зону статистики (оставить как в дистрибутиве)")
+    ap.add_argument("--ppm", default="",
+                    help="терминалы ЕС-7934 через запятую (0-15)")
     ap.add_argument("--shift", type=int, default=1, choices=range(0, 8),
                     help="номер смены в МГРП резидента (по умолчанию 1, 0 - не трогать)")
     args = ap.parse_args()
     digit = args.year % 10
+    try:
+        ppm = sorted({int(x) for x in args.ppm.split(",") if x.strip()})
+    except ValueError:
+        sys.exit("makeSVS2053: --ppm %r: нужны номера терминалов через запятую"
+                 % args.ppm)
+    if any(not 0 <= n <= 15 for n in ppm):
+        sys.exit("makeSVS2053: --ppm: номер терминала 0-15")
+    ppm_mask = 0
+    for n in ppm:
+        ppm_mask |= 1 << (47 - n)       # разр.48-n
     tens = args.year // 10 % 10
 
     try:
@@ -286,7 +310,7 @@ def main():
                     data[off:off + WORD] = struct.pack("<Q", (raw & ~M48) | new)
                     npack += 1
 
-        narch = nyear = 0
+        narch = nyear = nppm = 0
         kgod = None                             # КГОД первого варианта СВС --svs
         nvar = 0                                # вариантов ГЕНС-а в образе
         if PARAM_ZONE < nzones:                 # архив выключен, год
@@ -316,7 +340,13 @@ def main():
                     nyear += 1
                 if kgod is None and word(v + NSVS_WORD) & 7 == args.svs:
                     kgod = new & M48
-            if narch or nyear:
+                if ppm_mask and word(v + NSVS_WORD) & 7 == args.svs:
+                    for w in (SHKPPM, SHKUSTR):
+                        off = base + (v + w) * WORD
+                        raw = word(v + w)
+                        data[off:off + WORD] = struct.pack("<Q", raw | ppm_mask)
+                    nppm += 1
+            if narch or nyear or nppm:
                 cs = cyclic_sum48([word(i) for i in range(8, ZONE_WORDS)])
                 for i in (3, 7):
                     off = base + i * WORD
@@ -384,6 +414,9 @@ def main():
               % ("включён" if args.set_archive else "выключен", narch, PARAM_ZONE))
     print("             год %d: цифры %d%d в %d вариантах"
           % (args.year, tens, digit, nyear))
+    if ppm:
+        print("             ЕС-7934: терминалы %s в %d вариантах СВС %d"
+              % (",".join(map(str, ppm)), nppm, args.svs))
     if mgrp is not None:
         print("             смена %d в МГРП (%05o, зона %04o): %016o -> %016o"
               % (args.shift, mgrp, RES_ZONE, mgrp_old,

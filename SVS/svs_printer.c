@@ -51,8 +51,8 @@
  *     U+2581 Lower One Eighth Block; прочие — один раз).
  *     Любые другие сочетания остаются наложением через '\r';
  *   - заменой другим знаком: однозначные (байт ДКОИ получается только из
- *     одного кода ГОСТ) возвращаются: @ ↑, # ≠, & ∧, ~ ¬, ? °, ¦ |, | !,
- *     _ ‾. Неоднозначные (Ю/⏨, Х/×, V/∨, кавычки, -/―) не трогаются.
+ *     одного кода ГОСТ) возвращаются: @ ↑, # ≠, & ∧, ? °, _ ‾.
+ *     Неоднозначные (Ю/⏨, Х/×, V/∨, кавычки, -/―) не трогаются.
  */
 #define NUM_PRINTERS    2
 
@@ -110,12 +110,12 @@ DEVICE printer_dev = {
 static const unsigned short dkoi_to_unicode[256] = {
     [0x40] = ' ',
     [0x4A] = '[',    [0x4B] = '.',    [0x4C] = '<',    [0x4D] = '(',
-    [0x4E] = '+',    [0x4F] = '|',
+    [0x4E] = '+',    [0x4F] = '!',    /* ТДКОИ: ГОСТ 133 ! */
     [0x50] = '&',
     [0x5A] = ']',    [0x5B] = '$',    [0x5C] = '*',    [0x5D] = ')',
-    [0x5E] = ';',    [0x5F] = '~',
+    [0x5E] = ';',    [0x5F] = 0x00AC, /* ¬: ТДКОИ «ОТРИЦ», ГОСТ 123 */
     [0x60] = '-',    [0x61] = '/',
-    [0x6A] = 0x00A6, [0x6B] = ',',    [0x6C] = '%',    [0x6D] = '_',
+    [0x6A] = '|',    [0x6B] = ',',    [0x6C] = '%',    [0x6D] = '_',   /* 6A: ТДКОИ, ГОСТ 130 | */
     [0x6E] = '>',    [0x6F] = '?',
     [0x7A] = ':',    [0x7B] = '#',    [0x7C] = '@',    [0x7D] = '\'',
     [0x7E] = '=',    [0x7F] = '"',
@@ -148,6 +148,7 @@ static const unsigned short dkoi_to_unicode[256] = {
     [0xD9] = 'R',
     [0xDC] = 0x041F, /* П */
     [0xDD] = 0x042F, /* Я */
+    [0xE0] = '\\',   /* ЕС-7934: ГОСТ 130 | (ТАБКОД) */
     [0xE2] = 'S',
     [0xE3] = 0x0422, /* Т */
     [0xE4] = 'U',
@@ -170,6 +171,26 @@ static const unsigned short dkoi_to_unicode[256] = {
     [0xFF] = 0x042A, /* Ъ */
 };
 
+/*
+ * ДКОИ -> Unicode для других устройств (ЕС-7934 в svs_display.c); 0 — кода
+ * нет в таблице (печатается как \XX, svs_put_unknown).
+ */
+unsigned svs_dkoi_unicode(unsigned char b)
+{
+    return dkoi_to_unicode[b];
+}
+
+/*
+ * Код ДКОИ, которого нет в таблице: «\XX» (шестнадцатеричный), чтобы в
+ * распечатке было видно, какой байт пришёл.
+ */
+void svs_put_unknown(unsigned char b, FILE *f)
+{
+    fprintf(f, "\\%02X", b);
+}
+
+#define UNKNOWN_CH  0x80000000u         /* | байт: печатать как \XX */
+
 #define LINE_BYTES  256                 /* с запасом: строка АЦПУ — 132 знака */
 #define MAX_PASSES  8                   /* проходов без протяжки подряд */
 
@@ -180,10 +201,7 @@ static const unsigned short gost_single[256] = {
     [0x7C] = 0x2191,    /* @  <- 021 ↑ */
     [0x7B] = 0x2260,    /* #  <- 034 ≠ */
     [0x50] = 0x2227,    /* &  <- 121 ∧ */
-    [0x5F] = 0x00AC,    /* ~  <- 123 ¬ */
     [0x6F] = 0x00B0,    /* ?  <- 136 ° */
-    [0x6A] = '|',       /* ¦  <- 130 | */
-    [0x4F] = '!',       /* |  <- 133 ! */
     [0x6D] = 0x203E,    /* _  <- 115 ‾ */
 };
 
@@ -210,7 +228,7 @@ static unsigned char pend[NUM_PRINTERS][MAX_PASSES][LINE_BYTES];
 static int npend[NUM_PRINTERS];
 
 /*
- * Байт ДКОИ -> Unicode; непечатный код — видимая замена «·».
+ * Байт ДКОИ -> Unicode; кода нет в таблице — UNKNOWN_CH | байт («\XX»).
  */
 static unsigned printer_char(UNIT *u, int num, unsigned char b, int pos)
 {
@@ -223,7 +241,7 @@ static unsigned printer_char(UNIT *u, int num, unsigned char b, int pos)
     if (ch == 0) {
         sim_debug(DEB_OPS, &printer_dev,
             "АЦПУ%d: непечатный код %02X в позиции %d\n", num, b, pos);
-        ch = 0x00B7;
+        ch = UNKNOWN_CH | b;
     }
     return ch;
 }
@@ -269,7 +287,10 @@ static void printer_emit(UNIT *u, const unsigned *ch, int n)
     while (n > 0 && ch[n-1] == ' ')
         --n;
     for (i = 0; i < n; ++i)
-        utf8_putc(ch[i], u->fileref);
+        if (ch[i] & UNKNOWN_CH)
+            svs_put_unknown(ch[i] & 0xFF, u->fileref);
+        else
+            utf8_putc(ch[i], u->fileref);
 }
 
 /*

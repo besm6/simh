@@ -26,6 +26,13 @@
  *
  * Каждый дисплей хранит свой экран (ДКОИ) — по нему экран восстанавливается
  * при повторном подключении и отдаётся ОС, если та читает без нажатия клавиш.
+ *
+ * ЕС-7934 (печать на том же контроллере): attach -p DISPLAYn <файл> — запись
+ * в дисплей n (КОП 01/05) печатается ещё и в файл, UTF-8. ПЕЧСВС шлёт на
+ * строку одну стирание-запись: WCC (СУЗ Х'4B'), знаки ДКОИ, 0x25 (ПС7934) на
+ * каждую протяжку, 0x19 (КТ7934, EM) в конце (печсвс.bemsh:18-24, 246-275).
+ * Терминал должен быть в ШКППМ варианта ГЕНС-а (makeSVS2053.py --ppm), печать
+ * АЦПУ уходит на него при ТР7 разр.23 (АЦПУ0) / 22 (АЦПУ1).
  */
 #include "svs_defs.h"
 #include "sim_tmxr.h"
@@ -114,9 +121,21 @@ static t_stat disp_set_cp(UNIT *u, int32 val, CONST char *cptr, void *desc);
 static t_stat disp_show_cp(FILE *st, UNIT *u, int32 v, CONST void *desc);
 static t_stat disp_show_conn(FILE *st, UNIT *u, int32 v, CONST void *desc);
 
-/* Юниты 0-15 — дисплеи, 16 — опрос сети (к нему делается attach). */
+/*
+ * Юниты 0-15 — дисплеи (attach -p — файл печати ЕС-7934), 16 — опрос сети
+ * (к нему делается attach порта).
+ */
+#define DISP_UNIT_FLAGS  UNIT_ATTABLE | UNIT_SEQ
 UNIT disp_unit[NUM_DISPLAYS + 1] = {
-    [NUM_DISPLAYS] = { UDATA(&disp_poll, UNIT_ATTABLE | UNIT_IDLE, 0) },
+    { UDATA(NULL, DISP_UNIT_FLAGS, 0) }, { UDATA(NULL, DISP_UNIT_FLAGS, 0) },
+    { UDATA(NULL, DISP_UNIT_FLAGS, 0) }, { UDATA(NULL, DISP_UNIT_FLAGS, 0) },
+    { UDATA(NULL, DISP_UNIT_FLAGS, 0) }, { UDATA(NULL, DISP_UNIT_FLAGS, 0) },
+    { UDATA(NULL, DISP_UNIT_FLAGS, 0) }, { UDATA(NULL, DISP_UNIT_FLAGS, 0) },
+    { UDATA(NULL, DISP_UNIT_FLAGS, 0) }, { UDATA(NULL, DISP_UNIT_FLAGS, 0) },
+    { UDATA(NULL, DISP_UNIT_FLAGS, 0) }, { UDATA(NULL, DISP_UNIT_FLAGS, 0) },
+    { UDATA(NULL, DISP_UNIT_FLAGS, 0) }, { UDATA(NULL, DISP_UNIT_FLAGS, 0) },
+    { UDATA(NULL, DISP_UNIT_FLAGS, 0) }, { UDATA(NULL, DISP_UNIT_FLAGS, 0) },
+    { UDATA(&disp_poll, UNIT_ATTABLE | UNIT_IDLE, 0) },
 };
 
 static int disp_cp;                     /* 0 — cp1025, 1 — cp880 */
@@ -413,6 +432,65 @@ static void raise_attention(int n)
 }
 
 /*
+ * ЕС-7934: напечатать поток записи в файл юнита n. buf[0] — WCC; NL (0x15)
+ * и ПС7934 (0x25) — перевод строки, FF — прогон листа, CR — возврат каретки,
+ * EM (0x19) — конец текста; приказы 3270 с операндами пропускаются, NUL —
+ * пустое место.
+ */
+static void ppm_print(int n, const unsigned char *buf, int len)
+{
+    UNIT *u = &disp_unit[n];
+    FILE *f = u->fileref;
+    int i;
+
+    for (i = 1; i < len; i++) {
+        unsigned char c = buf[i];
+
+        switch (c) {
+        case 0x15: case 0x25:
+            fputc('\n', f);
+            break;
+        case 0x0C:
+            fputc('\f', f);
+            break;
+        case 0x0D:
+            fputc('\r', f);
+            break;
+        case 0x19:
+            i = len;
+            break;
+        case 0x00:
+        case ORD_IC: case ORD_PT:
+            break;
+        case ORD_SBA: case ORD_EUA:
+            i += 2;
+            break;
+        case ORD_RA:
+            i += 3;
+            break;
+        case ORD_SF: case ORD_GE:
+            i += 1;
+            break;
+        case ORD_SA:
+            i += 2;
+            break;
+        case ORD_SFE: case ORD_MF:
+            i += 1 + 2 * ((i + 1 < len) ? buf[i+1] : 0);
+            break;
+        default:
+            if (svs_dkoi_unicode(c))
+                utf8_putc(svs_dkoi_unicode(c), f);
+            else
+                svs_put_unknown(c, f);  /* кода нет в таблице: \XX */
+            break;
+        }
+    }
+    fflush(f);
+    /* go/cont ставят файл на u->pos (scp.c, run_cmd) — сдвигать pos. */
+    u->pos = (t_addr)ftell(f);
+}
+
+/*
  * Обмен с дисплеем n по команде ОС. nbytes — длина массива в байтах.
  */
 t_stat svs_display_io(int n, int kop, int memaddr, int nbytes)
@@ -441,6 +519,8 @@ t_stat svs_display_io(int n, int kop, int memaddr, int nbytes)
             fprintf(sim_deb, "\n");
         }
         display_write(n, kop == 0x05, buf, nbytes);
+        if (disp_unit[n].flags & UNIT_ATT)
+            ppm_print(n, buf, nbytes);
         break;
 
     case 0x02: {                        /* чтение буфера */
@@ -674,6 +754,13 @@ static t_stat disp_reset(DEVICE *dptr)
 static t_stat disp_attach(UNIT *u, CONST char *cptr)
 {
     t_stat r;
+    int n = (int)(u - disp_unit);
+
+    /* attach -p DISPLAYn <файл>: печать ЕС-7934 в файл. */
+    if ((sim_switches & SWMASK('P')) && n >= 0 && n < NUM_DISPLAYS) {
+        sim_switches &= ~SWMASK('P');
+        return attach_unit(u, cptr);
+    }
 
     tmxr_set_notelnet(&disp_desc);
     /* SO_REUSEADDR (как attach -U): после перезапуска симулятора порт
@@ -687,6 +774,10 @@ static t_stat disp_attach(UNIT *u, CONST char *cptr)
 
 static t_stat disp_detach(UNIT *u)
 {
+    int n = (int)(u - disp_unit);
+
+    if (n >= 0 && n < NUM_DISPLAYS && (u->flags & UNIT_ATT))
+        return detach_unit(u);          /* файл печати ЕС-7934 */
     sim_cancel(&disp_unit[NUM_DISPLAYS]);
     return tmxr_detach(&disp_desc, &disp_unit[NUM_DISPLAYS]);
 }
