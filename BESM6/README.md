@@ -474,7 +474,7 @@ set together, e.g. `set tty1 unicode,authbs` or `set tty1 qwerty,authbs`.
 | `unicode` | UTF-8 in and out. |
 | `jcuken`  | Type Russian using the standard ЙЦУКЕН keyboard layout mapped onto Latin keys. |
 | `qwerty`  | Type Russian as transliterated Latin letters: `Q`=я, `W`=в, `Y`=ы, `J`=й, `X`=ь, `C`=ц, `V`=ж, `` ` ``=ю, `~`=ч, `{`=ш, `}`=щ, `|`=э. |
-| `raw`     | No conversion; bytes pass through unchanged. The authentic seven-bits-plus-parity contract of the hardware still holds: a character above `0177` is dropped on input, output is masked to `0177`, and the Consul and mux lines synthesise the odd-parity bit. |
+| `raw`     | No conversion; bytes pass through unchanged. The authentic seven-bits-plus-parity contract of the hardware still holds: a character above `0177` is dropped on input, output is masked to `0177`, and the Consul and mux lines synthesise bit 8 as a parity bit — even overall parity, except on a line in `consul` mode, which gets odd. |
 | `raw8`    | The same, but eight bits wide: nothing is truncated on output, nothing above `0177` is dropped on input, and no parity bit is synthesised — the guest owns the character set. A connecting client gets no `^C` injected, the byte being data rather than a request. This is what `v7besm`'s kernel uses to carry UTF-8. |
 
 **Terminal type:**
@@ -485,6 +485,24 @@ set together, e.g. `set tty1 unicode,authbs` or `set tty1 qwerty,authbs`.
 | `tt`     | MTK-2 (Baudot, 5-bit) teletype. Serial lines only. |
 | `consul` | Consul-254 typewriter. Only valid on the two parallel lines (25/26). |
 | `off`    | Take the line offline. |
+
+**Lines 25/26 and Диспак's `VIDI`.** The OS drives a parallel line one of two ways, chosen by the
+`VIDI N` section of its configuration (N=2: line `'31'` = `tty25`, N=1: `'32'` = `tty26`, N=3:
+both), and the simulator's terminal type has to match:
+
+* With `VIDI`, the line is a Videoton on the Consul channel: KOI-7 with even parity. Use `vt`.
+* Without it, the line is a real Consul-254: the Consul's own code (GOST-10859 for digits and
+  Cyrillic, different for punctuation, space and Latin), odd parity. Use `consul`. Enter ends the
+  line, Backspace cancels a symbol, and `%` or Ctrl-U cancel the whole line, as the Consul's `%` key
+  did. Characters the Consul cannot print come out as `?`.
+
+A mismatch fails quietly: every keystroke is a parity error to the OS, and output is garbled.
+
+Leaving `VIDI` off is not enough to get a Consul. Диспак gives a line the Consul device code only if
+it is also listed in `ЕСТЕРМ` (`ЕСТЕРМ 31` / `ЕСТЕРМ 32`). Otherwise it treats the line as a direct
+teletype and never prints to it. `tools/makeBESM2053.py --consul 26` patches a system disk
+accordingly; with `--vidi` it sets `VIDI` instead. `attach ttyN console` switches the line to `vt`
+unless it is already `consul`.
 
 **Backspace:**
 

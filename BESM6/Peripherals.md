@@ -833,10 +833,28 @@ line rate, but *only if it is already enabled in МГРП* (`GRP |= MGRP & GRP_S
 
 The two Consul-254 typewriters are **parallel** — a whole character at a time:
 
-* **`033 0174` / `033 0175`** — `consul_print()`. The accumulator's low 8 bits are one character
-  (GOST-10859). The device goes not-ready until printing completes.
+* **`033 0174` / `033 0175`** — `consul_print()`. The accumulator's low 8 bits are one character;
+  bit 8 is parity. The device goes not-ready until printing completes.
 * **`033 4174` / `033 4175`** — `consul_read()`. Returns the last character typed in bits 1–7, with
-  an **odd-parity bit in bit 8**.
+  a parity bit in bit 8.
+
+What a character is depends on the line's terminal type, which must match how Диспак's `VIDI`
+configuration section treats the line:
+
+| Type | Диспак | Code | Parity (all 8 bits) |
+|------|--------|------|---------------------|
+| `vt` | `VIDI` set for the line: a Videoton on the Consul channel | KOI-7 | even |
+| `consul` | no `VIDI`, line in `ЕСТЕРМ`: a Consul-254 | Consul-254 code | odd |
+
+At line connect, БОНБОТ sets the Consul device code (Е17 in `ТСЛ`) only for lines in `шестр`, which
+ГЕНС1 derives from `ЕСТЕРМ` (configuration word `ПРОГОН`). A line with neither `VIDI` nor `ЕСТЕРМ`
+is a direct teletype to the OS, and nothing is ever printed to it.
+
+The Consul-254 code is GOST-10859 for digits and Cyrillic only; the simulator's
+`consul_to_gost[]` / `gost_to_consul[]` reproduce the Consul columns of ТЕРМ's `ТАБКОД`. Controls:
+`020` line feed (typed, it ends the input line), `037` carriage return, `0141` the `%` key (typed,
+it cancels the line), `0172` printed for characters the Consul has no glyph for (typed, it cancels
+a symbol). Диспак also sends `0236` before each output; it prints nothing.
 
 Interrupts: `PRP_CONS1_INPUT` / `PRP_CONS2_INPUT` (bits 12/11) — a character was typed;
 `PRP_CONS1_DONE` / `PRP_CONS2_DONE` (bits 10/9) — printing finished. Ready bits `CONS_READY` in

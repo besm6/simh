@@ -469,8 +469,10 @@ t_stat tty_attach (UNIT *u, CONST char *cptr)
         return r;
     } else {
         /* Attaching SIMH console to a particular terminal. */
-        u->flags &= ~TTY_STATE_MASK;
-        u->flags |= TTY_VT340_STATE;
+        if ((u->flags & TTY_STATE_MASK) != TTY_CONSUL_STATE) {
+            u->flags &= ~TTY_STATE_MASK;
+            u->flags |= TTY_VT340_STATE;
+        }
         tty_line[num].conn = 1;
         tty_line[num].rcve = 0;
         if (num <= TTY_MAX && !(u->flags & TTY_NOT_SERIAL))
@@ -1545,12 +1547,118 @@ int tty_query ()
 
 static char cons_is_printing[2];
 
+extern unsigned short gost_to_unicode(unsigned char);
+extern unsigned char unicode_to_gost(unsigned short);
+extern void uni2utf8(unsigned short ch, char buf[5]);
+
+/*
+ * The Consul-254 code, which is GOST-10859 only for digits and Cyrillic.
+ * Both tables must agree with the Consul columns of ТАБКОД in ТЕРМ, the
+ * table Диспак uses when a line is a plain Consul (not VIDI).  0200 is
+ * "nothing": a control code in the first table, a character the Consul
+ * has no key for in the second.
+ */
+static const unsigned char consul_to_gost [128] = {
+    /* 000-007 */ 0000, 0001, 0002, 0003, 0004, 0005, 0006, 0007,
+    /* 010-017 */ 0010, 0011, 0012, 0013, 0014, 0200, 0200, 0200,
+    /* 020-027 */ 0200, 0200, 0200, 0200, 0200, 0200, 0200, 0017,
+    /* 030-037 */ 0115, 0031, 0200, 0200, 0200, 0200, 0200, 0200,
+    /* 040-047 */ 0040, 0041, 0042, 0043, 0044, 0045, 0046, 0047,
+    /* 050-057 */ 0050, 0051, 0052, 0053, 0054, 0055, 0056, 0057,
+    /* 060-067 */ 0060, 0061, 0062, 0063, 0064, 0065, 0066, 0067,
+    /* 070-077 */ 0070, 0071, 0072, 0073, 0074, 0075, 0076, 0200,
+    /* 100-107 */ 0030, 0015, 0016, 0020, 0021, 0022, 0023, 0024,
+    /* 110-117 */ 0026, 0027, 0017, 0025, 0036, 0200, 0200, 0200,
+    /* 120-127 */ 0200, 0200, 0200, 0200, 0200, 0200, 0200, 0017,
+    /* 130-137 */ 0132, 0130, 0200, 0200, 0200, 0200, 0200, 0200,
+    /* 140-147 */ 0131, 0126, 0113, 0101, 0077, 0037, 0112, 0114,
+    /* 150-157 */ 0102, 0103, 0116, 0104, 0125, 0105, 0123, 0122,
+    /* 160-167 */ 0107, 0110, 0120, 0111, 0100, 0035, 0034, 0124,
+    /* 170-177 */ 0032, 0033, 0200, 0121, 0117, 0127, 0106, 0200,
+};
+
+static const unsigned char gost_to_consul [0140] = {
+    /* 000-007 */ 0000, 0001, 0002, 0003, 0004, 0005, 0006, 0007,
+    /* 010-017 */ 0010, 0011, 0012, 0013, 0014, 0101, 0102, 0027,
+    /* 020-027 */ 0103, 0104, 0105, 0106, 0107, 0113, 0110, 0111,
+    /* 030-037 */ 0100, 0031, 0170, 0171, 0166, 0165, 0114, 0145,
+    /* 040-047 */ 0040, 0041, 0042, 0043, 0044, 0045, 0046, 0047,
+    /* 050-057 */ 0050, 0051, 0052, 0053, 0054, 0055, 0056, 0057,
+    /* 060-067 */ 0060, 0061, 0062, 0063, 0064, 0065, 0066, 0067,
+    /* 070-077 */ 0070, 0071, 0072, 0073, 0074, 0075, 0076, 0144,
+    /* 100-107 */ 0164, 0143, 0150, 0151, 0153, 0155, 0176, 0160,
+    /* 110-117 */ 0161, 0163, 0146, 0142, 0147, 0030, 0152, 0174,
+    /* 120-127 */ 0162, 0173, 0200, 0156, 0167, 0200, 0141, 0175,
+    /* 130-137 */ 0131, 0140, 0130, 0200, 0200, 0200, 0200, 0200,
+};
+
+#define CONSUL_LF       020     /* also ends the input line */
+#define CONSUL_CR       037
+#define CONSUL_CANCEL   0141    /* the % key: cancels the input line */
+#define CONSUL_NOGLYPH  0172    /* printed for what the Consul cannot print; typed, cancels a symbol */
+
+static const unsigned short koi7_cyr_unicode [31] = {
+    0x042e, 0x0410, 0x0411, 0x0426, 0x0414, 0x0415, 0x0424, 0x0413,
+    0x0425, 0x0418, 0x0419, 0x041a, 0x041b, 0x041c, 0x041d, 0x041e,
+    0x041f, 0x042f, 0x0420, 0x0421, 0x0422, 0x0423, 0x0416, 0x0412,
+    0x042c, 0x042b, 0x0417, 0x0428, 0x042d, 0x0429, 0x0427,
+};
+
+/*
+ * A KOI-7 keystroke as the Consul key that produces it, or -1 if it has none.
+ */
+static int koi7_to_consul (int c)
+{
+    int gost;
+
+    switch (c) {
+    case '\r': case '\n': case '\003':
+        return CONSUL_LF;
+    case '\b': case '\177':
+        return CONSUL_NOGLYPH;
+    case 'U' & 037:
+        return CONSUL_CANCEL;
+    }
+    if (c < ' ')
+        return -1;
+    gost = unicode_to_gost (c < 0x60 ? c : koi7_cyr_unicode[c - 0x60]);
+    /* unicode_to_gost() answers a space for anything it does not know. */
+    if (gost == 017 && c != ' ')
+        return -1;
+    if (gost >= 0140 || gost_to_consul[gost] == 0200)
+        return -1;
+    return gost_to_consul[gost];
+}
+
+static void consul_putc (int line_num, int c)
+{
+    char buf[5];
+
+    switch (c) {
+    case CONSUL_LF:
+        vt_puts (line_num, "\r\n");
+        return;
+    case CONSUL_CR:
+        vt_putc (line_num, '\r');
+        return;
+    case CONSUL_NOGLYPH:
+        vt_putc (line_num, '?');
+        return;
+    }
+    /* Control codes, among them the 0236 that starts every output, print nothing. */
+    if (consul_to_gost[c] == 0200)
+        return;
+    /* The printer's table shows GOST 017 as a visible ␣. */
+    if (consul_to_gost[c] == 017) {
+        vt_putc (line_num, ' ');
+        return;
+    }
+    uni2utf8 (gost_to_unicode (consul_to_gost[c]), buf);
+    vt_puts (line_num, buf);
+}
+
 void consul_print (int dev_num, uint32 cmd)
 {
-    extern unsigned short gost_to_unicode(unsigned char);
-    extern void uni2utf8(unsigned short ch, char buf[5]);
-    int uni;
-    char buf[5];
     int line_num = dev_num + TTY_MAX + 1;
     if (tty_dev.dctrl)
         besm6_debug(">>> CONSUL%o: %03o", line_num, cmd & 0377);
@@ -1571,9 +1679,10 @@ void consul_print (int dev_num, uint32 cmd)
             vt_send (line_num, cmd & 0177);
         break;
     case TTY_CONSUL_STATE:
-        uni = gost_to_unicode(cmd & 0177);
-        uni2utf8(uni, buf);
-        vt_puts(line_num, buf);
+        if (tty_raw (line_num))
+            vt_putc (line_num, cmd & (tty_raw8 (line_num) ? 0377 : 0177));
+        else
+            consul_putc (line_num, cmd & 0177);
         break;
     }
     cons_is_printing[dev_num] = 1;
@@ -1612,6 +1721,17 @@ void consul_receive ()
              * parity bit and no 7-bit code to compute one from.  vt_fix() is already
              * a no-op on a raw line. */
             CONSUL_IN[dev_num] = c & 0377;
+        } else if ((tty_unit[line_num].flags & TTY_STATE_MASK) == TTY_CONSUL_STATE) {
+            /* A plain Consul: its own code and ODD parity over all eight bits, which
+             * prsn checks.  A VIDI line (the Videoton branch below) wants even. */
+            if (c > 0177)
+                continue;
+            if (! tty_raw (line_num)) {
+                c = koi7_to_consul (c);
+                if (c < 0)
+                    continue;
+            }
+            CONSUL_IN[dev_num] = odd_parity(c) ? c : c | 0200;
         } else {
             if (c > 0177)                       /* not a KOI-7 code */
                 continue;
