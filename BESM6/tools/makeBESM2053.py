@@ -42,14 +42,17 @@
 контрольной суммы, не меняются: СС[3] и СС[7] - сумма 1024 слов данных с
 циклическим переносом по 48 разрядам; теги слов сохраняются.
 
-    python3 makeBESM2053.py [образ [копия]] (--consul 25|26 [--vidi] | --vt N)
+    python3 makeBESM2053.py [образ [копия]]
+                            (--consul 25|26 [--vidi] | --vt N | --tt N)
                             [--variant K[,K...]]
 
 Образ по умолчанию - sbor2053.bin в текущем каталоге; без второго имени он
-правится на месте.  --vt N - видеотон на последовательной линии 1-24.
+правится на месте.  --vt N - видеотон на последовательной линии 1-24,
+--tt N - телетайп там же (разряд линии в ШКVТ гасится).
 
 Терминальный тип линии в SIMH должен соответствовать: --consul N --vidi ->
-set ttyN vt; --consul N без --vidi -> set ttyN consul; --vt N -> set ttyN vt.
+set ttyN vt; --consul N без --vidi -> set ttyN consul; --vt N -> set ttyN vt;
+--tt N -> set ttyN tt.
 """
 import argparse
 import shutil
@@ -98,6 +101,8 @@ def main():
                       help="операторский терминал - КОНСУЛ на линии 25 ('31') или 26 ('32')")
     term.add_argument("--vt", type=int, metavar="N",
                       help="операторский терминал - видеотон на линии N (1-24)")
+    term.add_argument("--tt", type=int, metavar="N",
+                      help="операторский терминал - телетайп на линии N (1-24)")
     ap.add_argument("--vidi", action="store_true",
                     help="с --consul: видеотон по каналу КОНСУЛА (VIDI); без неё VIDI для линии гасится")
     ap.add_argument("--variant", default="",
@@ -106,8 +111,9 @@ def main():
 
     if args.vidi and args.consul is None:
         sys.exit("makeBESM2053: --vidi имеет смысл только с --consul")
-    if args.vt is not None and not 1 <= args.vt <= 24:
-        sys.exit("makeBESM2053: --vt: номер линии 1-24")
+    for opt in ("vt", "tt"):
+        if getattr(args, opt) is not None and not 1 <= getattr(args, opt) <= 24:
+            sys.exit("makeBESM2053: --%s: номер линии 1-24" % opt)
     try:
         only = {int(x) for x in args.variant.split(",") if x.strip()}
     except ValueError:
@@ -115,7 +121,7 @@ def main():
     if any(not 0 <= v < NVARIANTS for v in only):
         sys.exit("makeBESM2053: --variant: номер варианта 0-15")
 
-    n = args.consul if args.consul is not None else args.vt
+    n = next(x for x in (args.consul, args.vt, args.tt) if x is not None)
     dst = args.dst or args.src
     if dst != args.src:
         shutil.copyfile(args.src, dst)
@@ -154,6 +160,8 @@ def main():
             upd(TRAKTY, lambda w: w | E29)
             if args.vt is not None:
                 upd(SHKVT, lambda w: w | scale_bit(n) >> 24)
+            if args.tt is not None:
+                upd(SHKVT, lambda w: w & ~(scale_bit(n) >> 24))
             upd(SHKOPT, lambda w: scale_bit(n))
             upd(TKANA, lambda w: sum(n << (6 * ch) for ch in range(8)))
             if args.consul is not None:
@@ -172,9 +180,12 @@ def main():
     if args.consul is not None:
         kind = "КОНСУЛ%s" % (" (VIDI: видеотон)" if args.vidi else "")
         simh = "set tty%d %s" % (n, "vt" if args.vidi else "consul")
-    else:
+    elif args.vt is not None:
         kind = "видеотон"
         simh = "set tty%d vt" % n
+    else:
+        kind = "телетайп"
+        simh = "set tty%d tt" % n
     print("makeBESM2053: %s -> %s, зона %04o" % (args.src, dst, CONF_ZONE))
     print("              операторский терминал '%o' (tty%d) - %s" % (n, n, kind))
     print("              варианты: %s" % (", ".join("%d (машина %d)" % d for d in done) or "нет"))

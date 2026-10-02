@@ -45,43 +45,96 @@ char * lat[] = { 0, "T", "\r", "O", " ", "H", "N", "M", "\n", "L", "R", "G", "I"
 char * dig[] = { 0, "5", "\r", "9", " ", "Щ", ",", ".", "\n", ")", "4", "Ш", "8", "0", ":", "=",
                  "3", "+", "$", "?", "'", "6", "Э", "/", "-", "2", "Ю", 0, "7", "1", "(", 0 };
 
-int tomtk2(int c) {
-    switch (c) {
-    case 3: case '\r': case '\n': return 2;        
-    case ' ': return 4;
-    case 'A': case 'a': return 030;
-    case 'B': case 'w': return 023;
-    case 'K': case 'k': return 036;
-    case 'O': case 'o': return 003;
-    default: return 1;
-    }
-}
+/* Register shift codes, and the codes that print the same in every register. */
+#define MTK2_RUS        0
+#define MTK2_DIG        033
+#define MTK2_LAT        037
+#define MTK2_SPACE      4
+#define MTK2_LF         010
 
-char ** reg = 0;
-
-char *  process (int sym)
-{
-    /* Inversion is required for Baudot TTYs */
-    sym ^= 31;
-    switch (sym) {
-    case 0:
-        reg = rus;
-        break;
-    case 27:
-        reg = dig;
-        break;
-    case 31:
-        reg = lat;
-        break;
-    default:
-        return reg[sym];
-    }
-    return "";
-}
+static char ** const mtk2_reg [3] = { rus, lat, dig };
+static const int mtk2_shift [3] = { MTK2_RUS, MTK2_LAT, MTK2_DIG };
 
 /* For serial lines */
 int tty_active [TTY_MAX+1], tty_sym [TTY_MAX+1];
 int tty_typed [TTY_MAX+1], tty_instate [TTY_MAX+1];
+
+/* Teletype registers, as indexes into mtk2_reg[]: the one the printer is in, and
+ * the one the guest last saw the keyboard select (-1: unknown). */
+static int tt_outreg [TTY_MAX+1], tt_inreg [TTY_MAX+1];
+/* An MTK-2 code to send after the one in tty_typed[], or -1. */
+static int tt_next [TTY_MAX+1];
+
+/*
+ * The guest reads teletype input through a 32-bit left shift (ОТТVТ in МОТТ), where
+ * Videoton input takes 24 (VТ19): a teletype on line N answers on bit 17-N of the
+ * input register, the bit Videoton line N+8 uses, and lines 17-24 have none.
+ * Output is on bit 25-N for both.
+ */
+#define TT_LINES        16
+
+static uint32 tt_inbit (int num)
+{
+    return num <= TT_LINES ? 1 << (TT_LINES - num) : 0;
+}
+
+static char * process (int num, int sym)
+{
+    /* Inversion is required for Baudot TTYs */
+    sym ^= 31;
+    switch (sym) {
+    case MTK2_RUS:
+        tt_outreg[num] = 0;
+        break;
+    case MTK2_LAT:
+        tt_outreg[num] = 1;
+        break;
+    case MTK2_DIG:
+        tt_outreg[num] = 2;
+        break;
+    default:
+        return mtk2_reg[tt_outreg[num]][sym];
+    }
+    return "";
+}
+
+/*
+ * A KOI-7 keystroke as an MTK-2 code, or -1 if the teletype has no such key.
+ * *regp is the register the code needs, or -1 if it prints in any.
+ */
+extern const char * koi7_rus_to_unicode [32];
+
+static int tomtk2 (int c, int *regp)
+{
+    char buf [2];
+    const char *s;
+    int r, code;
+
+    *regp = -1;
+    switch (c) {
+    case 3: case '\r': case '\n':
+        /* The guest ends a line on ПС; ВК is only for the printer. */
+        return MTK2_LF;
+    case ' ':
+        return MTK2_SPACE;
+    }
+    if (c < ' ' || c > 0x7e)
+        return -1;
+    if (c >= 0x60)
+        s = koi7_rus_to_unicode[c - 0x60];
+    else {
+        buf[0] = c;
+        buf[1] = 0;
+        s = buf;
+    }
+    for (r = 0; r < 3; ++r)
+        for (code = 1; code < 32; ++code)
+            if (mtk2_reg[r][code] && strcmp (mtk2_reg[r][code], s) == 0) {
+                *regp = r;
+                return code;
+            }
+    return -1;
+}
 
 /* For all lines */
 time_t tty_last_time [LINES_MAX+1];
@@ -222,6 +275,10 @@ static void reset_line(int num)
     tty_unit[num].flags &= ~(TTY_CHARSET_MASK|TTY_BSPACE_MASK|TTY_CMDLINE_MASK|TTY_INVERSE_READY);
     tty_typed[num] = -1;
     tty_instate[num] = 0;
+    if (num <= TTY_MAX) {
+        tt_inreg[num] = tt_next[num] = -1;
+        tt_outreg[num] = 0;
+    }
 }
 
 t_stat tty_reset (DEVICE *dptr)
@@ -234,7 +291,9 @@ t_stat tty_reset (DEVICE *dptr)
     TTY_IN = TTY_OUT = 0;
     CONSUL_IN[0] = CONSUL_IN[1] = 0;
     cons_input_pending[0] = cons_input_pending[1] = 0;
-    reg = rus;
+    memset(tt_outreg, 0, sizeof(tt_outreg));
+    memset(tt_inreg, -1, sizeof(tt_inreg));
+    memset(tt_next, -1, sizeof(tt_next));
     READY2 |= CONS_READY[0] | CONS_READY[1];
     if (tty_unit[25].flags & TTY_INVERSE_READY)
         READY2 &= ~CONS_READY[0];
@@ -398,7 +457,7 @@ t_stat tty_setmode (UNIT *u, int32 val, CONST char *cptr, void *desc)
         }
         break;
     case TTY_TELETYPE_STATE:
-        if (num > TTY_MAX)
+        if (num > TT_LINES)
             return SCPE_NXPAR;
         t->conn = 1;
         t->rcve = 0;
@@ -806,7 +865,8 @@ void vt_print()
 }
 
 
-/* Input from Baudot TTYs not implemented. Output may require some additional work.
+/*
+ * Output to Baudot teletypes.
  */
 void tt_print()
 {
@@ -831,7 +891,7 @@ void tt_print()
             tty_active[num] = 1;
             break;
         case 12: /* stop bit */
-            vt_puts (num, process (tty_sym[num]));
+            vt_puts (num, process (num, tty_sym[num]));
             tty_active[num] = 0;
             tty_sym[num] = 0;
             tt_sending &= ~mask;
@@ -931,11 +991,19 @@ static t_stat cmd_set (int32 num, CONST char *cptr)
         tty_unit[num].flags &= ~TTY_CHARSET_MASK;
         tty_unit[num].flags |= TTY_RAW8_CHARSET;
     } else if (strncmp ("TT", gbuf, len) == 0) {
+        if (num > TT_LINES || (tty_unit[num].flags & TTY_NOT_SERIAL))
+            return SCPE_NXPAR;
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_TELETYPE_STATE;
+        tt_mask |= 1 << (TTY_MAX - num);
+        vt_mask &= ~(1 << (TTY_MAX - num));
     } else if (strncmp ("VT", gbuf, len) == 0) {
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_VT340_STATE;
+        if (num <= TTY_MAX && !(tty_unit[num].flags & TTY_NOT_SERIAL)) {
+            vt_mask |= 1 << (TTY_MAX - num);
+            tt_mask &= ~(1 << (TTY_MAX - num));
+        }
     } else if (strncmp ("CONSUL", gbuf, len) == 0) {
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_CONSUL_STATE;
@@ -1479,38 +1547,45 @@ void tt_receive()
 {
     uint32 workset = tt_mask;
     int num;
-    
-    TT_CLEAR(TTY_IN, workset);
+
     for (num = besm6_highest_bit (workset) - TTY_MAX;
          workset; num = besm6_highest_bit (workset) - TTY_MAX) {
         uint32 mask = 1 << (TTY_MAX - num);
+        uint32 inbit = tt_inbit (num);
+
+        TT_CLEAR(TTY_IN, inbit);
         switch (tty_instate[num]) {
         case 0:
-#if 0            
-            if (tty_typed[num] <= -2) {
-		TTY_IN |= mask;		/* "long start" */
-//		++tty_typed[num];
-		if (tty_typed[num] == -1) vt_mask &= ~mask;
-                break;
-            }
-#endif
-            tty_typed[num] = getsym(num);
-            if (tty_typed[num] < 0) {
+            if (tt_next[num] >= 0) {
+                tty_typed[num] = tt_next[num];
+                tt_next[num] = -1;
+            } else {
+                int c = getsym(num), code, r;
+
+                if (c < 0 || c > 0177)
                     break;
+                code = tomtk2 (c, &r);
+                if (code < 0)
+                    break;
+                if (code == MTK2_LF) {
+                    /* A new line is a new input buffer, and the guest keeps the
+                     * keyboard register in the buffer. */
+                    tt_inreg[num] = -1;
+                } else if (r >= 0 && r != tt_inreg[num]) {
+                    tt_next[num] = code;
+                    tt_inreg[num] = r;
+                    code = mtk2_shift[r];
+                }
+                tty_typed[num] = code;
             }
-            if (tty_typed[num] <= 0177) {
-                tty_typed[num] = tomtk2(tty_typed[num]);
-                // besm6_debug("<<< Teletype: MTK-2 char %02o\n", tty_typed[num]);
-                tty_instate[num] = 1;
-                TT_SET(TTY_IN, mask);         /* start bit */
-                MGRP |= GRP_TTY_START;
-                GRP |= GRP_TTY_START;
-                tt_receiving |= mask;
-            }
+            tty_instate[num] = 1;
+            TT_SET(TTY_IN, inbit);          /* start bit */
+            GRP |= GRP_TTY_START;
+            tt_receiving |= mask;
             break;
         case 1: case 2: case 3: case 4: case 5:
             /* need inverted byte, big endian ordering */
-            TT_SET(TTY_IN, (tty_typed[num] & (1 << (5-tty_instate[num]))) ? 0 : mask);
+            TT_SET(TTY_IN, (tty_typed[num] & (1 << (5-tty_instate[num]))) ? 0 : inbit);
             tty_instate[num]++;
             break;
         case 6: case 7: case 8:

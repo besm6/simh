@@ -482,7 +482,7 @@ set together, e.g. `set tty1 unicode,authbs` or `set tty1 qwerty,authbs`.
 | Mode | Meaning |
 |------|---------|
 | `vt`     | Videoton-340; the machine's control codes are translated to ANSI/VT100 escape sequences (cursor keys, clear screen, home). Default for new telnet connections. |
-| `tt`     | MTK-2 (Baudot, 5-bit) teletype. Serial lines only. |
+| `tt`     | MTK-2 (Baudot, 5-bit) teletype. Lines 1–16 only. Register shifts are sent as needed; Enter sends ПС. |
 | `consul` | Consul-254 typewriter. Only valid on the two parallel lines (25/26). |
 | `off`    | Take the line offline. |
 

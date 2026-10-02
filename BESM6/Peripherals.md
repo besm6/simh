@@ -825,6 +825,16 @@ The operating system shifts characters in and out bit by bit, one `033 0140` / `
 bit time, running the start / 8 data / stop framing itself in software (or 5-bit Baudot MTK-2 for
 teletype lines). The bit rate is set with `set tty rate=N`, default 300 Hz.
 
+**Teletypes** run at 50 baud off the main timer (`tt_print()` / `tt_receive()`), MTK-2 inverted on
+the line, start bit 1, most significant bit first. Their input is on a different bit: Диспак's
+teletype receiver (ОТТVТ in МОТТ) shifts the `033 4100` word left by 32 where the Videoton one (VТ19)
+shifts by 24. A teletype on line *n* therefore answers on bit `1 << (16 - n)`, the input bit of
+Videoton line *n*+8, and only lines 1–16 can be teletypes; output stays on `1 << (24 - n)`. The OS
+echoes every received bit back on the output, so the simulator never echoes. Typing sends the
+РУС/ЛАТ/ЦИФ shift a character needs (and before the first character of every line, since the OS
+keeps the keyboard register per input buffer); Enter sends ПС, which ends a line. Characters a
+teletype has no key for (Ч, Ъ, `;`, `"`, …) are dropped.
+
 `GRP_TTY_START` (ГРП bit 31) signals a detected start bit. The simulator also uses the
 non-standard `GRP_SERIAL` (bit 19) as the polling clock — `vt_clk()` raises it at the configured
 line rate, but *only if it is already enabled in МГРП* (`GRP |= MGRP & GRP_SERIAL`).
