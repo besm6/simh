@@ -145,6 +145,7 @@ extern DEVICE md_dev[];
 extern DEVICE clock_dev;
 extern DEVICE printer_dev;
 extern DEVICE tty_dev;
+extern DEVICE dks_dev;
 extern DEVICE fs_dev;
 extern DEVICE pl_dev;
 extern DEVICE vu_dev;
@@ -364,6 +365,20 @@ void mux_send (uint32 syllable);
 uint32 mux_read (void);
 void mux_clear (void);
 int vt_is_idle (void);
+void vt_send (int num, uint32 sym);
+void vt_puts (int num, const char *s);
+
+/*
+ * КАДОПАМ (команды 032/0132) и ДКС на Электронике-60.
+ */
+t_value dks_read (int addr);
+void dks_write (int addr, t_value acc);
+void dks_line_state (int num, int connected);
+int dks_line_can_input (int num);
+void dks_line_char (int num, int c);
+void e60_set_echo (int num, int on);
+void dks_poll (void);
+int dks_busy (void);
 
 /*
  * Ввод с перфоленты.
@@ -508,6 +523,11 @@ t_value besm6_unpack (t_value val, t_value mask);
 #define PRP_PLOTTER       000000200             /* 8 */
 #define PRP_MUX_INPUT     000000100             /* 7 */
 #define PRP_MUX_DONE      000000040             /* 6 */
+
+/* With КАДОПАМ (∧К71) ПРП 8-5 are the КРК channels 0-3 and ПРП 12 is the
+ * ДКС "attention" signal. */
+#define PRP_DKS_CHAN(n)   (0200 >> (n))
+#define PRP_DKS_ATTN      000004000             /* 12 */
 
 /* Номер блока ОЗУ или номер страницы, вызвавших прерывание */
 extern uint32 iintr_data;
