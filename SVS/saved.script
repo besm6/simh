@@ -1,0 +1,36 @@
+expect -r "14.12.88" send "АДМИН Ш=......,K=123456\r"
+expect -r "(Е|E)(С|C)(Т|T)Ь" send "ДАЙ А1\r"
+cont
+expect -r "(А|A)Д(М|M)\." send "БЮДЖЕТ Ш=999999\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "РЕСУРС Ш=999999,L=62,B=Д\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "ГРУППЫ Ш=999999,Г=0\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "ШИФР Ш=999999\r"
+cont
+expect -r "(А|A)Д(М|M)\." send "НОВ ARFA/999999:L=0\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "НОВ ARFA.ГП/999999:L=1\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "ПРАВА ARFA.ГП:Ш=419900,P=З\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "ПРАВА ARFA.ГП:P=Ч\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "НОВ ARFA.PERSO/999999:L=4\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "ПРАВА ARFA.PERSO:Ш=419900,P=З\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "ПРАВА ARFA.PERSO:P=Ч\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "НОВ ARFA.СТАРФА/999999:L=10\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "НОВ ARFA.СВОДКА/999999:L=1\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "ПРАВА ARFA.СВОДКА:Ш=419900,P=З\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "НОВ ARFA.БЮСТ/999999:L=4\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "ПРАВА ARFA.БЮСТ:Ш=419900,P=З\r"
+cont
+expect -r "(В|B)ЫП(О|O)Л(Н|H)" send "КНЦ\r"

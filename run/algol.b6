@@ -1,0 +1,12 @@
+шифр 419900зс5^
+eeb1a3
+*name algol
+*algol
+'begin' 'string' a; 
+a := ''qwertyuiopasdfghjklzxcvbnm'';
+print(a[3:14], newline);
+'end' 'eop'
+*execute
+*end file
+
+еконец

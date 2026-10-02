@@ -208,6 +208,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\BESM6\besm6_dks.c"
+				>
+			</File>
+			<File
 				RelativePath="..\BESM6\besm6_drum.c"
 				>
 			</File>

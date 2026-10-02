@@ -1,0 +1,3 @@
+#!/bin/sh
+env BESM6_PATH=. dispak --bootstrap serp.b6
+

@@ -1,0 +1,2 @@
+#!/bin/sh
+env BESM6_PATH=. dispak --bootstrap gens.b6

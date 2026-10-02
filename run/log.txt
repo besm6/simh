@@ -1,0 +1,114 @@
+Logging to file "/home/leob/git/besm6/simh/run/log.txt"
+Logging to file "/home/leob/git/besm6/simh/run/log.txt" at Sun Sep 27 17:11:43 2026
+./dispak.ini-2> set console debug=log
+%SIM-INFO: Debug output to "/home/leob/git/besm6/simh/run/log.txt"
+Debug output to "/home/leob/git/besm6/simh/run/log.txt" at Sun Sep 27 17:11:43 2026
+БЭСМ-6 simulator V4.0-0 Current        simh git commit id: 6353ede3+uncommitted-changes
+./dispak.ini-13> attach -n drum0 drum1x.bin
+%SIM-INFO: DRUM0: creating new file: drum1x.bin
+./dispak.ini-14> attach -n drum1 drum2x.bin
+%SIM-INFO: DRUM1: creating new file: drum2x.bin
+./dispak.ini-19> attach -n md06 2052.bin
+%SIM-INFO: MD06: creating new file: 2052.bin
+%SIM-INFO: MD06: formatting disk volume 2052
+./dispak.ini-25> attach -e md05 krab2063.bin
+%SIM-ERROR: MD05: Can't open 'krab2063.bin': No such file or directory
+./dispak.ini-27> attach -e md00 /usr/local/share/besm6/2048
+%SIM-INFO: MD00: unit is read only
+./dispak.ini-28> attach -r -e md01 /usr/local/share/besm6/2148
+%SIM-INFO: MD01: unit is read only
+./dispak.ini-35> attach -n prn0 output.txt
+%SIM-INFO: PRN0: creating new file: output.txt
+./dispak.ini-40> attach tty1 4199
+%SIM-INFO: Listening on port 4199
+*** console on T001
+###
+### Zeroing out the first page of RAM (as would be entered from
+### switch registers after powering up the machine,
+### likely about once a year or less).
+###
+write cache [7] = '                                                '
+write cache [6] = '                                                '
+write cache [5] = '                                                '
+write cache [4] = '                                                '
+write cache [3] = '                                                '
+write cache [2] = '                                                '
+write cache [1] = '                                                '
+write cache [0] = '                                                '
+
+Останов, "СчАС": 00004 (-> зп, зп)
+###
+### Done; data cache registers are displayed above. An error message
+### would be usually displayed there after a STOP instruction.
+### Naturally, at the moment they all contain zeros. Booting the OS now...
+###
+Resetting all devices...  This may not have been your intention.
+The GO and CONTINUE commands do not reset devices.
+>>> MUX: clear, PRP = 01400
+physobm @17753, zone = 0426, WORD = 10013330573105176
+physobm @61146, zone = 0407, WORD = 10220000073105176
+physobm @23423, zone = 0701, WORD = 13400134673105176
+physobm @70207, zone = 0471, WORD = 13044001603005176
+physobm @60014, zone = 0545, WORD = 14244600073105176
+physobm @60022, zone = 0546, WORD = 10220000073105176
+physobm @60135, zone = 0547, WORD = 10110153773105176
+physobm @60240, zone = 0550, WORD = 10110154073105176
+physobm @60363, zone = 0550, WORD = 10012014173105176
+physobm @60364, zone = 0751, WORD = 10110154173105176
+physobm @60415, zone = 0545, WORD = 10220000073105176
+physobm @60527, zone = 0030, WORD = 13013100773105176
+physobm @60541, zone = 0034, WORD = 10220000073105176
+physobm @17753, zone = 0427, WORD = 10013330573105176
+physobm @17753, zone = 0422, WORD = 10013330573105176
+  2048 - 00
+  2248 - 42
+ 25.09.99   20.59.00
+ 1HMБ-01234567     2HMБ-34567      
+  PEC:  1710
+ ECTЬ
+physobm @33551, zone = 0676, WORD = 10220000073105176
+physobm @17753, zone = 0410, WORD = 10013330573105176
+physobm @17753, zone = 0416, WORD = 10013330573105176
+physobm @36122, zone = 0550, WORD = 13410004273105176
+physobm @36177, zone = 0550, WORD = 13410162173105176
+physobm @43676, zone = 1735, WORD = 13410024373105176
+physobm @71505, zone = 0677, WORD = 10013060673105176
+physobm @23547, zone = 0030, WORD = 13400135573105176
+physobm @23547, zone = 0034, WORD = 13400135573105176
+physobm @23547, zone = 0030, WORD = 13400135573105176
+physobm @05224, zone = 0030, WORD = 10012014103005176
+physobm @23547, zone = 0035, WORD = 13400135573105176
+physobm @12142, zone = 0546, WORD = 13410030773105176
+physobm @23535, zone = 0035, WORD = 10012014173105176
+physobm @23576, zone = 0072, WORD = 13400167073105176
+physobm @23576, zone = 0073, WORD = 13400167073105176
+physobm @23576, zone = 0074, WORD = 13400167073105176
+physobm @23576, zone = 0075, WORD = 13400167073105176
+physobm @23576, zone = 0076, WORD = 13400167073105176
+physobm @23576, zone = 0077, WORD = 13400167073105176
+physobm @23652, zone = 0077, WORD = 10012014173105176
+ ДATA:27.09.96 BPEMЯ:17.11.00
+ CM1П:00.00.ЭBM-3  ДATA:27.09.96 BPEMЯ:17.11.00  000.00
+
+ 3,T001
+
+ 3,T001
+ВЦПА
+ HET
+ЛФЯ[D[D[DЛФЯ[D[D[DДАЙ АРХ
+ ECTЬ
+
+ 3,T001
+ВЦПА
+ HET
+
+ 3,T001
+
+ 3,T001
+
+ 3,T001
+
+Simulation stopped, "СчАС": 04440 (-> цикл 4440(15), цикл 4432(1))
+sim> q
+Goodbye
+Log file closed

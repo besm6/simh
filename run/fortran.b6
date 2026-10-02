@@ -1,0 +1,22 @@
+шифр 419900зс5^
+еев1а3
+*name FORTRAN
+*     EDIT THE PROGRAM BELOW
+      program eps
+      real a, b
+      a = 1.
+      i = 0
+  10  a=a/2.
+      i=i+1
+      b = -1.+a
+      if(b.eq.-1.) stop
+      print 11,i,b,b
+c Least significant digits 5 must form a neat staircase, they do not
+  11  format(' -1.0+2**-',i2,' =',f43.40,o17)
+      goto 10
+      end
+*no load list
+*execute
+*end file
+
+ЕКОНЕЦ

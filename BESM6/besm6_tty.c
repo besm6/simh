@@ -120,6 +120,7 @@ char *vt_cptr [LINES_MAX+1];
 void tt_print();
 void consul_receive();
 void mux_receive (void);
+void dks_receive (void);
 t_stat vt_clk(UNIT *);
 t_stat mux_event(UNIT *);
 extern const char *get_sim_sw (const char *cptr);
@@ -192,6 +193,8 @@ TMXR tty_desc = { LINES_MAX+1, 0, 0, tty_line, tty_lnorder };        /* mux desc
 #define TTY_CMDLINE_MASK        (1<<(UNIT_V_UF+6))
 #define TTY_INVERSE_READY       (1<<(UNIT_V_UF+7))
 #define TTY_MUX_MODE            (1<<(UNIT_V_UF+8))
+#define TTY_DKS_MODE            (1<<(UNIT_V_UF+9))
+#define TTY_NOT_SERIAL          (TTY_MUX_MODE | TTY_DKS_MODE)
 
 /*
  * Both raw encodings are byte pipes: no KOI-7 tables, no Videoton control codes,
@@ -257,7 +260,8 @@ t_stat vt_clk (UNIT * this)
     int old = 0;
     GRP |= MGRP & GRP_SERIAL;
 
-    if (MPRP & 0200) {
+    /* With КАДОПАМ, ПРП 8 is the interrupt of КРК channel 0. */
+    if ((MPRP & 0200) && (dks_dev.flags & DEV_DIS)) {
         static int bit;
         PRP |= 0200;
         READY = READY ^ (1 << (bit++ % 24));
@@ -269,6 +273,7 @@ t_stat vt_clk (UNIT * this)
     vt_receive();
     consul_receive();
     mux_receive();
+    dks_receive();
 
     /* Are there any new network connections? */
     num = tmxr_poll_conn (&tty_desc);
@@ -289,7 +294,7 @@ t_stat vt_clk (UNIT * this)
         t->rcve = 1;
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_VT340_STATE;
-        if (num <= TTY_MAX && !(tty_unit[num].flags & TTY_MUX_MODE)) {
+        if (num <= TTY_MAX && !(tty_unit[num].flags & TTY_NOT_SERIAL)) {
 	    old = vt_mask & (1 << (TTY_MAX - num));
             vt_mask |= 1 << (TTY_MAX - num);
 	}
@@ -327,7 +332,7 @@ t_stat vt_clk (UNIT * this)
 
         /* Entering ^C (ETX) to get a prompt.  Not on a raw8 line: there the byte is
          * data, not a request, and it reaches the guest as a typed character. */
-        if (charset != TTY_RAW8_CHARSET)
+        if (charset != TTY_RAW8_CHARSET && !(tty_unit[num].flags & TTY_DKS_MODE))
             t->rxb [t->rxbpi++] = '\3';
 	if (old) {
             sprintf (buf, "Type HYC<enter> (no echo is normal)\r\n");
@@ -397,7 +402,7 @@ t_stat tty_setmode (UNIT *u, int32 val, CONST char *cptr, void *desc)
             return SCPE_NXPAR;
         t->conn = 1;
         t->rcve = 0;
-        if (!(tty_unit[num].flags & TTY_MUX_MODE)) {
+        if (!(tty_unit[num].flags & TTY_NOT_SERIAL)) {
             tt_mask |= mask;
             vt_mask &= ~mask;
         }
@@ -405,7 +410,7 @@ t_stat tty_setmode (UNIT *u, int32 val, CONST char *cptr, void *desc)
     case TTY_VT340_STATE:
         t->conn = 1;
         t->rcve = 0;
-        if (num <= TTY_MAX && !(tty_unit[num].flags & TTY_MUX_MODE)) {
+        if (num <= TTY_MAX && !(tty_unit[num].flags & TTY_NOT_SERIAL)) {
             vt_mask |= mask;
             tt_mask &= ~mask;
         }
@@ -468,7 +473,7 @@ t_stat tty_attach (UNIT *u, CONST char *cptr)
         u->flags |= TTY_VT340_STATE;
         tty_line[num].conn = 1;
         tty_line[num].rcve = 0;
-        if (num <= TTY_MAX)
+        if (num <= TTY_MAX && !(u->flags & TTY_NOT_SERIAL))
             vt_mask |= 1 << (TTY_MAX - num);
         besm6_debug ("*** console on T%03o", num);
         attached_console = 1;
@@ -540,6 +545,30 @@ t_stat tty_setturbo (UNIT *up, int32 v, CONST char *cp, void *dp) {
  * show tty connections - showing IP-addresses and connection times
  * show tty statistics  - showing TX/RX byte counts
  */
+/* A line is driven either bit-serially, or by the mux, or by the ДКС. */
+static t_stat tty_set_mux (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    if (u->flags & TTY_DKS_MODE)
+        return sim_messagef (SCPE_ARG, "Line is in DKS mode\n");
+    return SCPE_OK;
+}
+
+static t_stat tty_set_dks (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    int num = u - tty_unit;
+    uint32 mask = 1 << (TTY_MAX - num);
+
+    if (num < 1 || num > TTY_MAX)
+        return SCPE_NXPAR;
+    if (val && (u->flags & TTY_MUX_MODE))
+        return sim_messagef (SCPE_ARG, "Line is in MUX mode\n");
+    if (val) {
+        vt_mask &= ~mask;
+        tt_mask &= ~mask;
+    }
+    return SCPE_OK;
+}
+
 MTAB tty_mod[] = {
     { TTY_CHARSET_MASK, TTY_UNICODE_CHARSET, "UTF-8 input",
       "UNICODE" },
@@ -570,7 +599,11 @@ MTAB tty_mod[] = {
     { TTY_INVERSE_READY, 0, "regular ready",
       "REGREADY" },
     { TTY_MUX_MODE, TTY_MUX_MODE, "treat as connected via UART mux",
-      "MUX" },
+      "MUX", &tty_set_mux },
+    { TTY_DKS_MODE, TTY_DKS_MODE, "connected via DKS (Elektronika-60)",
+      "DKS", &tty_set_dks },
+    { TTY_DKS_MODE, 0, NULL,
+      "NODKS", &tty_set_dks },
     { MTAB_XTD | MTAB_VDV | MTAB_VALR, 1, NULL,
       "DISCONNECT", &tmxr_dscln, NULL, (void*) &tty_desc, "terminates telnet connection" },
     { MTAB_XTD | MTAB_VDV | MTAB_VALR, 1, "RATE",
@@ -1231,34 +1264,39 @@ int vt_getc (int num)
  */
 static int vt_kbd_input_unicode (int num)
 {
-    int c1, c2, c3, r;
+    /* A sequence may arrive split across polls (the console gets one byte
+     * per poll from `send'), so the bytes already read are kept per line. */
+    static unsigned char part [LINES_MAX+1][2];
+    static int nparts [LINES_MAX+1];
+    int c, c1, c2, r;
   again:
     r = vt_getc (num);
     if (r < 0 || r > 0377)
         return r;
-    c1 = r & 0377;
-    if (! (c1 & 0x80)) {
-        return unicode_to_koi7 (c1);
+    c = r & 0377;
+    if (nparts[num] == 0) {
+        if (! (c & 0x80))
+            return unicode_to_koi7 (c);
+        part[num][0] = c;
+        nparts[num] = 1;
+        goto again;
     }
-    r = vt_getc (num);
-    if (r < 0 || r > 0377)
-        return r;
-    c2 = r & 0377;
-    if (! (c1 & 0x20)) {
-        r = (c1 & 0x1f) << 6 | (c2 & 0x3f);
-        return unicode_to_koi7 (r);
+    c1 = part[num][0];
+    if ((c1 & 0x20) && nparts[num] == 1) {
+        part[num][1] = c;
+        nparts[num] = 2;
+        goto again;
     }
-    r = vt_getc (num);
-    if (r < 0 || r > 0377)
-        return r;
-    c3 = r & 0377;
-    if (c1 == 0xEF && c2 == 0xBB && c3 == 0xBF) {
+    nparts[num] = 0;
+    if (! (c1 & 0x20))
+        return unicode_to_koi7 ((c1 & 0x1f) << 6 | (c & 0x3f));
+    c2 = part[num][1];
+    if (c1 == 0xEF && c2 == 0xBB && c == 0xBF) {
         /* Skip zero width no-break space. */
         goto again;
     }
-    r = (c1 & 0x0f) << 12 | (c2 & 0x3f) << 6 |
-        (c3 & 0x3f);
-    return unicode_to_koi7 (r);
+    return unicode_to_koi7 ((c1 & 0x0f) << 12 | (c2 & 0x3f) << 6 |
+                            (c & 0x3f));
 }
 
 /*
@@ -1494,6 +1532,8 @@ void tt_receive()
  */
 int vt_is_idle ()
 {
+    if (dks_busy ())
+        return 0;
     return (tt_mask ? vt_idle > 300 : vt_idle > 10);
 }
 
@@ -1668,13 +1708,52 @@ void mux_receive ()
     }
 }
 
+/*
+ * Lines connected via the ДКС: track connections and feed typed characters
+ * to the emulated Э-60, which does the echo and line editing itself.
+ */
+void dks_receive ()
+{
+    static char dks_up [TTY_MAX+1];
+    int num, c;
+
+    if (dks_dev.flags & DEV_DIS)
+        return;
+    for (num = 1; num <= TTY_MAX; ++num) {
+        int up;
+
+        if (! (tty_unit[num].flags & TTY_DKS_MODE))
+            continue;
+        up = tty_line[num].conn != 0;
+        if (up != dks_up[num]) {
+            if (! up)
+                vt_getc (num);          /* takes the line offline */
+            dks_up[num] = up;
+            dks_line_state (num, up);
+        }
+        if (! up)
+            continue;
+        while (dks_line_can_input (num)) {
+            c = getsym (num);
+            if (c < 0)
+                break;
+            if (c <= 0177)
+                dks_line_char (num, c);
+        }
+    }
+    dks_poll ();
+}
+
 void mux_clear()
 {
 //    if (tty_dev.dctrl)
     besm6_debug(">>> MUX: clear, PRP = %05o", PRP);
-    PRP &= ~PRP_MUX_INPUT;
-    PRP |= PRP_MUX_DONE;
     MUX_SYLLABLE = 0;
     mux_reg_busy = 0;
+    /* With КАДОПАМ these ПРП bits are КРК channels 1 and 2. */
+    if (! (dks_dev.flags & DEV_DIS))
+        return;
+    PRP &= ~PRP_MUX_INPUT;
+    PRP |= PRP_MUX_DONE;
 }
     

@@ -1,0 +1,4 @@
+dispak adapcmp.b6 > adapcmp.txt
+besmtool dump 67 --length=4 --to-file=disk67_zone0-3.bin
+disbesm6 -b -a030000 -e 34665 adap_from_b6.bin > gold
+disbesm6 -b -a030000 -e 34665 disk67_zone0-3.bin > cur

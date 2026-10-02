@@ -1,0 +1,63 @@
+Logging to file "/home/leob/git/besm6/simh/BESM6/demo/log.txt"
+Logging to file "/home/leob/git/besm6/simh/BESM6/demo/log.txt" at Sun Jul  5 19:58:30 2026
+./dispak.ini-2> set console debug=log
+%SIM-INFO: Debug output to "/home/leob/git/besm6/simh/BESM6/demo/log.txt"
+Debug output to "/home/leob/git/besm6/simh/BESM6/demo/log.txt" at Sun Jul  5 19:58:30 2026
+БЭСМ-6 simulator V4.0-0 Current        git commit id: 13c37410
+./dispak.ini-13> attach -n drum0 drum1x.bin
+%SIM-INFO: DRUM0: creating new file: drum1x.bin
+./dispak.ini-14> attach -n drum1 drum2x.bin
+%SIM-INFO: DRUM1: creating new file: drum2x.bin
+./dispak.ini-19> attach -n md06 2052.bin
+%SIM-INFO: MD06: creating new file: 2052.bin
+%SIM-INFO: MD06: formatting disk volume 2052
+./dispak.ini-24> attach -e md07 sbor2053.bin
+%SIM-ERROR: MD07: Can't open 'sbor2053.bin': No such file or directory
+./dispak.ini-25> attach -e md05 krab2063.bin
+%SIM-ERROR: MD05: Can't open 'krab2063.bin': No such file or directory
+./dispak.ini-26> attach -e md00 sbor2048.bin
+%SIM-ERROR: MD00: Can't open 'sbor2048.bin': No such file or directory
+./dispak.ini-27> attach -e md01 svs2048.bin
+%SIM-ERROR: MD01: Can't open 'svs2048.bin': No such file or directory
+./dispak.ini-28> attach -e md02 alt2048.bin
+%SIM-ERROR: MD02: Can't open 'alt2048.bin': No such file or directory
+./dispak.ini-33> attach -n prn0 output.txt
+%SIM-INFO: PRN0: creating new file: output.txt
+./dispak.ini-38> attach tty1 4199
+%SIM-INFO: Listening on port 4199
+*** console on T001
+###
+### Zeroing out the first page of RAM (as would be entered from
+### switch registers after powering up the machine,
+### likely about once a year or less).
+###
+БРЗ [7] = '                                                '
+БРЗ [6] = '                                                '
+БРЗ [5] = '                                                '
+БРЗ [4] = '                                                '
+БРЗ [3] = '                                                '
+БРЗ [2] = '                                                '
+БРЗ [1] = '                                                '
+БРЗ [0] = '                                                '
+
+Останов, "СчАС": 00004 (-> зп, зп)
+###
+### Done; data cache registers are displayed above. An error message
+### would be usually displayed there after a STOP instruction.
+### Naturally, at the moment they all contain zeros. Booting the OS now...
+###
+Resetting all devices...  This may not have been your intention.
+The GO and CONTINUE commands do not reset devices.
+БРЗ [7] = '                                                '
+БРЗ [6] = '*  * *** *****  ** **   ***   **   *** *** ***  '
+БРЗ [5] = '*  * *     *    * * *  *  *  *  * *  * *   *  * '
+БРЗ [4] = '**** ***   *    * * *  *  *    *  *  * *   *  * '
+БРЗ [3] = '*  * *     *    * * *  *  *     * **** *   ***  '
+БРЗ [2] = '*  * *     *    *   *  *  *  *  * *  * *   *    '
+БРЗ [1] = '*  * ***   *    *   * ******  **  *  * *   *  * '
+БРЗ [0] = '                                                '
+
+Останов, "СчАС": 02067 (стоп, -> пб 2040)
+sim> q
+Goodbye
+Log file closed

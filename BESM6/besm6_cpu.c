@@ -300,6 +300,7 @@ DEVICE *sim_devices[] = {
     &vu_dev,
     &pi_dev,
     &tty_dev,       /* терминалы - телетайпы, видеотоны, "Консулы" */
+    &dks_dev,       /* КАДОПАМ и ДКС */
     0
 };
 
@@ -715,7 +716,9 @@ static uint32 readmap[32768], writemap[32768];
         mux_clear ();           /* ACC is ignored */
         memory[077023] = SET_PARITY(1LL<<47, PARITY_NUMBER);
         memory[076774] = SET_PARITY(00101010101010101LL, PARITY_NUMBER);
-        MPRP |= 040;
+        /* With КАДОПАМ there is no mux, and ПРП 6 belongs to КРК channel 2. */
+        if (dks_dev.flags & DEV_DIS)
+            MPRP |= 040;
         break;
     case 0154: case 0155:
         /*
@@ -983,46 +986,6 @@ t_stat cpu_show_latin (FILE *st, UNIT *up, int32 v, CONST void *dp)
 {
     fprintf (st, "%s mnemonics", besm6_latin ? "Latin" : "Cyrillic");
     return SCPE_OK;
-}
-
-static unsigned short extmem[32768];
-static unsigned short last;
-
-void write_032(int addr, t_value val) {
-    int v = val & 077777777; 
-    // if (v || addr) besm6_debug("W32 %08o -> %05o", v, addr);
-    switch (addr) {
-    case 0:
-	if (v & 2) {
-	    PRP &= ~040;
-	}
-	else if (v == 0) {
-		static int cnt;
-		if (++cnt % 10000 == 0) {
-			besm6_debug("10K writes of 0 to 0");
-		}
-	}
-	break;
-    case 077777:
-	if (v & 0400) {
-	    // interrupt - will result in setting E6 in PRP after some time
-	    PRP |= 040;
-	}
-	break;
-    default:
-	last = extmem[addr] = v;
-    }
-}
-
-t_value read_032(int addr) {
-    // besm6_debug("R32 %05o", addr);
-    switch (addr) {
-    case 0:
-	return 0400;		/* ready */
-    case 2:
-	return last;
-    default: return extmem[addr];
-    }
 }
 
 /*
@@ -1376,13 +1339,15 @@ void cpu_one_inst ()
         }
         delay = MEAN_TIME (3, 5);
         break;
-    case 032:                                       /* э32, ext */
+    case 032:                                       /* э32, КАДОПАМ */
 	if (RK & BBIT(19))
-	    write_032(ADDR(addr-070000+M[reg]), ACC);
+	    dks_write(ADDR(addr-070000+M[reg]), ACC);
 	else {
 	    t_value res;
-	    res = read_032(ADDR(addr+M[reg]));
-	    ACC = res << 24 | ACC & 077777777;
+	    res = dks_read(ADDR(addr+M[reg]));
+	    /* The right half is cleared: СВЯЗЬ7.нтерм7 shifts a value read
+	     * this way left by 18 and ORs it into a descriptor. */
+	    ACC = res << 24;
 	}
 	break;
     case 033:                                       /* увв, ext */

@@ -1,0 +1,111 @@
+шифр 419999 зс5^
+лен 41(2048)^
+eeв1а3
+*name pz stop cause
+*no list
+*assembler
+C Form a subtask which declares this task as master with E53 46 and then
+C loops forever.  Real OS does not deliver a subjugation event here, so
+C poll for any stopped subordinate.  Print the stop cause after the appeal,
+C resume it, wait about one second, stop it explicitly, and print the new
+C cause.
+ program: ,name,
+	 15,vtm, cwrd
+	  ,ita , 15
+	  ,*50 , 7701b
+C Wait until the subtask declares this task as master and appeals.  Do not
+C wait for the PZ-appeared event: real OS leaves the master waiting forever.
+C Cause 0177 is "PZ appeared"; print the word, but do not ask E50 202
+C for cause text for it.
+ wexp:	  ,xta , poll
+	  ,*50 , 7700b
+	  ,xta ,
+	  ,*62 , 101b
+	  ,aox ,
+	  ,uza , wexp
+	  ,xta , pzc
+	  ,*62 , 54b
+	  ,atx , res
+	  ,*64 , inf64
+	  ,xta , res
+	  ,aax , low
+	  ,aex , c177
+	  ,uza , rsum
+	  ,xta , res
+	  ,aax , low
+	 13,vtm, txt
+	  ,*50 , 202b
+	  ,*64 , inft
+C Resume the appealed subtask, let it run, then stop it from the master.
+ rsum:	  ,xta , pzc
+	  ,*53 , 31b
+C Wait until the PZ is no longer listed as stopped before stopping it again.
+ wrun:	  ,xta , poll
+	  ,*50 , 7700b
+	  ,xta ,
+	  ,*62 , 101b
+	  ,aox ,
+	  ,u1a , wrun
+	  ,xta , delay
+	  ,*50 , 7700b
+	  ,xta , pzc
+	  ,*53 , 30b
+C E53 30 can be asynchronous on the real OS; wait for a real stopped cause.
+ wstp:	  ,xta , poll
+	  ,*50 , 7700b
+	  ,xta ,
+	  ,*62 , 101b
+	  ,aox ,
+	  ,uza , wstp
+	  ,xta , pzc
+	  ,*62 , 54b
+	  ,atx , res
+	  ,*64 , inf64
+	  ,xta , res
+	  ,aax , low
+	  ,aex , c177
+	  ,uza , fini
+	  ,xta , res
+	  ,aax , low
+	 13,vtm, txt
+	  ,*50 , 202b
+	  ,*64 , inft
+ fini:	  ,xta , pzc
+	  ,*53 , 33b
+	  ,call, stop*
+ pzc:	  ,oct , 2031 44
+ poll:	  ,log , 1
+ delay:	  ,log , 15
+ c177:	  ,log , 177
+ low:	  ,log , 7777 7777
+ res:	  ,log , 0
+ txt:	  ,log , 0
+	  ,log , 0
+	  ,log , 0
+ inf64:	  ,    , res
+	  ,    , res
+	 2,    , 20b
+	 8,    ,
+ inft:	  ,    , txt
+	  ,    , txt+2
+	  ,001 ,
+	 8,    ,
+ cwrd:	  ,oct , 1442 5055
+ deck:	  ,gost, 30hшифр 419900 зс5'115'лен 41(2048)'115'
+	  ,gost, 6hеев1а3
+	  ,gost, 18h'341'*name pz'341'*no list
+	  ,gost, 12h'341'*assembler
+	  ,gost, 18h'341' program: ,name,
+	  ,gost, 18h'341'  ,xta , mast
+	  ,gost, 18h'341'  ,*53 , 46b
+	  ,gost, 18h'341' loop: ,uj , loop
+	  ,gost, 30h'341' mast:  ,oct , 2031 4631
+	  ,gost, 12h'341'  ,end ,
+	  ,gost, 12h'341'*execute
+	  ,gost, 12h'341'*end file '341'
+	  ,gost, 6h'342''342''342''342''342''342'
+	  ,gost, 6hеконец
+	  ,end ,
+*execute
+*end file
+еконец

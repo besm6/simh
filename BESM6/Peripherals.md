@@ -35,6 +35,7 @@ rather than glossed over.
 12. [Card punch (ПИ)](#card-punch-пи)
 13. [Card reader (ВУ-700)](#card-reader-ву-700)
 14. [Terminals, Consul typewriters and the serial multiplexor](#terminals-consul-typewriters-and-the-serial-multiplexor)
+    - [КАДОПАМ and the ДКС (instruction 032)](#кадопам-and-the-дкс-instruction-032)
 15. [Operator panel and the ГПВЦ display board](#operator-panel-and-the-гпвц-display-board)
 16. [Error polling](#error-polling)
 17. [A worked example: reading a drum page](#a-worked-example-reading-a-drum-page)
@@ -351,6 +352,10 @@ From [besm6_defs.h:473](besm6_defs.h#L473). Bits 14–13 are unused; bits 1–5 
 | 8 | `000000200` | `PRP_PLOTTER` | Plotter ready. |
 | 7 | `000000100` | `PRP_MUX_INPUT` | Multiplexor: input available. |
 | 6 | `000000040` | `PRP_MUX_DONE` | Multiplexor: transmission finished. |
+
+With КАДОПАМ (`set dks enabled`) bits 8–5 are the interrupts of КРК channels 0–3
+(`PRP_DKS_CHAN(n)`) and bit 12 is the ДКС "attention" signal (`PRP_DKS_ATTN`); see
+[КАДОПАМ and the ДКС](#кадопам-and-the-дкс-instruction-032).
 
 ---
 
@@ -854,6 +859,34 @@ request**, answered in `MUX_SYLLABLE` with the receive state in bit 4, raising `
 `033 4143` reads `MUX_SYLLABLE` back. `033 0153` clears the whole terminal interface (the
 accumulator is ignored) and sets bit 6 of МПРП. `PRP_MUX_DONE` (bit 6) signals transmission
 complete.
+
+### КАДОПАМ and the ДКС (instruction 032)
+
+КАДОПАМ gives the BESM-6 direct access to the RAM of the Электроника-60 machines of
+the ДКС terminal concentrator. It is used by Диспак builds with ∧К71=1 (module
+СВЯЗЬ7). Instruction `032 addr` reads one 16-bit word into accumulator bits 25–40 and
+clears the right half; with bit 19 set (`0132`, written `кк 26,'70000'+n` in the
+sources) it writes the low 16 bits of the accumulator to cell `n`. The device is
+`DKS` in [besm6_dks.c](besm6_dks.c), disabled by default:
+
+| Cell | Read | Write |
+|------|------|-------|
+| `0` | channel status: bit 9+k set for each present КРК channel k | selects the КРК channel |
+| `2` | 0 | memory |
+| `077777` | memory | 0400 = doorbell: the BESM-6 has posted to the ring |
+| others | memory of the selected channel | memory of the selected channel |
+
+One Э-60 is emulated: the OS's Э-60 index 2 on КРК channel 2, interrupting on ПРП 6.
+Lines set with `set ttyN dks` are its terminals; the Э-60 does local echo and line
+editing, and passes a finished line to the OS. With the device enabled, `033 0153` no
+longer touches ПРП/МПРП bit 6. The protocol (rings, system requests, terminal areas)
+is described in Russian in [ДКС.md](ДКС.md). Debug flags: `KADOPAM` (every access),
+`RING` (ring traffic and terminal-area writes), `IRQ`.
+
+```
+set dks enabled
+set tty5 dks
+```
 
 ---
 
