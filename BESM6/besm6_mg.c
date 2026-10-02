@@ -50,6 +50,50 @@
 #define MG_MOVING         1           /* 0 - stopped, 1 - moving */
 
 /*
+ * Накопитель на МЛ ЕС-5017 (КУС ЕСМЛ) на месте направления 4 (MG4),
+ * set mg4 es; ОС - модуль esml.be, раздел ВЫДИНСа "ЕСМЛ 4".
+ *
+ * Команда увв '110'+u (выбор МЛ u и движение)
+ */
+#define ES_FWD            (1<<2)      /* 3р. - зона вперёд (с обменом) */
+#define ES_BACK           (1<<3)      /* 4р. - зона назад */
+#define ES_GRP_FWD        (1<<4)      /* 5р. - группа зон вперёд (за МГЗ) */
+#define ES_GRP_BACK       (1<<5)      /* 6р. - группа зон назад (до МГЗ) */
+#define ES_WTM            (1<<6)      /* 7р. - запись маркера группы зон */
+#define ES_ERASE          (1<<7)      /* 8р. - стирание промежутка */
+#define ES_REWIND         (1<<8)      /* 9р. - перемотка в начало */
+#define ES_UNLOAD         (1<<9)      /* 10р. - перемотать и разгрузить */
+#define ES_STOP           (1<<12)     /* 13р. - программный останов */
+#define ES_MOTION         (ES_FWD | ES_BACK | ES_GRP_FWD | ES_GRP_BACK | \
+                           ES_WTM | ES_ERASE | ES_REWIND | ES_UNLOAD)
+/*
+ * Слово обмена (увв 5); 18р. - чтение и 21р. - только служебные слова
+ * как у MG_READ и MG_READ_SYSDATA
+ */
+#define ES_ABZAC          000000003   /* 1-2р. - абзац ОЗУ (короткая зона) */
+#define ES_MODE_ES        000000010   /* 4р. - режим ЕС: 6 байтов на слово */
+#define ES_LONG           001000000   /* 19р. - длинная зона, 2000 слов */
+#define ES_BLOCK          0340000000  /* 24-26р. - куб; 27-28р. - плотность */
+/*
+ * Регистр состояния выбранного МЛ (увв '4115')
+ */
+#define ES_ST_MOVING      0001        /* 1р. - лента движется */
+#define ES_ST_WRITE       0020        /* 5р. - запись разрешена */
+#define ES_ST_BOT         0040        /* 6р. - начало ленты */
+#define ES_ST_EOT         0100        /* 7р. - конец ленты */
+#define ES_ST_READY       0200        /* 8р. - готовность */
+#define ES_ST_REWIND      0400        /* 9р. - идёт перемотка */
+/*
+ * Регистр ошибок (увв '4117')
+ */
+#define ES_ERR_TMK        02000       /* 11р. - вместо зоны считан МГЗ */
+#define ES_ERR_LONG       04000       /* 12р. - длинная зона */
+#define ES_ERR_CRC        010000      /* 13р. - ОШЦКС */
+
+#define ES_CTLR           1           /* только направление 4 */
+#define ES_MAXREC         65536       /* байтов в самой длинной зоне ЕС */
+
+/*
  * Параметры обмена с внешним устройством.
  */
 typedef struct {
@@ -62,6 +106,11 @@ typedef struct {
     t_value mask_done, mask_free;   /* Маска готовности для ГРП */
     int mask_fail;                  /* Маска ошибки обмена */
     t_value *sysdata;               /* Буфер системных данных */
+    int es;                         /* Направление - ЕС-5017 */
+    int armed;                      /* Слово обмена ещё не использовано */
+    int selected;                   /* ЕС: выбранный МЛ */
+    int es_err;                     /* ЕС: регистр ошибок */
+    int es_count;                   /* ЕС: число считанных слов */
 } KMT;
 
 static KMT controller [4];          /* 4 channels, 8 tape devices on each */
@@ -123,6 +172,7 @@ UNIT mg_unit [32] = {
 
 #define in_io u3
 #define cmd u4
+#define es_op u5                    /* ЕС: выполняемая команда движения */
 
 REG mg_reg[] = {
     { ORDATA   (КУС_0,      controller[0].op,       24) },
@@ -148,13 +198,21 @@ REG mg_reg[] = {
     { 0 }
 };
 
-MTAB mg_mod[] = {
-    { 0 }
-};
-
 t_stat mg_reset (DEVICE *dptr);
 t_stat mg_attach (UNIT *uptr, CONST char *cptr);
 t_stat mg_detach (UNIT *uptr);
+static t_stat mg_set_es (UNIT *u, int32 val, CONST char *cptr, void *desc);
+static t_stat mg_show_es (FILE *st, UNIT *u, int32 val, CONST void *desc);
+
+MTAB mg_mod[] = {
+    { MTAB_XTD|MTAB_VDV, 1, NULL, "ES", &mg_set_es, NULL, NULL,
+      "MG4 only: the direction is an ES-5017 tape controller (ESML 4)" },
+    { MTAB_XTD|MTAB_VDV, 0, NULL, "NOES", &mg_set_es, NULL, NULL,
+      "MG4 only: native BESM-6 tape controller" },
+    { MTAB_XTD|MTAB_VDV, 0, "TYPE", NULL, NULL, &mg_show_es, NULL,
+      "Display the controller type" },
+    { 0 }
+};
 
 DEVICE mg_dev[4] = {
     {
@@ -199,7 +257,9 @@ t_stat mg_reset (DEVICE *dptr)
     int i;
     int ctlr = dptr - mg_dev;
     KMT *c = &controller[ctlr];
+    int es = c->es;
     memset (c, 0, sizeof (*c));
+    c->es = es;
     /*
      * The areas starting from words 030 and 040 are used for
      * disks; the remaining locations are shared by two channels each.
@@ -237,8 +297,37 @@ t_stat mg_reset (DEVICE *dptr)
         }
         mg_unit[ctlr*8+i].dptr = dptr;
         mg_unit[ctlr*8+i].in_io = 0;
+        mg_unit[ctlr*8+i].es_op = 0;
         sim_cancel (&mg_unit[ctlr*8+i]);
     }
+    return SCPE_OK;
+}
+
+/*
+ * set mg4 es / set mg4 noes
+ */
+static t_stat mg_set_es (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    KMT *c = unit_to_ctlr (u);
+    int i;
+
+    if (cptr)
+        return SCPE_ARG;
+    if (c != &controller[ES_CTLR])
+        return sim_messagef (SCPE_ARG, "Only MG4 can be an ES-5017 controller\n");
+    if (c->es == val)
+        return SCPE_OK;
+    for (i = 0; i < 8; ++i)
+        if (mg_unit[ES_CTLR*8+i].flags & UNIT_ATT)
+            return sim_messagef (SCPE_ALATT,
+                                 "Detach the MG4 tapes before changing the controller type\n");
+    c->es = val;
+    return SCPE_OK;
+}
+
+static t_stat mg_show_es (FILE *st, UNIT *u, int32 val, CONST void *desc)
+{
+    fprintf (st, unit_to_ctlr (u)->es ? "ES-5017" : "native");
     return SCPE_OK;
 }
 
@@ -271,6 +360,11 @@ t_stat mg_attach (UNIT *u, CONST char *cptr)
             if (!isdigit(*pos)) ++pos;
             tapeno = strtoul (pos, NULL, 10);
             free (filenamepart);
+            if (tapeno == 0 && controller[ctrl].es) {
+                /* Чистая лента ЕС, номер даёт оператор (ЕСМ). */
+                sim_messagef (SCPE_OK, "%s: blank ES tape\n", sim_uname (u));
+                break;
+            }
             if (tapeno == 0 || tapeno >= 2048) {
                 if (tapeno == 0)
                     s = sim_messagef (SCPE_ARG,
@@ -286,7 +380,8 @@ t_stat mg_attach (UNIT *u, CONST char *cptr)
                 free (filenamepart);
                 return s;          /* not formatting */
             }
-            sim_messagef (SCPE_OK, "%s: formatting tape volume %d\n", sim_uname (u), tapeno);
+            sim_messagef (SCPE_OK, "%s: formatting %stape volume %d\n", sim_uname (u),
+                          controller[ctrl].es ? "BESM-6 mode ES " : "", tapeno);
 
             control[0] = SET_PARITY(funit << 42 | (memory[0221] & 0377774000000LL), PARITY_NUMBER);
             control[1] = SET_PARITY(0x987654321000LL, PARITY_NUMBER); /* task ID */
@@ -301,6 +396,9 @@ t_stat mg_attach (UNIT *u, CONST char *cptr)
                 int zno = blkno / 2;
                 control[3] = SET_PARITY(070707LL << 24 | zno << 13 | blkno, PARITY_NUMBER);
                 control[6] = control[3];
+                /* На ленте ЕС в режиме БЭСМ-6 каждой зоне предшествует МГЗ. */
+                if (controller[ctrl].es)
+                    sim_tape_wrtmk(u);
                 sim_tape_wrrecf(u, (uint8*)fullzone, sizeof(fullzone));
                 // sim_tape_wrgap(u, 20);
             }
@@ -322,7 +420,9 @@ t_stat mg_attach (UNIT *u, CONST char *cptr)
     
     /* ready */
     controller[ctrl].status &= ~(MG_OFFLINE << num);
-    GRP |= controller[ctrl].mask_free;
+    u->es_op = 0;
+    if (! controller[ctrl].es)
+        GRP |= controller[ctrl].mask_free;
     return SCPE_OK;
 }
 
@@ -483,6 +583,7 @@ void mg_io (int ctlr, uint32 op)
         c->op = op;
         c->dev = dev;
         c->memory = (op & MG_PAGE) >> 2 | (op & MG_BLOCK) >> 8;
+        c->armed = 1;
     }
 
     if (mg_dev[ctlr].dctrl)
@@ -502,6 +603,313 @@ void mg_io (int ctlr, uint32 op)
 }
 
 /*
+ * ЕС-5017: адрес начала обмена в ОЗУ.
+ */
+static int es_memory (uint32 op)
+{
+    int addr = (op & MG_PAGE) >> 2 | (op & ES_BLOCK) >> 8;
+    if ((op & ES_MODE_ES) && ! (op & ES_LONG))
+        addr += (op & ES_ABZAC) << 8;
+    return addr;
+}
+
+/*
+ * ЕС-5017: запись зоны.  В режиме БЭСМ-6 - 8 служебных слов и 1024 слова
+ * целиком, с тегами (8 байтов на слово, как на дисках); в режиме ЕС -
+ * 400 или 2000 слов по 6 байтов, старшие вперёд.
+ */
+static void es_write (UNIT *u)
+{
+    KMT *c = unit_to_ctlr (u);
+    int addr = es_memory (u->cmd);
+    t_stat ret;
+
+    if (u->cmd & ES_MODE_ES) {
+        static uint8 buf[02000*6];
+        int nwords = (u->cmd & ES_LONG) ? 02000 : 0400;
+        int i, b;
+        for (i = 0; i < nwords; ++i) {
+            t_value w = memory[(addr + i) & (MEMSIZE-1)];
+            for (b = 0; b < 6; ++b)
+                buf[i*6 + b] = (uint8) (w >> (40 - 8*b));
+        }
+        if (u->dptr->dctrl)
+            sim_printf ("::: %s: writing ES zone, %d words from %05o\n",
+                        sim_uname (u), nwords, addr);
+        ret = sim_tape_wrrecf (u, buf, nwords*6);
+        c->es_count = nwords;
+    } else {
+        t_value fullzone[8+1024];
+        if (u->dptr->dctrl)
+            sim_printf ("::: %s: writing BESM-6 zone from %05o\n",
+                        sim_uname (u), addr);
+        memcpy (fullzone, c->sysdata, 8*sizeof(t_value));
+        memcpy (fullzone+8, &memory[addr], 1024*sizeof(t_value));
+        ret = sim_tape_wrrecf (u, (uint8*) fullzone, sizeof(fullzone));
+        c->es_count = 1024;
+    }
+    if (ret != MTSE_OK) {
+        c->es_err |= ES_ERR_CRC;
+        mg_fail |= c->mask_fail;
+    }
+}
+
+/*
+ * ЕС-5017: чтение зоны.
+ */
+static void es_read (UNIT *u)
+{
+    KMT *c = unit_to_ctlr (u);
+    int addr = es_memory (u->cmd);
+    static uint8 buf[ES_MAXREC];
+    t_mtrlnt len;
+    t_stat ret;
+
+    ret = sim_tape_rdrecf (u, buf, &len, sizeof(buf));
+    if (ret == MTSE_TMK) {
+        if (u->dptr->dctrl)
+            sim_printf ("::: %s: tape mark instead of a zone\n", sim_uname (u));
+        c->es_err |= ES_ERR_TMK;
+        return;
+    }
+    if (ret == MTSE_INVRL || ret == MTSE_RECE) {
+        c->es_err |= ES_ERR_LONG;
+        mg_fail |= c->mask_fail;
+        return;
+    }
+    if (ret != MTSE_OK) {
+        if (u->dptr->dctrl)
+            sim_printf ("::: %s: read error %d\n", sim_uname (u), ret);
+        c->es_err |= ES_ERR_CRC;
+        mg_fail |= c->mask_fail;
+        return;
+    }
+    if (u->cmd & ES_MODE_ES) {
+        int nwords = (u->cmd & ES_LONG) ? 02000 : 0400;
+        int got = len / 6;
+        int i, b;
+        if (got > nwords) {
+            c->es_err |= ES_ERR_LONG;
+            got = nwords;
+        }
+        for (i = 0; i < got; ++i) {
+            t_value w = 0;
+            for (b = 0; b < 6; ++b)
+                w = w << 8 | buf[i*6 + b];
+            memory[(addr + i) & (MEMSIZE-1)] = SET_PARITY (w, PARITY_NUMBER);
+        }
+        c->es_count = got;
+        if (u->dptr->dctrl)
+            sim_printf ("::: %s: read ES zone, %d words to %05o\n",
+                        sim_uname (u), got, addr);
+    } else {
+        t_value *fullzone = (t_value*) buf;
+        if (len != sizeof(t_value)*(8+1024)) {
+            if (u->dptr->dctrl)
+                sim_printf ("::: %s: not a BESM-6 zone, %d bytes\n",
+                            sim_uname (u), len);
+            c->es_err |= (len > sizeof(t_value)*(8+1024)) ? ES_ERR_LONG : ES_ERR_CRC;
+            mg_fail |= c->mask_fail;
+            return;
+        }
+        memcpy (c->sysdata, fullzone, 8*sizeof(t_value));
+        if (! (u->cmd & MG_READ_SYSDATA))
+            memcpy (&memory[addr], fullzone+8, 1024*sizeof(t_value));
+        c->es_count = 1024;
+        if (u->dptr->dctrl)
+            sim_printf ((u->cmd & MG_READ_SYSDATA) ?
+                        "::: %s: read BESM-6 zone control words\n" :
+                        "::: %s: read BESM-6 zone to %05o\n",
+                        sim_uname (u), addr);
+    }
+}
+
+/*
+ * ЕС-5017: команда увв '110'+u.  Выбирает МЛ для опроса состояния и,
+ * если заданы разряды движения, начинает движение; само движение
+ * выполняется по событию es_event.
+ */
+static void es_ctl (UNIT *u, uint32 op)
+{
+    KMT *c = unit_to_ctlr (u);
+    int num = (u - mg_unit) & 7;
+
+    c->selected = num;
+    if (op & MG_CLEARINTR)
+        GRP &= ~c->mask_done;
+    if (op & ES_STOP) {
+        if (u->dptr->dctrl && (c->status & (MG_MOVING << num)))
+            sim_printf ("::: %s: program stop\n", sim_uname (u));
+        if (! (u->es_op & (ES_REWIND | ES_UNLOAD)) &&
+            (c->status & (MG_MOVING << num))) {
+            sim_cancel (u);
+            u->in_io = 0;
+            u->es_op = 0;
+            c->status &= ~(MG_MOVING << num);
+        }
+        return;
+    }
+    op &= ES_MOTION;
+    if (op == 0)
+        return;
+    if (! (u->flags & UNIT_ATT)) {
+        if (u->dptr->dctrl)
+            sim_printf ("::: %s: unattached, but command %08o issued\n",
+                        sim_uname (u), op);
+        mg_fail |= c->mask_fail;
+        return;
+    }
+    if (c->status & (MG_MOVING << num)) {
+        if (u->dptr->dctrl)
+            sim_printf ("::: %s: busy, command %08o ignored\n",
+                        sim_uname (u), op);
+        return;
+    }
+    c->es_err = 0;
+    c->es_count = 0;
+    mg_fail &= ~c->mask_fail;
+    u->es_op = op;
+    u->in_io = 0;
+    if ((op & ES_FWD) && c->armed && c->dev == num) {
+        /* Обмен по слову, переданному командой увв 5. */
+        c->armed = 0;
+        u->cmd = c->op;
+        if (! (u->cmd & MG_READ) && (u->flags & UNIT_RO)) {
+            if (u->dptr->dctrl)
+                sim_printf ("::: %s: write to a read-only tape\n", sim_uname (u));
+            mg_fail |= c->mask_fail;
+            u->es_op = 0;
+            return;
+        }
+        u->in_io = 1;
+    }
+    if (u->dptr->dctrl)
+        sim_printf ("::: %s: command %04o%s\n", sim_uname (u), op,
+                    u->in_io ? ((u->cmd & MG_READ) ? ", read" : ", write") : "");
+    c->status |= MG_MOVING << num;
+    sim_activate (u, (op & (ES_REWIND | ES_UNLOAD)) ? MG_IO_DELAY :
+                     u->in_io ? MG_IO_DELAY : MG_MOVE_DELAY);
+}
+
+/*
+ * ЕС-5017: выполнение движения.  Конец обмена - ГРП 27, конец движения
+ * - ГРП 35; перемотка заканчивается без прерывания, ОС опрашивает её
+ * по медленному таймеру.
+ */
+static void es_event (UNIT *u)
+{
+    KMT *c = unit_to_ctlr (u);
+    int num = (u - mg_unit) & 7;
+    int op = u->es_op;
+    t_mtrlnt len;
+    t_stat ret = MTSE_OK;
+
+    if (! (u->flags & UNIT_ATT)) {
+        u->es_op = 0;
+        u->in_io = 0;
+        c->status &= ~(MG_MOVING << num);
+        return;
+    }
+    if (u->in_io) {
+        if (u->cmd & MG_READ)
+            es_read (u);
+        else
+            es_write (u);
+        u->in_io = 0;
+        u->es_op = 0;
+        GRP |= c->mask_free;
+        sim_activate (u, MG_GAP_DELAY);
+        return;
+    }
+    if (op & (ES_REWIND | ES_UNLOAD)) {
+        if (u->dptr->dctrl)
+            sim_printf ("::: %s: %s done\n", sim_uname (u),
+                        (op & ES_UNLOAD) ? "unload" : "rewind");
+        sim_tape_rewind (u);
+        u->es_op = 0;
+        c->status &= ~(MG_MOVING << num);
+        if (op & ES_UNLOAD)
+            mg_detach (u);
+        return;
+    }
+    if (op & ES_FWD) {
+        ret = sim_tape_sprecf (u, &len);
+    } else if (op & ES_BACK) {
+        ret = sim_tape_bot (u) ? MTSE_BOT : sim_tape_sprecr (u, &len);
+    } else if (op & ES_GRP_FWD) {
+        do {
+            ret = sim_tape_sprecf (u, &len);
+        } while (ret == MTSE_OK);
+        if (ret == MTSE_TMK)
+            ret = MTSE_OK;
+    } else if (op & ES_GRP_BACK) {
+        do {
+            ret = sim_tape_bot (u) ? MTSE_BOT : sim_tape_sprecr (u, &len);
+        } while (ret == MTSE_OK);
+        if (ret == MTSE_TMK)
+            ret = MTSE_OK;
+    } else if (op & ES_WTM) {
+        ret = (u->flags & UNIT_RO) ? MTSE_WRP : sim_tape_wrtmk (u);
+    }
+    /* ES_ERASE: стирание промежутка не оставляет следа в образе. */
+    if (ret == MTSE_TMK) {
+        c->es_err |= ES_ERR_TMK;
+    } else if (ret != MTSE_OK && ret != MTSE_BOT) {
+        c->es_err |= ES_ERR_CRC;
+        mg_fail |= c->mask_fail;
+    }
+    if (u->dptr->dctrl)
+        sim_printf ("::: %s: end of motion %04o, status %d, errors %05o\n",
+                    sim_uname (u), op, ret, c->es_err);
+    u->es_op = 0;
+    c->status &= ~(MG_MOVING << num);
+    GRP |= c->mask_done;
+}
+
+/*
+ * ЕС-5017: регистр состояния выбранного МЛ (увв '4115').
+ */
+int es_status ()
+{
+    KMT *c = &controller[ES_CTLR];
+    UNIT *u = &mg_unit[ES_CTLR*8 + c->selected];
+    int num = c->selected;
+    int st = 0;
+
+    if (! c->es || (mg_dev[ES_CTLR].flags & DEV_DIS) || ! (u->flags & UNIT_ATT))
+        return 0;
+    st |= ES_ST_READY;
+    if (! (u->flags & UNIT_RO))
+        st |= ES_ST_WRITE;
+    if (c->status & (MG_MOVING << num))
+        st |= ES_ST_MOVING;
+    if (u->es_op & (ES_REWIND | ES_UNLOAD))
+        st |= ES_ST_REWIND;
+    else if (sim_tape_bot (u))
+        st |= ES_ST_BOT;
+    if (sim_tape_eot (u))
+        st |= ES_ST_EOT;
+    return st;
+}
+
+/*
+ * ЕС-5017: регистр ошибок (увв '4117').
+ */
+int es_errors ()
+{
+    return controller[ES_CTLR].es ? controller[ES_CTLR].es_err : 0;
+}
+
+/*
+ * ЕС-5017: число считанных слов (увв '4012'); ОС сдвигает его на 5
+ * разрядов влево в 15-разрядный М16, 2000 слов дают 0.
+ */
+int es_count ()
+{
+    return controller[ES_CTLR].es ? controller[ES_CTLR].es_count & 01777 : 0;
+}
+
+/*
  * Moving the tape.
  */
 void mg_ctl (int unit, uint32 op)
@@ -510,6 +918,10 @@ void mg_ctl (int unit, uint32 op)
     KMT *c = unit_to_ctlr (u);
     int num = unit & 7;
     int move, back;
+    if (c->es) {
+        es_ctl (u, op);
+        return;
+    }
     if (op == MG_CLEARINTR) {
         // Only the controller number matters, unit is not used.
         GRP &= ~c->mask_done;
@@ -559,6 +971,7 @@ void mg_ctl (int unit, uint32 op)
         }
         u->cmd = c->op;
         u->in_io = 1;
+        controller[(c - controller) ^ 1].armed = 0;
         if (u->dptr->dctrl)
             sim_printf("::: %s: in_io = 1\n", sim_uname(u));
         c->status |= MG_MOVING << num;
@@ -624,6 +1037,10 @@ t_stat mg_event (UNIT *u)
     KMT *c = unit_to_ctlr (u);
     int unit = u - mg_unit;
     int num = unit & 7;
+    if (c->es) {
+        es_event (u);
+        return SCPE_OK;
+    }
     if (u->dptr->dctrl)
         sim_printf("::: %s: event\n", sim_uname(u));
     if (u->in_io) {

@@ -37,6 +37,8 @@ stops at the first failure.
 | `alu.ini`     | `alu.b6`            | Arithmetic-unit program halts three times at address 032013. |
 | `pprog05.ini` | `pprog05.b6`        | Accumulator holds 1.0, 2.0, 3.0, 4.0 across four passes. |
 | `aout.ini`    | `aout/hello`        | The binary a.out loader loads a linked executable that prints `Hello!` to the operator console and starts it at its `a_entry` (010). |
+| `kadopam.ini` | `kadopam.b6`        | КАДОПАМ (032/0132): КРК channel selection, channel status, Э-60 memory read/write. |
+| `esml.ini`    | `esml.b6`           | ЕС-5017 on MG4 (`set mg4 es`): writes an ES zone, a tape mark and a BESM-6 zone to a scratch tape, rewinds and reads them back, checking `04115`/`04117`/`04012`. |
 
 ## Fixture formats
 

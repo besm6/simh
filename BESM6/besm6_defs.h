@@ -343,6 +343,9 @@ void mg_ctl (int ctlr, uint32 cmd);
 int mg_state (int ctlr);
 void mg_format(uint32 cmd);
 int mg_errors (void);
+int es_status (void);
+int es_errors (void);
+int es_count (void);
 
 /*
  * Печать на АЦПУ.

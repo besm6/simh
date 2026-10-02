@@ -220,7 +220,9 @@ This is the real I/O instruction. `cmd_033()` at [besm6_cpu.c:595](besm6_cpu.c#L
 | `04102` | **READY2** — punch/card ready flags | — |
 | `04103`–`04106` | Tape controller 3–6 status | `mg_state()` |
 | `04107` | tape write-check circuit | always `0`. |
-| `04115` | unknown | Always `0`. DISPAK issues this in groups of eight every few seconds; its purpose is not known. |
+| `04012` | ЕС-5017 tape: words read by the last exchange | `es_count()`; `0` unless `set mg4 es`. |
+| `04115` | ЕС-5017 tape: status of the selected unit | `es_status()`; `0` unless `set mg4 es`. DISPAK configured with `ЕСМЛ` polls it in groups of eight every few seconds. |
+| `04117` | ЕС-5017 tape: error register | `es_errors()`; `0` unless `set mg4 es`. |
 | `04140`–`04157` (except `04150`/`04154`) | punchcard row | **Unimplemented.** |
 | `04143` | Serial multiplexor | `mux_read()` |
 | `04150`, `04154` | Card reader 1 / 2 | `vu_read()` |
@@ -623,6 +625,56 @@ Three 8-bit fields, one bit per unit ([besm6_mg.c:48](besm6_mg.c#L48)):
 Each channel *n* has two ГРП bits: `GRP_CHAN3_DONE >> n` for "tape movement finished", and one
 "exchange finished" bit — `GRP_CHAN6_FREE` for the formatting channel `MG6`, `GRP_CHAN5_FREE` for
 all others. Service words go to memory `050` (channels 3–4) or `060` (channels 5–6).
+
+### ЕС-5017 controller on direction 4 (`set mg4 es`)
+
+DISPAK configured with the ВЫДИНС section `ЕСМЛ 4` loads `esml.be` and treats direction 4 as an
+ЕС-5017 tape controller (КУС ЕСМЛ). `set mg4 es` (MG4 only; detach its tapes first) switches `MG4`
+to that controller; `set mg4 noes` restores the native one, and `show mg4 type` displays it.
+`tools/makeBESM2053.py --es` / `--no-es` sets or clears `ЕСМЛ 4` in the configuration zone of
+`sbor2053.bin` (only direction 4 works: `esml.be` hardcodes `033 0110`). The stock image already has
+`ЕСМЛ 4` in most variants.
+
+The controller keeps the native channel resources: the exchange control word comes through
+`033 5` (shared with `MG3`), service words live at `050`–`057`, "exchange finished" is
+`GRP_CHAN5_FREE`, "movement finished" is `GRP_CHAN4_DONE`, errors set bit 3 of `04035`.
+
+**Command (`033 0110`+unit).** Writing selects the unit for the status register; the bits
+present start a motion:
+
+| Bit | Meaning |
+|-----|---------|
+| 3 | One zone forward — performs the exchange queued by `033 5` for this unit. |
+| 4 | One zone back. |
+| 5 / 6 | One group forward (past the next tape mark) / back (to the previous tape mark). |
+| 7 | Write a tape mark (маркер группы зон, МГЗ). |
+| 8 | Erase a gap (no effect on the image). |
+| 9 / 10 | Rewind / rewind and unload (the unit is detached). Rewinds raise no interrupt; DISPAK polls them. |
+| 11 / 12 | Low / high density (ignored). |
+| 13 | Program stop. |
+| 24 | Clear "movement finished". |
+
+**Exchange control word (`033 5`).** Bits 1–2 — quarter of the page (абзац) for a short zone;
+bit 4 — ES mode (6 bytes per word, no service words), 0 = BESM-6 mode (service words + 1024 words);
+bit 18 — read; bit 19 — long ES zone, `02000` words instead of `0400`; bit 21 — service words only;
+bits 13–17 and 24–26 — memory page. DISPAK leaks the density into bits 27–28, so the controller
+reaches only the low 256 pages.
+
+**Status (`04115`)**, of the unit selected last: bit 1 moving, 5 write permitted, 6 at the load
+point, 7 at the end of tape, 8 ready, 9 rewinding. **Errors (`04117`)**: bit 11 a tape mark instead of
+a zone, bit 12 a zone longer than requested, bit 13 a read/write failure (ОШЦКС). **`04012`**: words
+read by the last exchange; DISPAK shifts it into a 15-bit register, so `02000` reads as 0.
+
+**Image format.** ES tapes are SIMH `.tap` files, not interchangeable with native `MG` images. A
+BESM-6-mode zone is one record of 8 service words and 1024 words, 8 bytes each with the tag bits, as on
+disks; DISPAK expects a tape mark before every zone. An ES-mode zone is one record of 6-byte
+big-endian words without tags. `attach -n mg4N 1234.tap` formats a BESM-6-mode tape with volume
+1234 taken from the filename (DISPAK identifies it by itself); a filename without digits gives a
+blank tape, which the operator mounts as an ES tape with the directive `ЕСМ 1234 40` (reel 1234
+on unit 40).
+
+The ЕС variable-length mode (`033 0177`/`04177`) is not modelled: these stay the ГПВЦ display
+board, which tells DISPAK's probe that the mode is absent.
 
 ---
 

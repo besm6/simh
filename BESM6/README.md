@@ -443,6 +443,18 @@ sim> attach -r  mg31 archive.tap    ; mount read-only
 
 With `-n` the tape is formatted and its volume number (from the filename) **must be 1–2047**.
 
+Direction 4 can instead be an **ЕС-5017** controller, as DISPAK expects when its configuration has
+`ЕСМЛ 4` (most variants of the stock `sbor2053.bin` do; `tools/makeBESM2053.py --es` / `--no-es`
+sets or clears it):
+
+```
+sim> set mg4 es                     ; before attaching MG4 tapes
+sim> attach -n mg40 1234.tap        ; BESM-6-mode ES tape, volume 1234
+sim> attach -n mg41 blank.tap       ; blank ES tape; operator: ЕСМ 1234 41
+```
+
+ES tape images differ from native ones; see [Peripherals.md](Peripherals.md#ес-5017-controller-on-direction-4-set-mg4-es).
+
 ---
 
 ## Terminals (TTY)

@@ -37,14 +37,18 @@
                        велит 31, 32 в ЕСТЕРМ не ставить; младшие 8 разрядов
                        ПРОГОН ГЕНС1 берёт ещё в длину аварийной выдачи на МЛ
                        - АВМЛС, - на обычную работу это не влияет.)
+    КОНФИГ+1 слово 001 разр.46-48 - ЕСМЛ N, направление МЛ ЕС-5017 (ВЫДИНС
+                       ЕСМЛ: ИЛИ N<<45; ГЕНС по нему грузит esml.be).
+                       Работает только N=4 (esml.be жёстко использует
+                       '110'), поэтому --es ставит 4, --no-es гасит.
 
 Остальные терминалы и разряды не трогаются.  Служебные слова зоны, кроме
 контрольной суммы, не меняются: СС[3] и СС[7] - сумма 1024 слов данных с
 циклическим переносом по 48 разрядам; теги слов сохраняются.
 
     python3 makeBESM2053.py [образ [копия]]
-                            (--consul 25|26 [--vidi] | --vt N | --tt N)
-                            [--variant K[,K...]]
+                            [--consul 25|26 [--vidi] | --vt N | --tt N]
+                            [--es | --no-es] [--variant K[,K...]]
 
 Образ по умолчанию - sbor2053.bin в текущем каталоге; без второго имени он
 правится на месте.  --vt N - видеотон на последовательной линии 1-24,
@@ -52,7 +56,7 @@
 
 Терминальный тип линии в SIMH должен соответствовать: --consul N --vidi ->
 set ttyN vt; --consul N без --vidi -> set ttyN consul; --vt N -> set ttyN vt;
---tt N -> set ttyN tt.
+--tt N -> set ttyN tt; --es -> set mg4 es; --no-es -> set mg4 noes.
 """
 import argparse
 import shutil
@@ -67,11 +71,13 @@ CONF_ZONE = 0o750 + 4               # ИСКОНФ: логическая 0750
 VARIANT_WORDS = 0o40
 NVARIANTS = 16
 
-PROGON, PMB, TRAKTY, NBESM = 0o4, 0o10, 0o15, 0o16
+KONFIG1, PROGON, PMB, TRAKTY, NBESM = 0o1, 0o4, 0o10, 0o15, 0o16
 TKANA, SHKUSTR, SHKOPT, SHKVT = 0o26, 0o27, 0o30, 0o36
 E29 = 1 << 28                       # ТРАКТЫ: раздел ТЕРМ задан
 VIDI_BIT = {25: 1 << 7, 26: 1 << 6} # VIDI 2 - '31', VIDI 1 - '32'
 ESTERM_BIT = {25: 1 << 7, 26: 1 << 6}   # ЕСТЕРМ N: разр.33-N
+ESML_MASK = 7 << 45                 # КОНФИГ+1: ЕСМЛ N, разр.46-48
+ESML_DIR = 4                        # единственное рабочее направление ЕС
 
 
 def cyclic_sum48(words):
@@ -96,7 +102,7 @@ def main():
                     help="образ системного диска (по умолчанию sbor2053.bin)")
     ap.add_argument("dst", nargs="?",
                     help="куда записать результат (по умолчанию - на место src)")
-    term = ap.add_mutually_exclusive_group(required=True)
+    term = ap.add_mutually_exclusive_group()
     term.add_argument("--consul", type=int, choices=(25, 26),
                       help="операторский терминал - КОНСУЛ на линии 25 ('31') или 26 ('32')")
     term.add_argument("--vt", type=int, metavar="N",
@@ -105,10 +111,14 @@ def main():
                       help="операторский терминал - телетайп на линии N (1-24)")
     ap.add_argument("--vidi", action="store_true",
                     help="с --consul: видеотон по каналу КОНСУЛА (VIDI); без неё VIDI для линии гасится")
+    ap.add_argument("--es", action=argparse.BooleanOptionalAction, default=None,
+                    help="ЕСМЛ 4: направление 4 - МЛ ЕС-5017 (--no-es - убрать)")
     ap.add_argument("--variant", default="",
                     help="номера вариантов через запятую (0-15); по умолчанию все непустые")
     args = ap.parse_args()
 
+    if args.consul is None and args.vt is None and args.tt is None and args.es is None:
+        ap.error("нужен хотя бы один из --consul, --vt, --tt, --es/--no-es")
     if args.vidi and args.consul is None:
         sys.exit("makeBESM2053: --vidi имеет смысл только с --consul")
     for opt in ("vt", "tt"):
@@ -121,7 +131,7 @@ def main():
     if any(not 0 <= v < NVARIANTS for v in only):
         sys.exit("makeBESM2053: --variant: номер варианта 0-15")
 
-    n = next(x for x in (args.consul, args.vt, args.tt) if x is not None)
+    n = next((x for x in (args.consul, args.vt, args.tt) if x is not None), None)
     dst = args.dst or args.src
     if dst != args.src:
         shutil.copyfile(args.src, dst)
@@ -156,6 +166,12 @@ def main():
             def upd(word, fn):
                 put(first + word, fn(get(first + word) & M48))
 
+            if args.es is not None:
+                upd(KONFIG1, lambda w: (w & ~ESML_MASK)
+                    | (ESML_DIR << 45 if args.es else 0))
+            if n is None:
+                done.append((v, get(first + NBESM) & 7))
+                continue
             upd(SHKUSTR, lambda w: w | scale_bit(n))
             upd(TRAKTY, lambda w: w | E29)
             if args.vt is not None:
@@ -177,19 +193,24 @@ def main():
         f.seek(0)
         f.write(data)
 
-    if args.consul is not None:
-        kind = "КОНСУЛ%s" % (" (VIDI: видеотон)" if args.vidi else "")
-        simh = "set tty%d %s" % (n, "vt" if args.vidi else "consul")
-    elif args.vt is not None:
-        kind = "видеотон"
-        simh = "set tty%d vt" % n
-    else:
-        kind = "телетайп"
-        simh = "set tty%d tt" % n
+    simh = []
     print("makeBESM2053: %s -> %s, зона %04o" % (args.src, dst, CONF_ZONE))
-    print("              операторский терминал '%o' (tty%d) - %s" % (n, n, kind))
+    if n is not None:
+        if args.consul is not None:
+            kind = "КОНСУЛ%s" % (" (VIDI: видеотон)" if args.vidi else "")
+            simh.append("set tty%d %s" % (n, "vt" if args.vidi else "consul"))
+        elif args.vt is not None:
+            kind = "видеотон"
+            simh.append("set tty%d vt" % n)
+        else:
+            kind = "телетайп"
+            simh.append("set tty%d tt" % n)
+        print("              операторский терминал '%o' (tty%d) - %s" % (n, n, kind))
+    if args.es is not None:
+        print("              ЕСМЛ: %s" % ("направление %d" % ESML_DIR if args.es else "нет"))
+        simh.append("set mg4 %s" % ("es" if args.es else "noes"))
     print("              варианты: %s" % (", ".join("%d (машина %d)" % d for d in done) or "нет"))
-    print("              КС зоны %016o; в SIMH: %s" % (cs, simh))
+    print("              КС зоны %016o; в SIMH: %s" % (cs, "; ".join(simh)))
 
 
 if __name__ == "__main__":
