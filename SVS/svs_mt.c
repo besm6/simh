@@ -132,14 +132,6 @@ DEVICE mt_dev = {
 
 static uint8 mt_buf[MT_MAXREC];
 
-/*
- * Лента сошла с начала: любое движение вперёд, даже по чистой ленте, где
- * позиция образа не меняется. Иначе ЕСМЛ при опознании (ПРК3) видит «начало
- * ленты» после каждого шага вперёд и шагает снова. Гасится перемоткой и
- * шагом назад, дошедшим до начала.
- */
-static int mt_offbot[NUM_MT];
-
 static t_stat mt_reset(DEVICE *dptr)
 {
     return SCPE_OK;
@@ -255,7 +247,6 @@ static t_stat mt_attach(UNIT *u, CONST char *cptr)
     int32 saved_switches = sim_switches;
     t_stat r;
 
-    mt_offbot[u - mt_unit] = 0;
     sim_switches |= SWMASK('E');
     for (;;) {
         r = sim_tape_attach(u, cptr);
@@ -383,7 +374,6 @@ t_stat svs_mt_io(int num, int kop, int memaddr, int nwords, int nps, int ttg,
     case 0x07:                          /* перемотка */
     case 0x0F:                          /* перемотка с разгрузкой */
         r = sim_tape_rewind(u);
-        mt_offbot[num] = 0;
         break;
     case 0x17:                          /* стирание промежутка */
         break;
@@ -426,62 +416,31 @@ t_stat svs_mt_io(int num, int kop, int memaddr, int nwords, int nps, int ttg,
     }
 
     /*
-     * Назад в начало ленты: если лента сходила с начала (шли вперёд по
-     * чистому месту), это нормальный конец шага; «начало ленты» — только
-     * когда шаг назад выдан, уже стоя в начале.
-     */
-    if ((kop == 0x27 || kop == 0x2F) && r == MTSE_BOT && mt_offbot[num]) {
-        r = MTSE_OK;
-        mt_offbot[num] = 0;
-    }
-    switch (kop) {                      /* движение вперёд — сошли с начала */
-    case 0x01: case 0x02: case 0x1F: case 0x37: case 0x3F:
-        mt_offbot[num] = 1;
-        break;
-    case 0x27: case 0x2F:
-        if (sim_tape_bot(u))
-            mt_offbot[num] = 0;
-        break;
-    }
-
-    /*
-     * ДРУ (уточнённое состояние) — только при особом состоянии, как его
-     * выдаёт канал: ЕСМЛ после каждой операции опознания смотрит «начало
-     * ленты» в ДРУ (ПРК3) и при нём снова шагает вперёд.
+     * Ответ — прямо по результату sim_tape: метка — особый случай (ОСУ);
+     * шаг назад от начала ленты, конец записанной части, нет кольца, ошибка
+     * образа — сбой в устройстве (СБУ) и ДРУ. «Начало ленты» в ДРУ — только
+     * по MTSE_BOT: на чистой ленте sim_tape возвращает MTSE_EOM, не сдвигая
+     * позицию с 0, а настоящая лента при движении вперёд сходит с начала —
+     * иначе ЕСМЛ при опознании (ПРК3) шагает вперёд бесконечно. «Нет
+     * кольца» — sim_tape_wrp.
      */
     switch (r) {
     case MTSE_OK:
         break;
-    case MTSE_TMK:                      /* метка: особый случай, без ДРУ */
+    case MTSE_TMK:
         st->dr48 |= DR_OSU;
         break;
-    case MTSE_BOT:                      /* шаг назад от начала */
-        st->dr48 |= DR_SBU;             /* сбой в устройстве, как у 3420 */
-        st->drlow = DR_DRU;
-        st->dru48 = DRU_READY | DRU_LOADPT;
-        break;
-    case MTSE_EOM:
-        /*
-         * Дальше ничего не записано (чистая лента): сбой в устройстве и
-         * «сбой данных» в ДРУ, а не метка — на метку ЕСМЛ при опознании
-         * (ПРК4) шагает дальше бесконечно.
-         */
+    default:
         st->dr48 |= DR_SBU;
         st->drlow = DR_DRU;
-        st->dru48 = DRU_READY | DRU_DATACHK;
-        break;
-    case MTSE_WRP:                      /* нет кольца записи */
-    default:                            /* ошибка формата/ввода-вывода */
-        st->dr48 |= DR_SBU;
-        st->drlow = DR_DRU;
-        st->dru48 = DRU_READY | (r == MTSE_WRP ? 0 : DRU_DATACHK);
-        break;
-    }
-    if (st->drlow & DR_DRU) {
+        st->dru48 = DRU_READY;
+        if (r == MTSE_BOT)
+            st->dru48 |= DRU_LOADPT;
+        else if (r != MTSE_WRP)
+            st->dru48 |= DRU_DATACHK;
         if (sim_tape_wrp(u))
             st->dru48 |= DRU_NORING;
-        if (sim_tape_bot(u) && !mt_offbot[num])
-            st->dru48 |= DRU_LOADPT;
+        break;
     }
 
     sim_debug(DEB_OPS, &mt_dev,
