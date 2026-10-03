@@ -687,8 +687,7 @@ static uint32 readmap[32768], writemap[32768];
         printer_hammer (Aex >= 050, Aex & 7, (uint32) (ACC & BITS(16)));
         break;
     case 070:
-	/* ES printer output */
-        besm6_debug(">>> ES print: %016llo", ACC);
+	/* ES printer output: not connected */
 	break;
     case 0140:
         /* Запись в регистр телеграфных каналов */
@@ -808,8 +807,7 @@ static uint32 readmap[32768], writemap[32768];
         ACC = drum_errors() | disk_errors() | mg_errors();
         break;
     case 04070:
-	/* ES printer status: */
-        besm6_debug("<<< ES printer read");
+	/* ES printer status: not ready */
 	ACC = 01000;
 	break;
     case 04100:

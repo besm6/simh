@@ -186,7 +186,7 @@ This is the real I/O instruction. `cmd_033()` at [besm6_cpu.c:595](besm6_cpu.c#L
 | `035` | simulate drum/tape exchange | — | **Unimplemented.** |
 | `040`–`047` | Printer 1 hammers | `printer_hammer()` | Bits 1–16: hammer solenoids. |
 | `050`–`057` | Printer 2 hammers | `printer_hammer()` | Bits 1–16: hammer solenoids. |
-| `070` | ES printer | — | Debug output only. |
+| `070` | ES printer | — | Ignored; the ES printer is not connected. |
 | `0100`–`0137` | Tape transport control | `mg_ctl()` | Movement command; unit = `Aex - 0100`. |
 | `0140` | Telegraph channel register | `tty_send()` | Bits 1–24: one bit per terminal line. |
 | `0141` | Tape formatting | `mg_format()` | Bits 1–2: formatting mode. |
@@ -215,7 +215,7 @@ This is the real I/O instruction. `cmd_033()` at [besm6_cpu.c:595](besm6_cpu.c#L
 | `04031` | **READY** — device-ready flags (printer etc.) | — |
 | `04034` | **ПРП**, low half — `(PRP & 07777) | 037` (bits 1–12; bits 1–5 always read as 1) | — |
 | `04035` | Exchange error trigger ОШМ | `drum_errors() \| disk_errors() \| mg_errors()` |
-| `04070` | ES printer status | returns the constant `01000`. |
+| `04070` | ES printer status | returns the constant `01000` (not ready). |
 | `04100` | Telegraph channel poll | `tty_query()` |
 | `04102` | **READY2** — punch/card ready flags | — |
 | `04103`–`04106` | Tape controller 3–6 status | `mg_state()` |
