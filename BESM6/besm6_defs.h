@@ -146,6 +146,7 @@ extern DEVICE clock_dev;
 extern DEVICE printer_dev;
 extern DEVICE tty_dev;
 extern DEVICE dks_dev;
+extern DEVICE osa_dev;
 extern DEVICE fs_dev;
 extern DEVICE pl_dev;
 extern DEVICE vu_dev;
@@ -382,6 +383,12 @@ void dks_line_char (int num, int c);
 void e60_set_echo (int num, int on);
 void dks_poll (void);
 int dks_busy (void);
+
+/*
+ * АС-6: связь с ЕС ЭВМ (команда 033, адреса 0200-0237 и 04200-04237).
+ */
+void osa_write (int reg, t_value acc);
+t_value osa_read (int reg);
 
 /*
  * Ввод с перфоленты.

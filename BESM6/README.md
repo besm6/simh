@@ -444,8 +444,8 @@ sim> attach -r  mg31 archive.tap    ; mount read-only
 With `-n` the tape is formatted and its volume number (from the filename) **must be 1–2047**.
 
 Direction 4 can instead be an **ЕС-5017** controller, as DISPAK expects when its configuration has
-`ЕСМЛ 4` (most variants of the stock `sbor2053.bin` do; `tools/makeBESM2053.py --es` / `--no-es`
-sets or clears it):
+`ЕСМЛ 4` (most variants of the stock `sbor2053.bin` do; a `tools/makeBESM2053.py` section file
+with `ЕСМЛ 4` / `ЕСМЛ НЕТ` sets or clears it):
 
 ```
 sim> set mg4 es                     ; before attaching MG4 tapes
@@ -512,9 +512,20 @@ A mismatch fails quietly: every keystroke is a parity error to the OS, and outpu
 
 Leaving `VIDI` off is not enough to get a Consul. Диспак gives a line the Consul device code only if
 it is also listed in `ЕСТЕРМ` (`ЕСТЕРМ 31` / `ЕСТЕРМ 32`). Otherwise it treats the line as a direct
-teletype and never prints to it. `tools/makeBESM2053.py --consul 26` patches a system disk
-accordingly; with `--vidi` it sets `VIDI` instead. `attach ttyN console` switches the line to `vt`
-unless it is already `consul`.
+teletype and never prints to it. `tools/makeBESM2053.py` patches a system disk from a file of
+ВЫДИНС-style sections; for a Consul on line 26 (`'32'`):
+
+```
+ТЕРМ СОNS:32
+ШКОПТТ 32
+ТКАНАЛ Ф32:0-7
+VIDI НЕТ
+ЕСТЕРМ 32
+```
+
+For a Videoton on the Consul channel, use `VIDI 1` and `ЕСТЕРМ НЕТ` instead. Sections not in the
+file are left as they are in the image; see the script's help for the supported sections.
+`attach ttyN console` switches the line to `vt` unless it is already `consul`.
 
 **Backspace:**
 
