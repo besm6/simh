@@ -253,43 +253,103 @@ void besm6_add (t_value val, int negate_acc, int negate_val)
 }
 
 /*
- * non-restoring division
+ * Деление мантисс так, как его выполняет АУ (ТО ИЫ1 700 000 ТО-3, ч. IV,
+ * п. 4.16, листы 86-102).  Деление без восстановления остатка, но остаток
+ * хранится в двухрядном коде (суммы и переносы), переносы не приводятся;
+ * приводятся только старшие разряды 41-39 (РСУД, РПУД, РУД).  По ним и по
+ * предыдущему действию (ЗУ+ЧВР) выбирается следующее действие: вычитание
+ * делителя, прибавление или только сдвиг (таблица 4.4).  Частное набирается
+ * двумя составляющими по 42 разряда (41 + доп. разряд): положительной (РОМ)
+ * и отрицательной (ВРУ); в конце частное = РОМ - ВРУ со специальным
+ * округлением (лист 102), при котором деление нацело всегда точно.
+ *
+ * Мантиссы - в 42-разрядном дополнительном коде (два знаковых разряда),
+ * делитель нормализован.  Результат: мантисса частного в той же сетке,
+ * |q| <= 2, нормализация - за вызывающим.  Эталонная модель:
+ * tools/b6div.py.
  */
-#define ABS(x) ((x) < 0 ? -x : x)
-#define INT64(x) ((x) & BIT41 ? (0xFFFFFFFFFFFFFFFFLL << 40) | (x) : x)
-static alureg_t nrdiv (alureg_t n, alureg_t d)
+#define DBIT(x,n) ((int) ((x) >> ((n)-1)) & 1)
+static t_uint64 au_divide (t_uint64 x, t_uint64 y)
 {
-    t_int64 nn, dd, q, res;
-    alureg_t quot;
+    const t_uint64 lo = BITS40 >> 2;            /* двухрядная часть: 38..1 */
+    const t_uint64 lo39 = BITS40 >> 1;          /* разряды 39..1 */
+    int yneg = DBIT(y, 41);
+    t_uint64 s2, c2, yv, sm, cr, pos, neg, lo_s, lo_c;
+    int sud, pud, rud, zu_plus, act, i, a, b, t39, t40;
+    int pe, ne, p1, n1, dpr, r1;
 
-    /* to compensate for potential normalization to the right  */
-    nn = INT64(n.mantissa)*2;
-    dd = INT64(d.mantissa)*2;
-    res = 0, q = BIT41;
+    /* Остаток R0 = X/2: старшие разряды 41-39 - на РСУД, младшие -
+     * однорядным кодом на СМ.  s2/c2 - двухрядный код остатка, уже
+     * сдвинутый влево (разряды 39-1), на первом такте это сам X. */
+    s2 = x & lo39;
+    c2 = 0;
+    sud = DBIT(x, 42) << 2 | DBIT(x, 41) << 1 | DBIT(x, 40);
+    pud = 0;
+    rud = DBIT(x, 41) << 1 | DBIT(x, 40);   /* разряды 40,39 остатка */
+    zu_plus = !DBIT(x, 41) && yneg;         /* лист 100 */
+    pos = neg = 0;
 
-    if (ABS(nn) >= ABS(dd)) {
-        /* normalization to the right */
-        nn/=2;
-        n.exponent++;
-    }
-    while (q > 1) {
-        if (nn == 0)
-            break;
+    for (i = 0; i < 42; i++) {
+        /* Таблица 4.4: при первом знаке 0 действие повторяет предыдущее;
+         * иначе знак остатка - по переносу из приведённых разрядов 40,39;
+         * код I,II - знак неизвестен, только сдвиг. */
+        if (! (sud & 4))
+            act = zu_plus ? '+' : '-';
+        else if ((sud & 3) + pud == 3)
+            act = 's';
+        else
+            act = (((sud & 3) + pud >= 4) != yneg) ? '-' : '+';
+        zu_plus = (act == '+');
+        pos = pos << 1 | (act == '-');
+        neg = neg << 1 | (act == '+');
 
-        if (ABS(nn) < BIT40)
-            nn *= 2;        /* magic shortcut */
-        else if ((nn > 0) ^ (dd > 0)) {
-            res -= q;
-            nn = 2*nn+dd;
+        if (act == 's') {
+            /* Только сдвиг: 41,40 РСУД = 1, разряд 39 двухрядного кода
+             * складывается без делителя, перенос - в РПУД40 (лист 98).
+             * Разряд 38 (перенос - в РПУД39, как в схеме листа 99) лист 98
+             * не упоминает: он подобран по константе Е'Е-10' Диспака. */
+            a = DBIT(s2, 39);
+            b = DBIT(c2, 39);
+            sud = 6 | (a ^ b);
+            pud = (a & b) << 1;
+            a = DBIT(s2, 38);
+            b = DBIT(c2, 38);
+            pud |= a & b;
+            lo_s = (s2 & (lo >> 1)) | (t_uint64) (a ^ b) << 37;
+            lo_c = c2 & (lo >> 1);
         } else {
-            res += q;
-            nn = 2*nn-dd;
+            /* +ЧВР - прямой код делителя, -ЧВР - обратный и 1 в 1-й разряд */
+            yv = (act == '+') ? y : ~y & BITS42;
+            sm = s2 ^ c2 ^ (yv & lo39);
+            cr = ((s2 & c2) | (s2 & yv & lo39) | (c2 & yv & lo39)) << 1;
+            if (act == '-')
+                cr |= 1;
+            /* Разряд 39 суммы - в РСУД, переносы из 39 и 38 - в РПУД;
+             * разряды 41,40 - сдвинутый РУД плюс делитель. */
+            t39 = rud & 1;
+            t40 = rud >> 1;
+            sud = (t40 ^ DBIT(yv, 41) ^ (t39 & DBIT(yv, 40))) << 2 |
+                (t39 ^ DBIT(yv, 40)) << 1 | DBIT(sm, 39);
+            pud = DBIT(cr, 40) << 1 | DBIT(cr, 39);
+            lo_s = sm & lo;
+            lo_c = cr & lo;
         }
-        q /= 2;
+        /* РУД - приведённые разряды 40,39 нового остатка */
+        rud = ((sud & 3) + pud) & 3;
+        s2 = lo_s << 1;
+        c2 = lo_c << 1;
     }
-    quot.mantissa = res/2;
-    quot.exponent = n.exponent-d.exponent+64;
-    return quot;
+
+    /* Частное = РОМ + обратный код ВРУ + ДПР, плюс 1 округления в 1рРС2 */
+    pe = pos & 1;
+    ne = neg & 1;
+    pos >>= 1;
+    neg >>= 1;
+    p1 = pos & 1;
+    n1 = neg & 1;
+    dpr = pe || (!ne && !pe) || (!p1 && ne && !n1);
+    r1 = pe && (n1 || p1);
+    return (pos + (~neg & BITS42) + dpr + r1) & BITS42;
 }
 
 /*
@@ -309,7 +369,13 @@ void besm6_divide (t_value val)
     dividend = toalu(ACC);
     divisor = toalu(val);
 
-    acc = nrdiv(dividend, divisor);
+    acc.mantissa = au_divide (dividend.mantissa, divisor.mantissa);
+    acc.exponent = dividend.exponent - divisor.exponent + 64;
+    if (((acc.mantissa >> 1) ^ acc.mantissa) & BIT41) {
+        /* Нормализация вправо */
+        acc.mantissa = acc.mantissa >> 1 | (acc.mantissa & BIT42);
+        ++acc.exponent;
+    }
 
     normalize_and_round (acc, 0, 0);
 }
