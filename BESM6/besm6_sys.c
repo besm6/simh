@@ -899,5 +899,6 @@ t_stat sim_load (FILE *fi, CONST char *cptr, CONST char *fnam, int dump_flag)
     if (dump_flag)
         return besm6_dump (fi, fnam);
 
+    mmu_sync ();
     return besm6_load (fi);
 }

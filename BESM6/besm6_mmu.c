@@ -41,7 +41,7 @@ UNIT mmu_unit = {
 };
 
 t_value BRZ[8];
-uint32 BAZ[8], TABST, RZ, OLDEST, FLUSH;
+uint32 BAZ[8], TABST, RZ, OLDEST;
 
 t_value BRS[4];
 uint32 BAS[4];
@@ -175,7 +175,6 @@ REG mmu_reg[] = {
     { ORDATA   (БАЗ6,   BAZ[6],     16) },
     { ORDATA   (БАЗ7,   BAZ[7],     16) },
     { ORDATAH  (ТАБСТ,  TABST,      28) }, /* Таблица старшинства БРЗ */
-    { ORDATAH  (ЗпТР,   FLUSH,       4) }, /* Признак выталкивания БРЗ */
     { ORDATA   (Старш,  OLDEST,      3) }, /* Номер вытолкнутого БРЗ */
     { ORDATAVM (РП0,    RP[0],      48) }, /* Регистры приписки, по 12 бит */
     { ORDATAVM (РП1,    RP[1],      48) },
@@ -241,9 +240,10 @@ t_stat mmu_reset (DEVICE *dptr)
     for (i = 0; i < 8; ++i) {
         BRZ[i] = RP[i] = BAZ[i] = 0;
     }
+    for (i = 0; i < 4; ++i)
+        BAS[i] = 0;
     TABST = 0;
     OLDEST = 0;
-    FLUSH = 0;
     RZ = 0;
     /*
      * Front panel switches survive the reset
@@ -307,24 +307,64 @@ void mmu_protection_check (int addr)
     }
 }
 
+/*
+ * Физический адрес слова: с признаком 0100000 - без приписки.
+ */
+static int mmu_physaddr (int addr)
+{
+    return (addr > 0100000) ? (addr - 0100000) :
+        (addr & 01777) | (TLB[addr >> 10] << 10);
+}
+
+/*
+ * Физические адреса 1-7 - тумблерные регистры. Схема сравнения БАЗ
+ * их не опознает: запись по ним всегда занимает новый БРЗ, то есть
+ * выталкивает в МОЗУ самый старший (так ОС выталкивает БРЗ перед
+ * обменом, например ВЗОМБ7 в ДМЛМБ), а переписывать такой БРЗ некуда.
+ */
+static int mmu_is_switch (int addr)
+{
+    return mmu_physaddr (addr) < 010;
+}
+
 void mmu_flush (int idx)
 {
     int waddr = BAZ[idx];
 
     if (! BAZ[idx]) {
-        /* Был пуст после сброса или выталкивания */
+        /* Пуст после сброса или mmu_sync() */
         return;
     }
     /* Вычисляем физический адрес выталкиваемого БРЗ */
-    waddr = (waddr > 0100000) ? (waddr - 0100000) :
-        (waddr & 01777) | (TLB[waddr >> 10] << 10);
-    memory[waddr] = BRZ[idx];
-    BAZ[idx] = 0;
+    waddr = mmu_physaddr (waddr);
+    if (waddr >= 010)
+        memory[waddr] = BRZ[idx];
+    /*
+     * Переписанный БРЗ сохраняет адрес: считывание по нему еще
+     * совпадает (ТО-2, 2.12, г), а запись занимает его как новый.
+     */
     if (sim_log && mmu_dev.dctrl) {
         fprintf (sim_log, "--- (%05o) write ", waddr);
         fprint_sym (sim_log, 0, &BRZ[idx], 0, 0);
         fprintf (sim_log, " from write cache[%d]\n", idx);
     }
+}
+
+/*
+ * Память меняется в обход процессора (загрузка, deposit): переписываем
+ * БРЗ в МОЗУ, чтобы старые записи не легли поверх нового содержимого,
+ * и очищаем БРС, чтобы не исполнять выбранные заранее старые слова.
+ */
+void mmu_sync (void)
+{
+    int i;
+
+    for (i = 0; i < 8; ++i) {
+        mmu_flush (i);
+        BAZ[i] = 0;
+    }
+    for (i = 0; i < 4; ++i)
+        BAS[i] = 0;
 }
 
 void mmu_update_oldest ()
@@ -350,48 +390,6 @@ int mmu_match (int addr, int fail)
         }
     }
     return fail;
-}
-
-/*
- * Разнообразные алгоритмы выталкивания БРЗ путем записи
- * по адресам пультовых регистров. Тест УУ проходит дальше всего
- * с mmu_flush_by_age().
- */
-void mmu_flush_by_age()
-{
-    switch (FLUSH) {
-    case 0:
-        break;
-    case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
-        set_wins (OLDEST);
-        mmu_update_oldest ();
-        mmu_flush (OLDEST);
-        if (FLUSH == 7) {
-            TABST = 0;
-            OLDEST = 0;
-        }
-        break;
-    }
-    ++FLUSH;
-}
-
-void mmu_flush_by_number()
-{
-    switch (FLUSH) {
-    case 0:
-        break;
-    case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
-        mmu_flush (FLUSH-1);
-        set_wins (FLUSH-1);
-        if (FLUSH-1 == OLDEST)
-            mmu_update_oldest ();
-        if (FLUSH == 7) {
-            TABST = 0;
-            OLDEST = 0;
-        }
-        break;
-    }
-    ++FLUSH;
 }
 
 /*
@@ -439,14 +437,12 @@ void mmu_store (int addr, t_value val)
         return;
     }
 
-    /* Запись в тумблерные регистры - выталкивание БРЗ */
-    if (addr > 0100000 && addr < 0100010) {
-        mmu_flush_by_age();
-        return;
-    } else
-        FLUSH = 0;
-
-    matching = mmu_match(addr, OLDEST);
+    /*
+     * ТО-2, 2.12: новый адрес записи занимает место самого старшего
+     * (уже переписанного в МОЗУ) БРЗ и ставится в конец очереди;
+     * после этого в МОЗУ переписывается новый самый старший.
+     */
+    matching = mmu_is_switch (addr) ? OLDEST : mmu_match (addr, OLDEST);
 
     BRZ[matching] = SET_PARITY (val, RUU ^ PARITY_INSN);
     BAZ[matching] = addr;
@@ -528,7 +524,8 @@ t_value mmu_load (int addr)
         return val;
     }
 
-    matching = mmu_match(addr, -1);
+    /* Тумблерные регистры читаются всегда с пульта */
+    matching = mmu_is_switch (addr) ? -1 : mmu_match (addr, -1);
 
     if (matching == -1) {
         val = mmu_memaccess (addr);
@@ -620,12 +617,11 @@ t_value mmu_prefetch (int addr, int actual)
             }
         }
 
+        /* Слово, выбранное заранее, - самое новое в очереди БРС (LRU) */
         for (i = 0; i < 4; ++i) {
             if (brs_loses_to_all (i)) {
                 BAS[i] = addr;
-                if (actual) {
-                    brs_set_wins (i);
-                }
+                brs_set_wins (i);
                 break;
             }
         }

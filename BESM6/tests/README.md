@@ -40,6 +40,8 @@ stops at the first failure.
 | `aout.ini`    | `aout/hello`        | The binary a.out loader loads a linked executable that prints `Hello!` to the operator console and starts it at its `a_entry` (010). |
 | `kadopam.ini` | `kadopam.b6`        | КАДОПАМ (032/0132): КРК channel selection, channel status, Э-60 memory read/write. |
 | `esml.ini`    | `esml.b6`           | ЕС-5017 on MG4 (`set mg4 es`): writes an ES zone, a tape mark and a BESM-6 zone to a scratch tape, rewinds and reads them back, checking `04115`/`04117`/`04012`. |
+| `uu.ini`      | `pprog08.b6`, `drum20.bin` | Control-unit test (switch register 5 = 4) from the BESM-6 test programs runs 3M instructions without a stop, with `set mmu cache`: БРС fetch-ahead and the БРЗ queue as in ТО-2 (УУ, кн. 1, 2.3, 2.12). |
+| `au_uu.ini`   | `pprog08.b6`, `drum20.bin` | The same program as the arithmetic/control-unit test (switch register 5 = 2). |
 
 ## Fixture formats
 

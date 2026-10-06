@@ -358,6 +358,7 @@ t_stat cpu_deposit (t_value val, t_addr addr, UNIT *uptr, int32 sw)
 {
     if (addr >= MEMSIZE)
         return SCPE_NXM;
+    mmu_sync ();
     if (addr < 010) {
         /* Deposited values for the switch register address range
          * always go to switch registers.
@@ -1058,9 +1059,16 @@ void cpu_one_inst ()
     }
     nextpc = ADDR(PC + 1);
     if (RUU & RUU_RIGHT_INSTR) {
+        /*
+         * ТО-2, 2.3: новая выборка слова задается после выдачи на РК
+         * каждой правой команды, т.е. до ее выполнения и без учета
+         * передач управления: БРС держит два слова вперед.
+         */
+        mmu_prefetch(ADDR(PC + 2) | (IS_SUPERVISOR(RUU) ? BBIT(16) : 0), 0);
         PC += 1;                        /* increment PC */
         RUU &= ~RUU_RIGHT_INSTR;
     } else {
+        /* После передачи управления выбираются два слова */
         mmu_prefetch(nextpc | (IS_SUPERVISOR(RUU) ? BBIT(16) : 0), 0);
         RUU |= RUU_RIGHT_INSTR;
     }

@@ -315,6 +315,7 @@ extern void mmu_setrp (int idx, t_value word);
 extern void mmu_setup (void);
 extern void mmu_setprotection (int idx, t_value word);
 extern void mmu_print_brz (void);
+extern void mmu_sync (void);
 
 /*
  * Utility functions
