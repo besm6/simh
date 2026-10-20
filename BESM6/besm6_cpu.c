@@ -715,11 +715,7 @@ static uint32 readmap[32768], writemap[32768];
     case 0153:
         /* гашение аппаратуры сопряжения с терминалами */
         mux_clear ();           /* ACC is ignored */
-        memory[077023] = SET_PARITY(1LL<<47, PARITY_NUMBER);
-        memory[076774] = SET_PARITY(00101010101010101LL, PARITY_NUMBER);
-        /* With КАДОПАМ there is no mux, and ПРП 6 belongs to КРК channel 2. */
-        if (dks_dev.flags & DEV_DIS)
-            MPRP |= 040;
+        /* ШКАС/АСОТ and МПРП E7|E6: OS (ГЕНС1) owns them; do not poke. */
         break;
     case 0154: case 0155:
         /*
