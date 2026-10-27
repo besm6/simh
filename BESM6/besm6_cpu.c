@@ -701,8 +701,10 @@ static uint32 readmap[32768], writemap[32768];
         mg_format ((uint32) ACC);
         break;
     case 0142:
-        /* TODO: имитация сигналов прерывания ПРП */
-        longjmp (cpu_halt, STOP_UNIMPLEMENTED);
+        /* Software set of PRP bits (ТЕРМАС УСТРПН: E10/E12, etc.). */
+        PRP |= (uint32) ACC & 077777777;
+        if (sim_deb && tty_dev.dctrl)
+            besm6_debug (">>> PRP |= %o (увв 142)", (unsigned) (ACC & 077777777));
         break;
     case 0143:
         /* sending a syllable to the muxed serial interface */
