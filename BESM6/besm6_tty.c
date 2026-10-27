@@ -166,6 +166,50 @@ uint32 CONS_CAN_PRINT[2] = { 01000, 00400 };
 uint32 CONS_HAS_INPUT[2] = { 04000, 02000 };
 
 uint32 CONS_READY[2] = { 0200, 040 };
+
+/*
+ * ТМГУ: Consul 0 is the МАМС concentrator channel for ТЕРМАС
+ * (увв '174'/'4174', READY2 E8 out / E7 in, ПРП 10/12). Key exchange
+ * is 377 252 125 both ways (ТЕРМАС КЛПВВ/КЛПВЫВ). `set tty tmgu`.
+ */
+#define TMGU_IN_RDY   0100              /* E7 — готовность ввода */
+#define TMGU_OUT_RDY  0200              /* E8 — готовность вывода (= CONS_READY[0]) */
+static int tmgu_on;
+static int tmgu_key_out;                /* matched bytes of outgoing key (0..3) */
+static int tmgu_key_in;                 /* next key index to feed BESM (0..3) */
+static const unsigned char tmgu_key[3] = { 0377, 0252, 0125 };
+
+static void tmgu_offer_input (void)
+{
+    if (!tmgu_on || tmgu_key_in >= 3 || cons_input_pending[0])
+        return;
+    CONSUL_IN[0] = tmgu_key[tmgu_key_in];
+    cons_input_pending[0] = 1;
+    READY2 |= TMGU_IN_RDY;
+    PRP |= CONS_HAS_INPUT[0];
+    if (tty_dev.dctrl)
+        besm6_debug ("<<< TMGU: %03o", tmgu_key[tmgu_key_in]);
+}
+
+static t_stat tty_set_tmgu (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    tmgu_on = val != 0;
+    tmgu_key_out = 0;
+    tmgu_key_in = 0;
+    cons_input_pending[0] = 0;
+    if (tmgu_on) {
+        READY2 |= TMGU_OUT_RDY | TMGU_IN_RDY;
+        tmgu_offer_input ();
+    } else
+        READY2 &= ~TMGU_IN_RDY;
+    return SCPE_OK;
+}
+
+static t_stat tty_show_tmgu (FILE *st, UNIT *u, int32 v, CONST void *desc)
+{
+    fprintf (st, tmgu_on ? "TMGU" : "no TMGU");
+    return SCPE_OK;
+}
 /* Command line buffers for TELNET mode. */
 char vt_cbuf [CBUFSIZE] [LINES_MAX+1];
 char *vt_cptr [LINES_MAX+1];
@@ -299,6 +343,12 @@ t_stat tty_reset (DEVICE *dptr)
         READY2 &= ~CONS_READY[0];
     if (tty_unit[26].flags & TTY_INVERSE_READY)
         READY2 &= ~CONS_READY[1];
+    tmgu_key_out = 0;
+    tmgu_key_in = 0;
+    if (tmgu_on) {
+        READY2 |= TMGU_OUT_RDY | TMGU_IN_RDY;
+        tmgu_offer_input ();
+    }
     vt_idle = 1;
     tty_line[0].conn = 1;                   /* faked, always busy */
     PRP |= CONS_CAN_PRINT[0] | CONS_CAN_PRINT[1];
@@ -602,6 +652,8 @@ t_stat tty_setturbo (UNIT *up, int32 v, CONST char *cp, void *dp) {
  * set tty disconnect=N - forceful termination of a telnet connection
  * set tty rate=N       - I/O rate in Hz
  * set tty turbo={ON,OFF} - TTY interrupts use model time (on) or wallclock (0ff)
+ * set tty tmgu         - Consul 0 is the ТМГУ/МАМС concentrator (ТЕРМАС)
+ * set tty notmgu       - disable ТМГУ concentrator mode
  * show tty             - showing modes and types
  * show tty connections - showing IP-addresses and connection times
  * show tty statistics  - showing TX/RX byte counts
@@ -665,6 +717,11 @@ MTAB tty_mod[] = {
       "DKS", &tty_set_dks },
     { TTY_DKS_MODE, 0, NULL,
       "NODKS", &tty_set_dks },
+    { MTAB_XTD | MTAB_VDV, 1, "TMGU",
+      "TMGU", &tty_set_tmgu, &tty_show_tmgu, NULL,
+      "Consul 0 = ТМГУ/МАМС concentrator for ТЕРМАС" },
+    { MTAB_XTD | MTAB_VDV, 0, NULL,
+      "NOTMGU", &tty_set_tmgu, NULL, NULL, "disable ТМГУ concentrator" },
     { MTAB_XTD | MTAB_VDV | MTAB_VALR, 1, NULL,
       "DISCONNECT", &tmxr_dscln, NULL, (void*) &tty_desc, "terminates telnet connection" },
     { MTAB_XTD | MTAB_VDV | MTAB_VALR, 1, "RATE",
@@ -1735,8 +1792,35 @@ static void consul_putc (int line_num, int c)
 void consul_print (int dev_num, uint32 cmd)
 {
     int line_num = dev_num + TTY_MAX + 1;
+    unsigned b = cmd & 0377;
+
+    if (tmgu_on && dev_num == 0) {
+        if (tty_dev.dctrl)
+            besm6_debug (">>> TMGU: %03o", b);
+        READY2 &= ~TMGU_OUT_RDY;
+        /* КЛПВЫВ: four leading zeros, then 377 252 125. */
+        if (b == 0 && tmgu_key_out == 0)
+            ;
+        else if (tmgu_key_out < 3 && b == tmgu_key[tmgu_key_out]) {
+            tmgu_key_out++;
+            if (tmgu_key_out == 3 && tty_dev.dctrl)
+                besm6_debug (">>> TMGU: output key ok");
+        } else if (b == tmgu_key[0])
+            tmgu_key_out = 1;
+        else
+            tmgu_key_out = 0;
+        cons_is_printing[0] = 1;
+        /* Output-done on the next clock; also keep input key flowing. */
+        READY2 |= TMGU_OUT_RDY;
+        PRP |= CONS_CAN_PRINT[0];
+        cons_is_printing[0] = 0;
+        tmgu_offer_input ();
+        vt_idle = 0;
+        return;
+    }
+
     if (tty_dev.dctrl)
-        besm6_debug(">>> CONSUL%o: %03o", line_num, cmd & 0377);
+        besm6_debug(">>> CONSUL%o: %03o", line_num, b);
 
     if (tty_unit[line_num].flags & TTY_INVERSE_READY)
         READY2 |= CONS_READY[dev_num];
@@ -1768,8 +1852,19 @@ void consul_receive ()
 {
     int c, line_num, dev_num;
 
+    if (tmgu_on) {
+        if (cons_is_printing[0]) {
+            READY2 |= TMGU_OUT_RDY;
+            PRP |= CONS_CAN_PRINT[0];
+            cons_is_printing[0] = 0;
+        }
+        tmgu_offer_input ();
+    }
+
     for (dev_num = 0; dev_num < 2; ++dev_num){
         line_num = dev_num + TTY_MAX + 1;
+        if (tmgu_on && dev_num == 0)
+            continue;                       /* concentrator owns Consul 0 */
         if (cons_is_printing[dev_num]) {
             if (tty_unit[line_num].flags & TTY_INVERSE_READY)
                 READY2 &= ~CONS_READY[dev_num];
@@ -1821,11 +1916,26 @@ void consul_receive ()
 
 uint32 consul_read (int num)
 {
+    uint32 v = CONSUL_IN[num];
+
+    if (tmgu_on && num == 0) {
+        if (tty_dev.dctrl)
+            besm6_debug ("<<< TMGU read: %03o", v);
+        cons_input_pending[0] = 0;
+        READY2 &= ~TMGU_IN_RDY;
+        if (tmgu_key_in < 3)
+            tmgu_key_in++;
+        /* Next key byte immediately: do not wait for the TTY clock. */
+        tmgu_offer_input ();
+        if (tmgu_key_in == 3 && tmgu_key_out == 3 && tty_dev.dctrl)
+            besm6_debug ("### TMGU: key exchange done");
+        return v;
+    }
     if (tty_dev.dctrl)
-        besm6_debug("<<< CONSUL%o: %03o", num+TTY_MAX+1, CONSUL_IN[num]);
+        besm6_debug("<<< CONSUL%o: %03o", num+TTY_MAX+1, v);
     /* Taken: consul_receive() may fetch the next character now. */
     cons_input_pending[num] = 0;
-    return CONSUL_IN[num];
+    return v;
 }
 
 uint32 mux_read ()
