@@ -170,25 +170,72 @@ uint32 CONS_READY[2] = { 0200, 040 };
 /*
  * ТМГУ: Consul 0 is the МАМС concentrator channel for ТЕРМАС
  * (увв '174'/'4174', READY2 E8 out / E7 in, ПРП 10/12). Key exchange
- * is 377 252 125 both ways (ТЕРМАС КЛПВВ/КЛПВЫВ). `set tty tmgu`.
+ * is 377 252 125 both ways (ТЕРМАС КЛПВВ/КЛПВЫВ). After link-up, a
+ * terminal-protocol connect (opcode 041) is queued. `set tty tmgu`.
  */
 #define TMGU_IN_RDY   0100              /* E7 — готовность ввода */
 #define TMGU_OUT_RDY  0200              /* E8 — готовность вывода (= CONS_READY[0]) */
+#define TMGU_QMAX     64
 static int tmgu_on;
 static int tmgu_key_out;                /* matched bytes of outgoing key (0..3) */
 static int tmgu_key_in;                 /* next key index to feed BESM (0..3) */
+static int tmgu_linked;                 /* both keys done */
+static int tmgu_connect_sent;
+static unsigned char tmgu_inq[TMGU_QMAX];
+static int tmgu_in_len, tmgu_in_pos;
 static const unsigned char tmgu_key[3] = { 0377, 0252, 0125 };
+
+static void tmgu_offer_input (void);
+static void tmgu_queue (const unsigned char *p, int n)
+{
+    while (n-- > 0 && tmgu_in_len < TMGU_QMAX)
+        tmgu_inq[tmgu_in_len++] = *p++;
+    tmgu_offer_input ();
+}
+
+static void tmgu_send_connect (void)
+{
+    /* Level-1 frame: addr|E8, length, info.
+     * Info word БУФВВ+2: byte0=0, byte1=041 (connect), byte2=phys#1. */
+    static const unsigned char msg[] = {
+        0201, 6, 0, 041, 1, 0, 0, 0
+    };
+    if (tmgu_connect_sent)
+        return;
+    tmgu_connect_sent = 1;
+    if (tty_dev.dctrl)
+        besm6_debug (">>> TMGU: queue connect 041 phys=1");
+    tmgu_queue (msg, (int) sizeof msg);
+}
+
+static void tmgu_check_linked (void)
+{
+    if (tmgu_linked || tmgu_key_in < 3 || tmgu_key_out < 3)
+        return;
+    tmgu_linked = 1;
+    if (tty_dev.dctrl)
+        besm6_debug ("### TMGU: key exchange done");
+    tmgu_send_connect ();
+}
 
 static void tmgu_offer_input (void)
 {
-    if (!tmgu_on || tmgu_key_in >= 3 || cons_input_pending[0])
+    unsigned char b;
+
+    if (!tmgu_on || cons_input_pending[0])
         return;
-    CONSUL_IN[0] = tmgu_key[tmgu_key_in];
+    if (tmgu_key_in < 3)
+        b = tmgu_key[tmgu_key_in];
+    else if (tmgu_in_pos < tmgu_in_len)
+        b = tmgu_inq[tmgu_in_pos];
+    else
+        return;
+    CONSUL_IN[0] = b;
     cons_input_pending[0] = 1;
     READY2 |= TMGU_IN_RDY;
     PRP |= CONS_HAS_INPUT[0];
     if (tty_dev.dctrl)
-        besm6_debug ("<<< TMGU: %03o", tmgu_key[tmgu_key_in]);
+        besm6_debug ("<<< TMGU: %03o", b);
 }
 
 static t_stat tty_set_tmgu (UNIT *u, int32 val, CONST char *cptr, void *desc)
@@ -196,6 +243,9 @@ static t_stat tty_set_tmgu (UNIT *u, int32 val, CONST char *cptr, void *desc)
     tmgu_on = val != 0;
     tmgu_key_out = 0;
     tmgu_key_in = 0;
+    tmgu_linked = 0;
+    tmgu_connect_sent = 0;
+    tmgu_in_len = tmgu_in_pos = 0;
     cons_input_pending[0] = 0;
     if (tmgu_on) {
         READY2 |= TMGU_OUT_RDY | TMGU_IN_RDY;
@@ -345,6 +395,9 @@ t_stat tty_reset (DEVICE *dptr)
         READY2 &= ~CONS_READY[1];
     tmgu_key_out = 0;
     tmgu_key_in = 0;
+    tmgu_linked = 0;
+    tmgu_connect_sent = 0;
+    tmgu_in_len = tmgu_in_pos = 0;
     if (tmgu_on) {
         READY2 |= TMGU_OUT_RDY | TMGU_IN_RDY;
         tmgu_offer_input ();
@@ -1798,22 +1851,22 @@ void consul_print (int dev_num, uint32 cmd)
         if (tty_dev.dctrl)
             besm6_debug (">>> TMGU: %03o", b);
         READY2 &= ~TMGU_OUT_RDY;
-        /* КЛПВЫВ: four leading zeros, then 377 252 125. */
-        if (b == 0 && tmgu_key_out == 0)
-            ;
-        else if (tmgu_key_out < 3 && b == tmgu_key[tmgu_key_out]) {
-            tmgu_key_out++;
-            if (tmgu_key_out == 3 && tty_dev.dctrl)
-                besm6_debug (">>> TMGU: output key ok");
-        } else if (b == tmgu_key[0])
-            tmgu_key_out = 1;
-        else
-            tmgu_key_out = 0;
-        cons_is_printing[0] = 1;
-        /* Output-done on the next clock; also keep input key flowing. */
+        if (!tmgu_linked) {
+            /* КЛПВЫВ: four leading zeros, then 377 252 125. */
+            if (b == 0 && tmgu_key_out == 0)
+                ;
+            else if (tmgu_key_out < 3 && b == tmgu_key[tmgu_key_out]) {
+                tmgu_key_out++;
+                if (tmgu_key_out == 3 && tty_dev.dctrl)
+                    besm6_debug (">>> TMGU: output key ok");
+                tmgu_check_linked ();
+            } else if (b == tmgu_key[0])
+                tmgu_key_out = 1;
+            else
+                tmgu_key_out = 0;
+        }
         READY2 |= TMGU_OUT_RDY;
         PRP |= CONS_CAN_PRINT[0];
-        cons_is_printing[0] = 0;
         tmgu_offer_input ();
         vt_idle = 0;
         return;
@@ -1923,12 +1976,12 @@ uint32 consul_read (int num)
             besm6_debug ("<<< TMGU read: %03o", v);
         cons_input_pending[0] = 0;
         READY2 &= ~TMGU_IN_RDY;
-        if (tmgu_key_in < 3)
+        if (tmgu_key_in < 3) {
             tmgu_key_in++;
-        /* Next key byte immediately: do not wait for the TTY clock. */
+            tmgu_check_linked ();
+        } else if (tmgu_in_pos < tmgu_in_len)
+            tmgu_in_pos++;
         tmgu_offer_input ();
-        if (tmgu_key_in == 3 && tmgu_key_out == 3 && tty_dev.dctrl)
-            besm6_debug ("### TMGU: key exchange done");
         return v;
     }
     if (tty_dev.dctrl)
