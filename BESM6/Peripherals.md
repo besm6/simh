@@ -858,10 +858,40 @@ not-ready, feed and may-start.
 
 ## Terminals, Consul typewriters and the serial multiplexor
 
-**SIMH device:** `TTY` (24 telegraph lines `tty1`–`tty24`, plus 2 parallel Consul lines `tty25`,
-`tty26`). **Source:** [besm6_tty.c](besm6_tty.c).
+**SIMH device:** `TTY`, 64 physical lines. **Source:** [besm6_tty.c](besm6_tty.c).
 
-Three distinct interfaces share this device.
+| SIMH unit | OS number | What it is |
+|-----------|-----------|------------|
+| `tty1`–`tty24` | 01–030 | bit-serial "direct" lines, or lines of the multiplexer (`set ttyN mux`) |
+| `tty25`, `tty26` | 031, 032 | the two parallel Consul interfaces |
+| `tty27`–`tty64` | 033–0100 | lines of the multiplexer only |
+
+SCP parses unit numbers as decimal; the OS numbers lines in octal. A direct line or a Consul has
+the same physical and logical number. On a multiplexer line the line number is the physical
+(port) number, and the OS assigns the logical number when the terminal connects (e.g. the
+ТМГУ 042 reply).
+
+A session has at most one terminal multiplexer, chosen once:
+
+```
+set tty dks          ; the ДКС (Электроника-60, КАДОПАМ); enables device DKS
+set tty tmgu         ; the ТМГУ/МАМС concentrator on Consul 0 (tmgutrace: also log its bytes)
+set tty mux          ; the АС ("аппаратура сопряжения", instructions 0143/4143/0153)
+set tty5 mux         ; line 5 is on the multiplexer (set tty5 direct: back to bit-serial)
+```
+
+A different second choice is an error; `set dks disabled` leaves the session without one again.
+Consul 0 (`tty25`) is taken by ТМГУ (its channel) and by ДКС (ПРП 12 becomes the Э-60
+"attention" interrupt): any use of it is then an error, as is any use of `tty27`–`tty64`
+without a multiplexer, or above `tty41` under ДКС (no room for their areas in the Э-60
+memory). `show tty` prints the multiplexer and the use of every line.
+
+A telnet connection on the common port (`attach tty <port>`) takes the first free line, or
+follows `set tty lineorder=...`, but never a Consul or an unusable line; a Consul accepts
+telnet only on a port of its own (`attach tty Line=25,<port>`). `attach ttyN console` puts the
+SIMH console on any usable line.
+
+Four interfaces share this device.
 
 ### Telegraph channels (`033 0140`, `033 4100`)
 
@@ -922,9 +952,9 @@ Interrupts: `PRP_CONS1_INPUT` / `PRP_CONS2_INPUT` (bits 12/11) — a character w
 `PRP_CONS1_DONE` / `PRP_CONS2_DONE` (bits 10/9) — printing finished. Ready bits `CONS_READY` in
 `READY2` (bits 8 and 6), optionally inverted per line by the `TTY_INVERSE_READY` flag.
 
-### Serial multiplexor (`033 0143`, `033 4143`, `033 0153`)
+### Serial multiplexor АС (`033 0143`, `033 4143`, `033 0153`)
 
-A later addition for terminal concentrators. `mux_send()` at [besm6_tty.c:1517](besm6_tty.c#L1517)
+The "аппаратура сопряжения", selected with `set tty mux`. `mux_send()` at [besm6_tty.c:1517](besm6_tty.c#L1517)
 takes a 16-bit **syllable**:
 
 | Bits | Meaning |
@@ -957,15 +987,15 @@ sources) it writes the low 16 bits of the accumulator to cell `n`. The device is
 | others | memory of the selected channel | memory of the selected channel |
 
 One Э-60 is emulated: the OS's Э-60 index 2 on КРК channel 2, interrupting on ПРП 6.
-Lines set with `set ttyN dks` are its terminals; the Э-60 does local echo and line
+Selected with `set tty dks` (or `set dks enabled`); the multiplexer lines are its terminals; the Э-60 does local echo and line
 editing, and passes a finished line to the OS. With the device enabled, `033 0153` no
 longer touches ПРП/МПРП bit 6. The protocol (rings, system requests, terminal areas)
 is described in Russian in [ДКС.md](ДКС.md). Debug flags: `KADOPAM` (every access),
 `RING` (ring traffic and terminal-area writes), `IRQ`.
 
 ```
-set dks enabled
-set tty5 dks
+set tty dks
+set tty5 mux
 ```
 
 ---

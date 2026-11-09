@@ -30,8 +30,18 @@
 #include "besm6_defs.h"
 #include "sim_tmxr.h"
 
+/*
+ * Physical lines (SIMH unit numbers, decimal):
+ *   1-24  (01-030)  bit-serial "direct" lines, or lines of the terminal multiplexer;
+ *   25-26 (031-032) the two parallel "Consul" interfaces, never assigned to telnet;
+ *   27-64 (033-0100) lines of the terminal multiplexer only.
+ * At most one multiplexer is configured per session: ДКС, ТМГУ or АС
+ * ("аппаратура сопряжения"), see mux_kind.
+ */
 #define TTY_MAX         24              /* Serial TTY lines */
-#define LINES_MAX       TTY_MAX + 2     /* Including parallel "Consul" typewriters */
+#define CONSUL_FIRST    (TTY_MAX + 1)   /* Consul 0 = 031, Consul 1 = 032 */
+#define LINES_MAX       64              /* Including Consuls and multiplexer lines */
+#define DKS_MAX_LINE    41              /* the Э-60 memory holds areas for 41 lines */
 /*
  * According to a table in http://ru.wikipedia.org/wiki/МТК-2
  */
@@ -171,21 +181,66 @@ uint32 CONS_READY[2] = { 0200, 040 };
  * ТМГУ: Consul 0 is the МАМС concentrator channel for ТЕРМАС
  * (увв '174'/'4174', READY2 E8 out / E7 in, ПРП 10/12). Key exchange
  * is 377 252 125 both ways (ТЕРМАС КЛПВВ/КЛПВЫВ). After link-up, a
- * terminal-protocol connect (opcode 041) is queued. `set tty tmgu`.
+ * terminal-protocol connect (opcode 041) is queued for each terminal.
+ * `set tty tmgu` chooses it as the multiplexer; `tmgutrace` also logs
+ * concentrator bytes without `set tty debug`.
+ *
+ * Input flow control: after the BESM reads a byte (увв '4174') the next one
+ * is offered only after ВДЗП := 1 (увв '176'), as ТЕРМАС ВЫХВВ/ТЕРМИН/СЛУЖ
+ * issue it.  The last byte of a message is acknowledged only after ТЕРМАС
+ * has taken the message out of БУФВВ.
+ *
+ * Output frames are parsed: addr byte with E8 -> count n and n info bytes,
+ * without E8 -> 2 info bytes (phys, symbol).  The 042 reply gives the
+ * logical number; a short frame with symbol 000 ends the output (ТЕРМАС
+ * СТЕР), and the concentrator answers 047 (ОКНВЫД, end of exchange).
+ *
+ * Every multiplexer line (see line_kind()) is a terminal behind the
+ * concentrator, its physical number being the SIMH line number.  After the key
+ * exchange a connect 041 is queued for every line 1-24 put on the multiplexer
+ * ("set ttyN mux": a wired terminal, on from the start) and for every other
+ * multiplexer line once it is connected (telnet or console); one at a time, the
+ * next one waits for the 042 reply with the logical number.  No disconnect
+ * message is known: a line keeps its logical number when the client goes away.
+ * A short output frame is address, physical number (ТНФ), symbol; the symbols
+ * go to the line of that number (number 0: a terminal not connected yet, the
+ * output is dropped); typed characters go to the BESM as short frames
+ * 001 <logical number> <KOI-7 with even parity>, echoed locally like on АС lines.
  */
 #define TMGU_IN_RDY   0100              /* E7 — готовность ввода */
 #define TMGU_OUT_RDY  0200              /* E8 — готовность вывода (= CONS_READY[0]) */
 #define TMGU_QMAX     64
-static int tmgu_on;
+
+/* The terminal multiplexer of this session, chosen at most once. */
+#define MUX_NONE        0
+#define MUX_DKS         1
+#define MUX_TMGU        2
+#define MUX_AS          3
+static int mux_kind;
+static const char *const mux_name[] = { "none", "ДКС", "ТМГУ", "АС" };
+#define tmgu_on         (mux_kind == MUX_TMGU)
+
+static int line_is_mux (int num);
+
 static int tmgu_key_out;                /* matched bytes of outgoing key (0..3) */
 static int tmgu_key_in;                 /* next key index to feed BESM (0..3) */
 static int tmgu_linked;                 /* both keys done */
-static int tmgu_connect_sent;
+static int tmgu_trace;
+#define TMGU_TRACE (tty_dev.dctrl || tmgu_trace)
 static unsigned char tmgu_inq[TMGU_QMAX];
 static int tmgu_in_len, tmgu_in_pos;
 static const unsigned char tmgu_key[3] = { 0377, 0252, 0125 };
+static int tmgu_acked = 1;              /* ВДЗП: можно предлагать следующий байт */
+static unsigned char tmgu_ofr[16];      /* собираемый выходной кадр */
+static int tmgu_ofr_len, tmgu_ofr_need;
+static int tmgu_log [LINES_MAX+1];      /* лог. номер линии из ответа 042, 0 - нет */
+static char tmgu_up [LINES_MAX+1];      /* линия была подключена при прошлом опросе */
+static char tmgu_want [LINES_MAX+1];    /* нужно послать 041 */
+static int tmgu_wait;                   /* физ. номер, ждущий 042, 0 - никто */
 
 static void tmgu_offer_input (void);
+static void tmgu_poll_lines (void);
+
 static void tmgu_queue (const unsigned char *p, int n)
 {
     while (n-- > 0 && tmgu_in_len < TMGU_QMAX)
@@ -193,36 +248,63 @@ static void tmgu_queue (const unsigned char *p, int n)
     tmgu_offer_input ();
 }
 
-static void tmgu_send_connect (void)
+/* Forgets the link and every terminal; lines connected now ask again after it. */
+static void tmgu_reset_link (void)
+{
+    int n;
+
+    tmgu_key_out = 0;
+    tmgu_key_in = 0;
+    tmgu_linked = 0;
+    tmgu_in_len = tmgu_in_pos = 0;
+    tmgu_acked = 1;
+    tmgu_ofr_len = tmgu_ofr_need = 0;
+    tmgu_wait = 0;
+    for (n = 0; n <= LINES_MAX; ++n) {
+        tmgu_log[n] = 0;
+        tmgu_up[n] = 0;
+        tmgu_want[n] = 0;
+    }
+}
+
+static void tmgu_send_connect (int phys)
 {
     /* Level-1 frame: addr|E8, length, info.
-     * Info word БУФВВ+2: byte0=0, byte1=041 (connect), byte2=phys#1. */
-    static const unsigned char msg[] = {
+     * Info word БУФВВ+2: byte0=0, byte1=041 (connect), byte2=phys. */
+    unsigned char msg[] = {
         0201, 6, 0, 041, 1, 0, 0, 0
     };
-    if (tmgu_connect_sent)
-        return;
-    tmgu_connect_sent = 1;
-    if (tty_dev.dctrl)
-        besm6_debug (">>> TMGU: queue connect 041 phys=1");
+    msg[4] = (unsigned char) phys;
+    tmgu_wait = phys;
+    tmgu_want[phys] = 0;
+    if (TMGU_TRACE)
+        besm6_debug (">>> TMGU: queue connect 041 phys=%o", phys);
     tmgu_queue (msg, (int) sizeof msg);
 }
 
 static void tmgu_check_linked (void)
 {
+    int n;
+
     if (tmgu_linked || tmgu_key_in < 3 || tmgu_key_out < 3)
         return;
     tmgu_linked = 1;
-    if (tty_dev.dctrl)
+    if (TMGU_TRACE)
         besm6_debug ("### TMGU: key exchange done");
-    tmgu_send_connect ();
+    /* Lines put on the concentrator explicitly are wired terminals: they are
+     * "on" from the link-up, connected or not (the OS writes the start-up
+     * text to an operator terminal before anyone connects to it). */
+    for (n = 1; n <= TTY_MAX; ++n)
+        if (line_is_mux (n))
+            tmgu_want[n] = 1;
+    tmgu_poll_lines ();
 }
 
 static void tmgu_offer_input (void)
 {
     unsigned char b;
 
-    if (!tmgu_on || cons_input_pending[0])
+    if (!tmgu_on || cons_input_pending[0] || !tmgu_acked)
         return;
     if (tmgu_key_in < 3)
         b = tmgu_key[tmgu_key_in];
@@ -234,32 +316,64 @@ static void tmgu_offer_input (void)
     cons_input_pending[0] = 1;
     READY2 |= TMGU_IN_RDY;
     PRP |= CONS_HAS_INPUT[0];
-    if (tty_dev.dctrl)
+    if (TMGU_TRACE)
         besm6_debug ("<<< TMGU: %03o", b);
 }
 
-static t_stat tty_set_tmgu (UNIT *u, int32 val, CONST char *cptr, void *desc)
+/* увв '176': ВДЗП := 1, ТЕРМАС принял байт ввода. */
+void tmgu_input_ack (void)
 {
-    tmgu_on = val != 0;
-    tmgu_key_out = 0;
-    tmgu_key_in = 0;
-    tmgu_linked = 0;
-    tmgu_connect_sent = 0;
-    tmgu_in_len = tmgu_in_pos = 0;
-    cons_input_pending[0] = 0;
-    if (tmgu_on) {
-        READY2 |= TMGU_OUT_RDY | TMGU_IN_RDY;
-        tmgu_offer_input ();
-    } else
-        READY2 &= ~TMGU_IN_RDY;
-    return SCPE_OK;
+    if (!tmgu_on)
+        return;
+    if (TMGU_TRACE && !tmgu_acked)
+        besm6_debug ("<<< TMGU: ВДЗП");
+    tmgu_acked = 1;
+    tmgu_offer_input ();
 }
 
-static t_stat tty_show_tmgu (FILE *st, UNIT *u, int32 v, CONST void *desc)
+/* Полный выходной кадр ТЕРМАС: p[0] - адрес, далее информация. */
+static void tmgu_out_frame (const unsigned char *p, int n)
 {
-    fprintf (st, tmgu_on ? "TMGU" : "no TMGU");
-    return SCPE_OK;
+    if ((p[0] & 0200) && n >= 6 && p[3] == 042) {
+        /* ответ на подключение: 001 042 физ лог ... */
+        if (p[4] >= 1 && p[4] <= LINES_MAX)
+            tmgu_log[p[4]] = p[5];
+        if (tmgu_wait == p[4])
+            tmgu_wait = 0;
+        if (TMGU_TRACE)
+            besm6_debug (">>> TMGU: 042 phys=%o log=%o", p[4], p[5]);
+    } else if (!(p[0] & 0200) && n == 3 && p[2] != 0) {
+        unsigned c = p[2] & 0177;
+        if (p[1] >= 1 && p[1] <= LINES_MAX && line_is_mux (p[1]) && c != 0177)
+            vt_send (p[1], c);
+    } else if (!(p[0] & 0200) && n == 3 && p[2] == 0 &&
+               p[1] >= 1 && p[1] <= LINES_MAX && tmgu_log[p[1]]) {
+        /* конец выдачи -> 047 ОКОНЧАНИЕ ОБМЕНА, кредит 0 (бесконечный) */
+        unsigned char msg[] = { 0201, 6, 0, 047, 0, 0, 0, 0 };
+        msg[4] = (unsigned char) tmgu_log[p[1]];
+        if (TMGU_TRACE)
+            besm6_debug (">>> TMGU: end of output phys=%o, queue 047 log=%o",
+                         p[1], msg[4]);
+        tmgu_queue (msg, (int) sizeof msg);
+    }
 }
+
+static void tmgu_out_byte (unsigned b)
+{
+    if (tmgu_ofr_len == 0)
+        tmgu_ofr_need = (b & 0200) ? 2 : 3;     /* адрес [+ счетчик] */
+    else if (tmgu_ofr_len == 1 && (tmgu_ofr[0] & 0200))
+        tmgu_ofr_need = 2 + (int) b;
+    if (tmgu_ofr_len < (int) sizeof tmgu_ofr)
+        tmgu_ofr[tmgu_ofr_len] = (unsigned char) b;
+    if (++tmgu_ofr_len >= tmgu_ofr_need) {
+        if (tmgu_ofr_len > (int) sizeof tmgu_ofr)
+            tmgu_ofr_len = (int) sizeof tmgu_ofr;
+        tmgu_out_frame (tmgu_ofr, tmgu_ofr_len);
+        tmgu_ofr_len = 0;
+    }
+}
+
 /* Command line buffers for TELNET mode. */
 char vt_cbuf [CBUFSIZE] [LINES_MAX+1];
 char *vt_cptr [LINES_MAX+1];
@@ -274,8 +388,12 @@ extern const char *get_sim_sw (const char *cptr);
 
 int attached_console;
 
+/* АС (mux_send): the guest has turned reception off on this line. */
+static char mux_rcv_off [LINES_MAX+1];
+
 UNIT tty_unit [] = {
     { UDATA (vt_clk, UNIT_DIS|UNIT_IDLE, 0) },       /* fake unit, clock */
+    /* 1-24: direct or multiplexer lines */
     { UDATA (mux_event, UNIT_SEQ, 0) },
     { UDATA (mux_event, UNIT_SEQ, 0) },
     { UDATA (mux_event, UNIT_SEQ, 0) },
@@ -300,9 +418,48 @@ UNIT tty_unit [] = {
     { UDATA (mux_event, UNIT_SEQ, 0) },
     { UDATA (mux_event, UNIT_SEQ, 0) },
     { UDATA (mux_event, UNIT_SEQ, 0) },
-    /* The next two units are parallel interface */
+    /* 25-26: the parallel (Consul) interface */
     { UDATA (NULL, UNIT_SEQ, 0) },
     { UDATA (NULL, UNIT_SEQ, 0) },
+    /* 27-64: multiplexer lines */
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
+    { UDATA (mux_event, UNIT_SEQ, 0) },
     { 0 }
 };
 
@@ -339,9 +496,64 @@ TMXR tty_desc = { LINES_MAX+1, 0, 0, tty_line, tty_lnorder };        /* mux desc
 #define TTY_BSPACE_MASK         (1<<(UNIT_V_UF+5))
 #define TTY_CMDLINE_MASK        (1<<(UNIT_V_UF+6))
 #define TTY_INVERSE_READY       (1<<(UNIT_V_UF+7))
-#define TTY_MUX_MODE            (1<<(UNIT_V_UF+8))
-#define TTY_DKS_MODE            (1<<(UNIT_V_UF+9))
-#define TTY_NOT_SERIAL          (TTY_MUX_MODE | TTY_DKS_MODE)
+#define TTY_MUX_MODE            (1<<(UNIT_V_UF+8))  /* line 1-24 is on the multiplexer */
+
+/*
+ * What a physical line is in the current configuration.
+ */
+#define LINE_DIRECT     0       /* bit-serial line 1-24 */
+#define LINE_CONSUL     1       /* Consul interface 25-26 */
+#define LINE_MUX        2       /* a line of the configured multiplexer */
+#define LINE_UNUSED     3       /* no hardware behind it in this configuration */
+
+static int line_kind (int num)
+{
+    if (num < 1 || num > LINES_MAX)
+        return LINE_UNUSED;
+    if (num == CONSUL_FIRST) {
+        /* ТМГУ uses Consul 0 as the concentrator channel; under ДКС its input
+         * interrupt (ПРП 12) is the "attention" signal of the Э-60. */
+        return (mux_kind == MUX_TMGU || mux_kind == MUX_DKS) ?
+            LINE_UNUSED : LINE_CONSUL;
+    }
+    if (num == CONSUL_FIRST + 1)
+        return LINE_CONSUL;
+    if (mux_kind == MUX_DKS && num > DKS_MAX_LINE)
+        return LINE_UNUSED;
+    if (num <= TTY_MAX)
+        return (mux_kind != MUX_NONE && (tty_unit[num].flags & TTY_MUX_MODE)) ?
+            LINE_MUX : LINE_DIRECT;
+    return mux_kind != MUX_NONE ? LINE_MUX : LINE_UNUSED;
+}
+
+/* A bit-serial line: driven through the 033 0140 / 033 4100 bit registers. */
+#define TTY_SERIAL(num) (line_kind (num) == LINE_DIRECT)
+
+static int line_is_mux (int num)
+{
+    return line_kind (num) == LINE_MUX;
+}
+
+/* An error for a line that cannot be used in this configuration. */
+static t_stat check_usable (int num)
+{
+    if (num == 0 || line_kind (num) != LINE_UNUSED)
+        return SCPE_OK;
+    if (num == CONSUL_FIRST)
+        return sim_messagef (SCPE_ARG, "tty%d (Консул 0, 031) занят мультиплексором %s\n",
+                             num, mux_name[mux_kind]);
+    if (mux_kind == MUX_NONE)
+        return sim_messagef (SCPE_ARG, "tty%d (%03o): линия мультиплексора; "
+                             "мультиплексор не выбран (set tty dks|tmgu|mux)\n", num, num);
+    return sim_messagef (SCPE_ARG, "tty%d (%03o): нет такой линии у %s\n",
+                         num, num, mux_name[mux_kind]);
+}
+
+/* Validation routine for per-line MTAB entries: no settings on an unusable line. */
+static t_stat tty_check_unit (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    return check_usable ((int) (u - tty_unit));
+}
 
 /*
  * Both raw encodings are byte pipes: no KOI-7 tables, no Videoton control codes,
@@ -367,9 +579,9 @@ static void reset_line(int num)
 {
     /* Reset to a sensible default */
     tty_unit[num].flags &= ~(TTY_CHARSET_MASK|TTY_BSPACE_MASK|TTY_CMDLINE_MASK|TTY_INVERSE_READY);
-    tty_typed[num] = -1;
-    tty_instate[num] = 0;
     if (num <= TTY_MAX) {
+        tty_typed[num] = -1;
+        tty_instate[num] = 0;
         tt_inreg[num] = tt_next[num] = -1;
         tt_outreg[num] = 0;
     }
@@ -393,11 +605,8 @@ t_stat tty_reset (DEVICE *dptr)
         READY2 &= ~CONS_READY[0];
     if (tty_unit[26].flags & TTY_INVERSE_READY)
         READY2 &= ~CONS_READY[1];
-    tmgu_key_out = 0;
-    tmgu_key_in = 0;
-    tmgu_linked = 0;
-    tmgu_connect_sent = 0;
-    tmgu_in_len = tmgu_in_pos = 0;
+    memset(mux_rcv_off, 0, sizeof(mux_rcv_off));
+    tmgu_reset_link ();
     if (tmgu_on) {
         READY2 |= TMGU_OUT_RDY | TMGU_IN_RDY;
         tmgu_offer_input ();
@@ -437,8 +646,25 @@ t_stat vt_clk (UNIT * this)
     mux_receive();
     dks_receive();
 
-    /* Are there any new network connections? */
-    num = tmxr_poll_conn (&tty_desc);
+    /* Are there any new network connections?  One on the common port never
+     * gets a Consul (031, 032) nor a line unusable in this configuration: those
+     * are marked busy for the time of the poll.  A Consul with a port of its own
+     * ("attach tty Line=25,port") still accepts connections there. */
+    {
+        char blocked [LINES_MAX+1];
+        int n;
+        for (num = 1; num <= LINES_MAX; ++num) {
+            int k = line_kind (num);
+            blocked[num] = ((k == LINE_CONSUL && !tty_line[num].master) ||
+                            k == LINE_UNUSED) && !tty_line[num].conn;
+            if (blocked[num])
+                tty_line[num].conn = 1;
+        }
+        num = tmxr_poll_conn (&tty_desc);
+        for (n = 1; n <= LINES_MAX; ++n)
+            if (blocked[n])
+                tty_line[n].conn = 0;
+    }
     if (num > 0 && num <= LINES_MAX) {
         char buf [80];
         TMLN *t = &tty_line [num];
@@ -456,7 +682,7 @@ t_stat vt_clk (UNIT * this)
         t->rcve = 1;
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_VT340_STATE;
-        if (num <= TTY_MAX && !(tty_unit[num].flags & TTY_NOT_SERIAL)) {
+        if (TTY_SERIAL (num)) {
 	    old = vt_mask & (1 << (TTY_MAX - num));
             vt_mask |= 1 << (TTY_MAX - num);
 	}
@@ -494,7 +720,8 @@ t_stat vt_clk (UNIT * this)
 
         /* Entering ^C (ETX) to get a prompt.  Not on a raw8 line: there the byte is
          * data, not a request, and it reaches the guest as a typed character. */
-        if (charset != TTY_RAW8_CHARSET && !(tty_unit[num].flags & TTY_DKS_MODE))
+        if (charset != TTY_RAW8_CHARSET &&
+            !(line_is_mux (num) && (mux_kind == MUX_DKS || mux_kind == MUX_TMGU)))
             t->rxb [t->rxbpi++] = '\3';
 	if (old) {
             sprintf (buf, "Type HYC<enter> (no echo is normal)\r\n");
@@ -539,8 +766,13 @@ t_stat tty_setmode (UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
     int num = u - tty_unit;
     TMLN *t = &tty_line [num];
-    uint32 mask = 1 << (TTY_MAX - num);
+    uint32 mask = num <= TTY_MAX ? 1 << (TTY_MAX - num) : 0;
 
+    if ((val & TTY_STATE_MASK) != TTY_OFFLINE_STATE) {
+        t_stat r = check_usable (num);
+        if (r != SCPE_OK)
+            return r;
+    }
     switch (val & TTY_STATE_MASK) {
     case TTY_OFFLINE_STATE:
         if (t->conn) {
@@ -560,25 +792,23 @@ t_stat tty_setmode (UNIT *u, int32 val, CONST char *cptr, void *desc)
         }
         break;
     case TTY_TELETYPE_STATE:
-        if (num > TT_LINES)
+        if (num > TT_LINES || !TTY_SERIAL (num))
             return SCPE_NXPAR;
         t->conn = 1;
         t->rcve = 0;
-        if (!(tty_unit[num].flags & TTY_NOT_SERIAL)) {
-            tt_mask |= mask;
-            vt_mask &= ~mask;
-        }
+        tt_mask |= mask;
+        vt_mask &= ~mask;
         break;
     case TTY_VT340_STATE:
         t->conn = 1;
         t->rcve = 0;
-        if (num <= TTY_MAX && !(tty_unit[num].flags & TTY_NOT_SERIAL)) {
+        if (TTY_SERIAL (num)) {
             vt_mask |= mask;
             tt_mask &= ~mask;
         }
         break;
     case TTY_CONSUL_STATE:
-        if (num <= TTY_MAX)
+        if (line_kind (num) != LINE_CONSUL)
             return SCPE_NXPAR;
         t->conn = 1;
         t->rcve = 0;
@@ -596,15 +826,20 @@ t_stat tty_attach (UNIT *u, CONST char *cptr)
 {
     int num = u - tty_unit;
     char gbuf[CBUFSIZE];
-    int r, m, n;
+    char conn_save [LINES_MAX+1];
+    int r, n;
 
-    if (num > 24 && tty_unit[num].flags & TTY_INVERSE_READY) {
-        READY2 &= ~CONS_READY[num-25];
-    }
     /* All arguments but the magic words "console" and "none" are passed
      * to tmxr_attach().
      */
     get_glyph (cptr, gbuf, 0);
+    if (strcmp (gbuf, "NONE") == 0 || strcmp (gbuf, "CONSOLE") == 0) {
+        r = check_usable (num);
+        if (r != SCPE_OK)
+            return r;
+    }
+    if (line_kind (num) == LINE_CONSUL && (tty_unit[num].flags & TTY_INVERSE_READY))
+        READY2 &= ~CONS_READY[num-CONSUL_FIRST];
     /* Disallowing future connections to a line */
     if (strcmp (gbuf, "NONE") == 0) {
         /* Marking the TTY as unusable. */
@@ -620,13 +855,12 @@ t_stat tty_attach (UNIT *u, CONST char *cptr)
     if (strcmp (gbuf, "CONSOLE")) {
         /* Saving and restoring all .conn,
          * because tmxr_attach() zeroes them. */
-        for (m=0, n=1; n<=LINES_MAX; ++n)
-            if (tty_line[n].conn)
-                m |= 1 << (LINES_MAX-n);
+        for (n=1; n<=LINES_MAX; ++n)
+            conn_save[n] = tty_line[n].conn != 0;
         /* The unit number is ignored for the port assignment */
         r = tmxr_attach (&tty_desc, &tty_unit[0], cptr);
         for (n=1; n<=LINES_MAX; ++n)
-            if (m >> (LINES_MAX-n) & 1)
+            if (conn_save[n])
                 tty_line[n].conn = 1;
         return r;
     } else {
@@ -637,7 +871,7 @@ t_stat tty_attach (UNIT *u, CONST char *cptr)
         }
         tty_line[num].conn = 1;
         tty_line[num].rcve = 0;
-        if (num <= TTY_MAX && !(u->flags & TTY_NOT_SERIAL))
+        if (TTY_SERIAL (num))
             vt_mask |= 1 << (TTY_MAX - num);
         besm6_debug ("*** console on T%03o", num);
         attached_console = 1;
@@ -695,59 +929,212 @@ t_stat tty_setturbo (UNIT *up, int32 v, CONST char *cp, void *dp) {
  * set ttyN qwerty      - selecting KOI-7 encoding, QWERTY layout
  * set ttyN raw         - selecting transmission of raw chars
  * set ttyN raw8        - the same, but eight bits wide and with no parity
- * set ttyN mux         - consider ttyN connected via UART mux
  * set ttyN off         - disconnecting a line
  * set ttyN tt          - a Baudot TTY
  * set ttyN vt          - a Videoton-340 terminal
  * set ttyN consul      - a "Consul-254" typewriter
  * set ttyN destrbs     - destructive (erasing) backspace
  * set ttyN authbs      - authentic backspace (cursor left)
+ * set tty dks          - the multiplexer is the ДКС (Электроника-60); enables device DKS
+ * set tty tmgu         - the multiplexer is the ТМГУ/МАМС concentrator on Consul 0
+ * set tty tmgutrace    - the same, and log concentrator bytes
+ * set tty mux          - the multiplexer is the АС ("аппаратура сопряжения")
+ *                        At most one of these per session.
+ * set ttyN mux         - line N (1-24) is on the multiplexer (synonym: dks)
+ * set ttyN direct      - line N (1-24) is a bit-serial line (synonym: nodks)
+ *                        Lines 27-64 (033-0100) are always on the multiplexer;
+ *                        25-26 (031, 032) are always the Consuls, and Consul 0 is
+ *                        unusable under ТМГУ and ДКС.  Telnet never connects to
+ *                        a Consul: use "attach ttyN console" for those.
+ * set tty lineorder=L  - telnet connection order, e.g. 13;1-10 (no Consuls)
  * set tty disconnect=N - forceful termination of a telnet connection
  * set tty rate=N       - I/O rate in Hz
  * set tty turbo={ON,OFF} - TTY interrupts use model time (on) or wallclock (0ff)
- * set tty tmgu         - Consul 0 is the ТМГУ/МАМС concentrator (ТЕРМАС)
- * set tty notmgu       - disable ТМГУ concentrator mode
- * show tty             - showing modes and types
+ * attach ttyN console  - the SIMH console is line N
+ * show tty             - showing modes and types, the multiplexer and the use
+ *                        of every line
  * show tty connections - showing IP-addresses and connection times
  * show tty statistics  - showing TX/RX byte counts
  */
-/* A line is driven either bit-serially, or by the mux, or by the ДКС. */
-static t_stat tty_set_mux (UNIT *u, int32 val, CONST char *cptr, void *desc)
+
+/* Choosing the multiplexer of the session; a different second choice is an error. */
+static t_stat select_mux (int kind)
 {
-    if (u->flags & TTY_DKS_MODE)
-        return sim_messagef (SCPE_ARG, "Line is in DKS mode\n");
+    if (mux_kind == kind)
+        return SCPE_OK;
+    if (mux_kind != MUX_NONE)
+        return sim_messagef (SCPE_ARG, "Мультиплексор уже выбран: %s\n", mux_name[mux_kind]);
+    if (kind != MUX_DKS && !(dks_dev.flags & DEV_DIS))
+        return sim_messagef (SCPE_ARG, "Мультиплексор уже выбран: ДКС (set dks enabled)\n");
+    if (kind == MUX_TMGU || kind == MUX_DKS) {
+        if (tty_line[CONSUL_FIRST].conn)
+            return sim_messagef (SCPE_ARG, "tty%d (Консул 0, 031) подключён; %s его "
+                                 "занимает\n", CONSUL_FIRST, mux_name[kind]);
+    }
+    mux_kind = kind;
     return SCPE_OK;
 }
 
-static t_stat tty_set_dks (UNIT *u, int32 val, CONST char *cptr, void *desc)
+/* For besm6_dks.c: "set dks enabled" chooses the ДКС. */
+t_stat tty_select_dks (void)
+{
+    return select_mux (MUX_DKS);
+}
+
+/* For besm6_dks.c: "set dks disabled" leaves the session without a multiplexer. */
+void tty_deselect_dks (void)
+{
+    if (mux_kind == MUX_DKS)
+        mux_kind = MUX_NONE;
+}
+
+/*
+ * "set tty mux|dks" chooses the multiplexer, "set ttyN mux|dks" puts line N on it.
+ * One MTAB entry serves both levels, since set_cmd() stops at the first entry of
+ * that name; the device level arrives as unit 0.
+ */
+static t_stat tty_set_mux (UNIT *u, int32 val, CONST char *cptr, void *desc)
 {
     int num = u - tty_unit;
-    uint32 mask = 1 << (TTY_MAX - num);
+    uint32 mask;
+    t_stat r;
+
+    if (cptr && *cptr)
+        return SCPE_ARG;
+    if (num == 0) {
+        r = select_mux (val);
+        if (r == SCPE_OK && val == MUX_DKS)
+            dks_dev.flags &= ~DEV_DIS;
+        return r;
+    }
+    if (num > TTY_MAX)
+        return line_is_mux (num) ? SCPE_OK : check_usable (num);
+    if (mux_kind == MUX_NONE)
+        return sim_messagef (SCPE_ARG, "Мультиплексор не выбран: set tty dks|tmgu|mux\n");
+    if (mux_kind == MUX_DKS && num > DKS_MAX_LINE)
+        return check_usable (num);
+    mask = 1 << (TTY_MAX - num);
+    u->flags |= TTY_MUX_MODE;
+    vt_mask &= ~mask;
+    tt_mask &= ~mask;
+    if ((u->flags & TTY_STATE_MASK) == TTY_TELETYPE_STATE) {
+        u->flags &= ~TTY_STATE_MASK;
+        u->flags |= TTY_VT340_STATE;
+    }
+    return SCPE_OK;
+}
+
+static t_stat tty_set_direct (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    int num = u - tty_unit;
+    uint32 mask;
 
     if (num < 1 || num > TTY_MAX)
-        return SCPE_NXPAR;
-    if (val && (u->flags & TTY_MUX_MODE))
-        return sim_messagef (SCPE_ARG, "Line is in MUX mode\n");
-    if (val) {
-        vt_mask &= ~mask;
-        tt_mask &= ~mask;
+        return sim_messagef (SCPE_ARG, "Прямые линии - tty1..tty%d\n", TTY_MAX);
+    mask = 1 << (TTY_MAX - num);
+    if (u->flags & TTY_MUX_MODE) {
+        u->flags &= ~TTY_MUX_MODE;
+        if (tty_line[num].conn) {
+            if ((u->flags & TTY_STATE_MASK) == TTY_TELETYPE_STATE)
+                tt_mask |= mask;
+            else
+                vt_mask |= mask;
+        }
+    }
+    return SCPE_OK;
+}
+
+static t_stat tty_set_tmgu (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    t_stat r;
+
+    if (cptr && *cptr)
+        return SCPE_ARG;
+    r = select_mux (MUX_TMGU);
+    if (r != SCPE_OK)
+        return r;
+    if (val == 2)
+        tmgu_trace = 1;
+    tmgu_reset_link ();
+    cons_input_pending[0] = 0;
+    READY2 |= TMGU_OUT_RDY | TMGU_IN_RDY;
+    tmgu_offer_input ();
+    return SCPE_OK;
+}
+
+/* "set tty lineorder": the TMXR routine, then no Consuls and no unusable lines. */
+static t_stat tty_set_lnorder (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    int32 save [LINES_MAX+1];
+    t_stat r;
+    int i;
+
+    memcpy (save, tty_lnorder, sizeof (save));
+    r = tmxr_set_lnorder (u, val, cptr, desc);
+    if (r != SCPE_OK)
+        return r;
+    for (i = 0; i <= LINES_MAX && tty_lnorder[i] >= 0; ++i) {
+        int n = tty_lnorder[i], k = line_kind (n);
+        if (n == 0)
+            continue;
+        if (k == LINE_CONSUL || k == LINE_UNUSED) {
+            memcpy (tty_lnorder, save, sizeof (save));
+            if (k == LINE_CONSUL)
+                return sim_messagef (SCPE_ARG, "tty%d - Консул: telnet к нему не "
+                                     "подключается\n", n);
+            return check_usable (n);
+        }
+    }
+    return SCPE_OK;
+}
+
+static t_stat tty_show_line (FILE *st, UNIT *u, int32 v, CONST void *desc)
+{
+    static const char *const kname[] = { "direct", "Consul", NULL, "unused" };
+    int k = line_kind ((int) (u - tty_unit));
+
+    if (k == LINE_MUX)
+        fprintf (st, "on %s", mux_name[mux_kind]);
+    else
+        fprintf (st, "%s", kname[k]);
+    return SCPE_OK;
+}
+
+static t_stat tty_show_config (FILE *st, UNIT *u, int32 v, CONST void *desc)
+{
+    static const char *const kname[] = { "direct", "Consul", "mux", "unused" };
+    int n, k, first = 1, from;
+
+    fprintf (st, "multiplexer: %s%s", mux_name[mux_kind],
+             tmgu_on && tmgu_trace ? " (trace)" : "");
+    /* Runs of lines of one kind, in octal as the OS numbers them. */
+    for (from = 1; from <= LINES_MAX; from = n) {
+        k = line_kind (from);
+        for (n = from + 1; n <= LINES_MAX && line_kind (n) == k; ++n)
+            ;
+        fprintf (st, first ? "\n  " : ", ");
+        first = 0;
+        if (n - 1 == from)
+            fprintf (st, "%03o %s", from, kname[k]);
+        else
+            fprintf (st, "%03o-%03o %s", from, n - 1, kname[k]);
     }
     return SCPE_OK;
 }
 
 MTAB tty_mod[] = {
     { TTY_CHARSET_MASK, TTY_UNICODE_CHARSET, "UTF-8 input",
-      "UNICODE" },
+      "UNICODE", &tty_check_unit },
     { TTY_CHARSET_MASK, TTY_KOI7_JCUKEN_CHARSET, "KOI7 (jcuken) input",
-      "JCUKEN" },
+      "JCUKEN", &tty_check_unit },
     { TTY_CHARSET_MASK, TTY_KOI7_QWERTY_CHARSET, "KOI7 (qwerty) input",
-      "QWERTY" },
+      "QWERTY", &tty_check_unit },
     /* RAW must precede RAW8: MATCH_CMD() matches a typed prefix against the entry,
      * so with RAW8 first a "set ttyN raw" would silently select RAW8. */
     { TTY_CHARSET_MASK, TTY_RAW_CHARSET, "RAW input/output",
-      "RAW" },
+      "RAW", &tty_check_unit },
     { TTY_CHARSET_MASK, TTY_RAW8_CHARSET, "RAW 8-bit input/output",
-      "RAW8" },
+      "RAW8", &tty_check_unit },
     { TTY_STATE_MASK, TTY_OFFLINE_STATE, "offline",
       "OFF", &tty_setmode },
     { TTY_STATE_MASK, TTY_TELETYPE_STATE, "Teletype",
@@ -757,24 +1144,34 @@ MTAB tty_mod[] = {
     { TTY_STATE_MASK, TTY_CONSUL_STATE, "Consul-254",
       "CONSUL", &tty_setmode },
     { TTY_BSPACE_MASK, TTY_DESTRUCTIVE_BSPACE, "destructive backspace",
-      "DESTRBS" },
+      "DESTRBS", &tty_check_unit },
     { TTY_BSPACE_MASK, TTY_AUTHENTIC_BSPACE, NULL,
-      "AUTHBS" },
+      "AUTHBS", &tty_check_unit },
     { TTY_INVERSE_READY, TTY_INVERSE_READY, "inverse ready",
-      "INVREADY" },
+      "INVREADY", &tty_check_unit },
     { TTY_INVERSE_READY, 0, "regular ready",
-      "REGREADY" },
-    { TTY_MUX_MODE, TTY_MUX_MODE, "treat as connected via UART mux",
-      "MUX", &tty_set_mux },
-    { TTY_DKS_MODE, TTY_DKS_MODE, "connected via DKS (Elektronika-60)",
-      "DKS", &tty_set_dks },
-    { TTY_DKS_MODE, 0, NULL,
-      "NODKS", &tty_set_dks },
-    { MTAB_XTD | MTAB_VDV, 1, "TMGU",
-      "TMGU", &tty_set_tmgu, &tty_show_tmgu, NULL,
-      "Consul 0 = ТМГУ/МАМС concentrator for ТЕРМАС" },
-    { MTAB_XTD | MTAB_VDV, 0, NULL,
-      "NOTMGU", &tty_set_tmgu, NULL, NULL, "disable ТМГУ concentrator" },
+      "REGREADY", &tty_check_unit },
+    { MTAB_XTD | MTAB_VUN, 0, "LINE",
+      NULL, NULL, &tty_show_line, NULL, "direct / Consul / multiplexer line" },
+    { MTAB_XTD | MTAB_VDV | MTAB_VUN, MUX_AS, NULL,
+      "MUX", &tty_set_mux, NULL, NULL,
+      "tty: the multiplexer is the АС; ttyN: line N is on the multiplexer" },
+    { MTAB_XTD | MTAB_VDV | MTAB_VUN, MUX_DKS, NULL,
+      "DKS", &tty_set_mux, NULL, NULL,
+      "tty: the multiplexer is the ДКС; ttyN: line N is on the multiplexer" },
+    { MTAB_XTD | MTAB_VUN, 0, NULL,
+      "DIRECT", &tty_set_direct, NULL, NULL, "line N (1-24) is a bit-serial line" },
+    { MTAB_XTD | MTAB_VUN, 0, NULL,
+      "NODKS", &tty_set_direct, NULL, NULL, "same as DIRECT" },
+    { MTAB_XTD | MTAB_VDV, 1, NULL,
+      "TMGU", &tty_set_tmgu, NULL, NULL,
+      "the multiplexer is the ТМГУ/МАМС concentrator on Consul 0 (ТЕРМАС)" },
+    { MTAB_XTD | MTAB_VDV, 2, NULL,
+      "TMGUTRACE", &tty_set_tmgu, NULL, NULL,
+      "as TMGU, and log concentrator bytes" },
+    /* Printed by "show tty": "show tty <param>" fails on the disabled unit 0. */
+    { MTAB_XTD | MTAB_VDV, 0, "CONFIG",
+      NULL, NULL, &tty_show_config, NULL, "the multiplexer and the use of every line" },
     { MTAB_XTD | MTAB_VDV | MTAB_VALR, 1, NULL,
       "DISCONNECT", &tmxr_dscln, NULL, (void*) &tty_desc, "terminates telnet connection" },
     { MTAB_XTD | MTAB_VDV | MTAB_VALR, 1, "RATE",
@@ -788,7 +1185,7 @@ MTAB tty_mod[] = {
     { MTAB_XTD | MTAB_VDV | MTAB_NMO, 0, "STATISTICS",
       NULL, NULL, &tmxr_show_cstat, (void*) &tty_desc },
     { MTAB_XTD | MTAB_VDV | MTAB_NMO | MTAB_VALR,   0,   "LINEORDER",
-      "LINEORDER",   &tmxr_set_lnorder, &tmxr_show_lnorder, (void *) &tty_desc,
+      "LINEORDER",   &tty_set_lnorder, &tmxr_show_lnorder, (void *) &tty_desc,
       "Line connection order, e.g. 26;20-24;1-10" },
     { MTAB_XTD | MTAB_VUN | MTAB_NC, 0, NULL,
       "LOG", &tmxr_set_log, &tmxr_show_log, (void*) &tty_desc },
@@ -799,7 +1196,7 @@ MTAB tty_mod[] = {
 
 DEVICE tty_dev = {
     "TTY", tty_unit, tty_reg, tty_mod,
-    27, 2, 1, 1, 2, 1,
+    LINES_MAX+1, 2, 1, 1, 2, 1,
     NULL, NULL, &tty_reset, NULL, &tty_attach, &tty_detach,
     NULL, DEV_MUX|DEV_DEBUG
 };
@@ -1101,7 +1498,7 @@ static t_stat cmd_set (int32 num, CONST char *cptr)
         tty_unit[num].flags &= ~TTY_CHARSET_MASK;
         tty_unit[num].flags |= TTY_RAW8_CHARSET;
     } else if (strncmp ("TT", gbuf, len) == 0) {
-        if (num > TT_LINES || (tty_unit[num].flags & TTY_NOT_SERIAL))
+        if (num > TT_LINES || !TTY_SERIAL (num))
             return SCPE_NXPAR;
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_TELETYPE_STATE;
@@ -1110,7 +1507,7 @@ static t_stat cmd_set (int32 num, CONST char *cptr)
     } else if (strncmp ("VT", gbuf, len) == 0) {
         tty_unit[num].flags &= ~TTY_STATE_MASK;
         tty_unit[num].flags |= TTY_VT340_STATE;
-        if (num <= TTY_MAX && !(tty_unit[num].flags & TTY_NOT_SERIAL)) {
+        if (TTY_SERIAL (num)) {
             vt_mask |= 1 << (TTY_MAX - num);
             tt_mask &= ~(1 << (TTY_MAX - num));
         }
@@ -1848,7 +2245,7 @@ void consul_print (int dev_num, uint32 cmd)
     unsigned b = cmd & 0377;
 
     if (tmgu_on && dev_num == 0) {
-        if (tty_dev.dctrl)
+        if (TMGU_TRACE)
             besm6_debug (">>> TMGU: %03o", b);
         READY2 &= ~TMGU_OUT_RDY;
         if (!tmgu_linked) {
@@ -1857,14 +2254,15 @@ void consul_print (int dev_num, uint32 cmd)
                 ;
             else if (tmgu_key_out < 3 && b == tmgu_key[tmgu_key_out]) {
                 tmgu_key_out++;
-                if (tmgu_key_out == 3 && tty_dev.dctrl)
+                if (tmgu_key_out == 3 && TMGU_TRACE)
                     besm6_debug (">>> TMGU: output key ok");
                 tmgu_check_linked ();
             } else if (b == tmgu_key[0])
                 tmgu_key_out = 1;
             else
                 tmgu_key_out = 0;
-        }
+        } else
+            tmgu_out_byte (b);
         READY2 |= TMGU_OUT_RDY;
         PRP |= CONS_CAN_PRINT[0];
         tmgu_offer_input ();
@@ -1901,6 +2299,56 @@ void consul_print (int dev_num, uint32 cmd)
     vt_idle = 0;
 }
 
+/*
+ * Terminals behind the concentrator: a connect 041 for every multiplexer line
+ * that came up (one at a time), and each character typed -> a short frame.
+ */
+static void tmgu_poll_lines (void)
+{
+    unsigned char msg[3];
+    int n, c;
+
+    if (!tmgu_on)
+        return;
+    for (n = 1; n <= LINES_MAX; ++n) {
+        int up = line_is_mux (n) && tty_line[n].conn;
+        if (up != tmgu_up[n]) {
+            /* No disconnect message is known: the OS keeps the logical number
+             * of a line that went away, and a reconnect uses it again. */
+            tmgu_up[n] = up;
+            if (up && !tmgu_log[n] && tmgu_wait != n)
+                tmgu_want[n] = 1;
+        }
+    }
+    if (!tmgu_linked)
+        return;
+    if (!tmgu_wait && tmgu_in_len <= TMGU_QMAX - 8) {
+        for (n = 1; n <= LINES_MAX; ++n)
+            if (tmgu_want[n]) {
+                tmgu_send_connect (n);
+                break;
+            }
+    }
+    for (n = 1; n <= LINES_MAX; ++n) {
+        if (!tmgu_up[n] || !tmgu_log[n])
+            continue;
+        if (tmgu_in_len > TMGU_QMAX - 8)    /* очередь не вычитана */
+            return;
+        c = getsym (n);
+        if (c < 0 || c > 0177)
+            continue;
+        vt_send (n, c == '\177' ? '\b' : c);    /* местное эхо, как у мультиплексора */
+        c = vt_fix (n, c);
+        msg[0] = 1;                     /* адрес = НОМАБ (как 201 в 041), 0 - сброс связи */
+        msg[1] = (unsigned char) tmgu_log[n];
+        msg[2] = (unsigned char) (odd_parity (c) ? c | 0200 : c);
+        if (TMGU_TRACE)
+            besm6_debug (">>> TMGU: typed %03o on line %d, queue 001 %03o %03o",
+                         c, n, msg[1], msg[2]);
+        tmgu_queue (msg, 3);
+    }
+}
+
 void consul_receive ()
 {
     int c, line_num, dev_num;
@@ -1911,6 +2359,7 @@ void consul_receive ()
             PRP |= CONS_CAN_PRINT[0];
             cons_is_printing[0] = 0;
         }
+        tmgu_poll_lines ();
         tmgu_offer_input ();
     }
 
@@ -1972,16 +2421,19 @@ uint32 consul_read (int num)
     uint32 v = CONSUL_IN[num];
 
     if (tmgu_on && num == 0) {
-        if (tty_dev.dctrl)
+        if (TMGU_TRACE)
             besm6_debug ("<<< TMGU read: %03o", v);
         cons_input_pending[0] = 0;
         READY2 &= ~TMGU_IN_RDY;
         if (tmgu_key_in < 3) {
             tmgu_key_in++;
             tmgu_check_linked ();
-        } else if (tmgu_in_pos < tmgu_in_len)
+        } else if (tmgu_in_pos < tmgu_in_len) {
             tmgu_in_pos++;
-        tmgu_offer_input ();
+            if (tmgu_in_pos == tmgu_in_len)
+                tmgu_in_len = tmgu_in_pos = 0;
+        }
+        tmgu_acked = 0;                 /* следующий байт - после ВДЗП */
         return v;
     }
     if (tty_dev.dctrl)
@@ -2013,18 +2465,16 @@ void mux_send(uint32 syl)
             // Line status request
             mux_reg_busy = 1;
             // Control syllable
-            int recv = vt_receiving & (1 << (TTY_MAX - line_num));
+            int recv = line_num <= LINES_MAX && ! mux_rcv_off[line_num];
             MUX_SYLLABLE = (syl & ~0x80) | (recv ? 0 : 8); 
             PRP |= PRP_MUX_INPUT;    /* done */
         } else {
-            if (syl & 8) {
-                vt_receiving &= ~(1 << (TTY_MAX - line_num));
-            } else
-                vt_receiving |= 1 << (TTY_MAX - line_num);
+            if (line_num <= LINES_MAX)
+                mux_rcv_off[line_num] = (syl & 8) != 0;
         }
         return;
     }
-    if (line_num <= TTY_MAX) {
+    if (line_is_mux (line_num)) {
         /* Bit 8 of the syllable is parity, except on a raw8 line, where it is data. */
         vt_send (line_num, syl & (tty_raw8 (line_num) ? 0377 : 0177));
         vt_idle = 0;
@@ -2041,8 +2491,10 @@ void mux_receive ()
         return;
     }
 
-    for (line_num = 1; line_num <= TTY_MAX; ++line_num) {
-        if (! tty_line[line_num].conn || !(tty_unit[line_num].flags & TTY_MUX_MODE))
+    if (mux_kind != MUX_AS)
+        return;
+    for (line_num = 1; line_num <= LINES_MAX; ++line_num) {
+        if (! tty_line[line_num].conn || ! line_is_mux (line_num))
             continue;
         c = getsym(line_num);
         if (c < 0)
@@ -2072,15 +2524,15 @@ void mux_receive ()
  */
 void dks_receive ()
 {
-    static char dks_up [TTY_MAX+1];
+    static char dks_up [LINES_MAX+1];
     int num, c;
 
-    if (dks_dev.flags & DEV_DIS)
+    if (dks_dev.flags & DEV_DIS || mux_kind != MUX_DKS)
         return;
-    for (num = 1; num <= TTY_MAX; ++num) {
+    for (num = 1; num <= DKS_MAX_LINE; ++num) {
         int up;
 
-        if (! (tty_unit[num].flags & TTY_DKS_MODE))
+        if (! line_is_mux (num))
             continue;
         up = tty_line[num].conn != 0;
         if (up != dks_up[num]) {

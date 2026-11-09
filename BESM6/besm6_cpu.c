@@ -742,6 +742,10 @@ static uint32 readmap[32768], writemap[32768];
         /* Выдача кода в пульт оператора */
         consul_print (Aex & 1, (uint32) ACC & BITS(8));
         break;
+    case 0176:
+        /* ТМГУ: ВДЗП := 1 - байт ввода от концентратора принят (ТЕРМАС) */
+        tmgu_input_ack ();
+        break;
     case 0147:
         /* Writing to the power supply control register
          * does not have any observable effect; repurposed

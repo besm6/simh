@@ -75,7 +75,7 @@
 #define INBUF_BYTES     ((AREA_SIZE - AREA_INBUF) * 2 - 1)
 #define AREA(n)         (AREA_BASE + (n) * AREA_SIZE)
 
-#define DKS_LINES       24      /* TTY_MAX */
+#define DKS_LINES       41      /* areas that fit the Э-60 memory; DKS_MAX_LINE in besm6_tty.c */
 
 #define DBG_KADOPAM     001
 #define DBG_RING        002
@@ -438,6 +438,17 @@ t_stat dks_reset (DEVICE *dptr)
 {
     int n;
 
+    /* "set dks enabled" chooses the ДКС as the multiplexer of the session.
+     * reset_all() resets disabled devices too, so only an enabled one checks. */
+    if (dks_enabled ()) {
+        t_stat r = tty_select_dks ();
+        if (r != SCPE_OK) {
+            dks_dev.flags |= DEV_DIS;
+            return r;
+        }
+    } else
+        tty_deselect_dks ();            /* "set dks disabled" */
+
     sim_cancel (&dks_unit);
     memset (e60_mem, 0, sizeof (e60_mem));
     cur_chan = 0;
@@ -481,6 +492,8 @@ int dks_line_can_input (int n)
 /* Turns local echo on or off; for ТАЙНА, once its trigger is known. */
 void e60_set_echo (int n, int on)
 {
+    if (n < 1 || n > DKS_LINES)
+        return;
     line[n].echo = on;
 }
 
