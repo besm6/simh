@@ -390,6 +390,7 @@ int attached_console;
 
 /* АС (mux_send): the guest has turned reception off on this line. */
 static char mux_rcv_off [LINES_MAX+1];
+static void mux_reset_state (void);
 
 UNIT tty_unit [] = {
     { UDATA (vt_clk, UNIT_DIS|UNIT_IDLE, 0) },       /* fake unit, clock */
@@ -606,6 +607,7 @@ t_stat tty_reset (DEVICE *dptr)
     if (tty_unit[26].flags & TTY_INVERSE_READY)
         READY2 &= ~CONS_READY[1];
     memset(mux_rcv_off, 0, sizeof(mux_rcv_off));
+    mux_reset_state ();
     tmgu_reset_link ();
     if (tmgu_on) {
         READY2 |= TMGU_OUT_RDY | TMGU_IN_RDY;
@@ -2445,55 +2447,137 @@ uint32 consul_read (int num)
 
 uint32 mux_read ()
 {
-//    if (tty_dev.dctrl)
+    if (tty_dev.dctrl)
         besm6_debug("<<< MUX: %03o %03o", MUX_SYLLABLE >> 8, MUX_SYLLABLE & 0377);
     return MUX_SYLLABLE;
 }
 
+/*
+ * АС, "аппаратура сопряжения" (set tty mux), as МОТТ-100 and ЯНУС drive it.
+ * Syllables are 16 bits: physical line in bits 14-9, then
+ *   data:     bits 8-1 the character (bit 8 parity);
+ *   service:  E15 set, bits 3-1 a machine number (РНМ), bits 8-4 a code.
+ * Each line is attached to one machine or free (mux_rnm, 0 = free).
+ * Service codes from the BESM-6:
+ *   000  release the line (МОТТ sos, end of output);
+ *   010  "01": start of output, the line becomes this machine's;
+ *   110  poll (МОТТ ОПРОС): a free line becomes this machine's, the reply
+ *        is a service syllable with the line's РНМ;
+ *   200  line reset (ЯНУС ИНИЦ): the reply is the syllable without E8.
+ * To the BESM-6: typed characters as data syllables, replies, and a service
+ * syllable with РНМ 0 when a terminal connects, which МОТТ (СООБАС -> АС1)
+ * takes as автоподключение.  ПРП 7 = a syllable is in the receive register
+ * (read by 4143, released by 153); ПРП 6 = ready to send, a level: it is
+ * raised again on every tick while no syllable is in transmission.
+ */
+#define MUX_SERVICE     0x4000          /* E15 */
+#define MUX_QMAX        16
+static int mux_tx_busy;
+static unsigned char mux_rnm [LINES_MAX+1];
+static char mux_up [LINES_MAX+1];
+static uint32 mux_q [MUX_QMAX];
+static int mux_qn;
+
+static void mux_reset_state (void)
+{
+    mux_tx_busy = 0;
+    mux_qn = 0;
+    memset (mux_rnm, 0, sizeof (mux_rnm));
+    memset (mux_up, 0, sizeof (mux_up));
+}
+
+static void mux_queue (uint32 syl)
+{
+    if (mux_qn < MUX_QMAX)
+        mux_q[mux_qn++] = syl;
+}
+
 t_stat mux_event(UNIT * u) {
-        PRP |= PRP_MUX_DONE;
-        return SCPE_OK;
+    mux_tx_busy = 0;
+    PRP |= PRP_MUX_DONE;
+    return SCPE_OK;
 }
 
 void mux_send(uint32 syl)
 {
-    int line_num = (syl >> 8) & 0177;
-//    if (tty_dev.dctrl)
+    int line_num = (syl >> 8) & 077;
+    int unit = (line_num >= 1 && line_num <= LINES_MAX &&
+                line_kind (line_num) != LINE_CONSUL) ? line_num : 1;
+
+    if (tty_dev.dctrl)
         besm6_debug(">>> MUX: %03o %03o", syl >> 8, syl & 0377);
-    if (syl & 0x4000) {
-        if (syl & 0x80) {
-            // Line status request
-            mux_reg_busy = 1;
-            // Control syllable
+    mux_tx_busy = 1;
+    if (syl & MUX_SERVICE) {
+        int mach = syl & 7, code = syl & 0370;
+        if (code & 0200) {
+            /* Line reset / status request */
             int recv = line_num <= LINES_MAX && ! mux_rcv_off[line_num];
-            MUX_SYLLABLE = (syl & ~0x80) | (recv ? 0 : 8); 
-            PRP |= PRP_MUX_INPUT;    /* done */
-        } else {
-            if (line_num <= LINES_MAX)
-                mux_rcv_off[line_num] = (syl & 8) != 0;
+            mux_queue ((syl & ~0200) | (recv ? 0 : 010));
+        } else if (line_num <= LINES_MAX) {
+            switch (code) {
+            case 0:
+                mux_rnm[line_num] = 0;
+                break;
+            case 010:
+                mux_rnm[line_num] = mach;
+                break;
+            case 0110:
+                if (! mux_rnm[line_num])
+                    mux_rnm[line_num] = mach;
+                mux_queue ((line_num << 8) | MUX_SERVICE | mux_rnm[line_num]);
+                break;
+            default:
+                besm6_debug(">>> MUX: line %02o, unknown service code %03o", line_num, code);
+            }
         }
-        return;
-    }
-    if (line_is_mux (line_num)) {
+    } else if (mux_kind == MUX_AS && line_is_mux (line_num)) {
         /* Bit 8 of the syllable is parity, except on a raw8 line, where it is data. */
         vt_send (line_num, syl & (tty_raw8 (line_num) ? 0377 : 0177));
         vt_idle = 0;
-        sim_activate_after(tty_unit + line_num, 10);
     } else
         besm6_debug(">>> MUX: bad line %03o", line_num);
+    sim_activate_after(tty_unit + unit, 10);
 }
 
 void mux_receive ()
 {
-    int c, line_num, dev_num;
+    int c, line_num;
+
+    if (mux_kind != MUX_AS) {
+        if (mux_reg_busy)
+            PRP |= PRP_MUX_INPUT;
+        return;
+    }
+    if (! mux_tx_busy)
+        PRP |= PRP_MUX_DONE;                    /* ready to send: a level */
+    /* A terminal that connected announces itself: service syllable, РНМ 0. */
+    for (line_num = 1; line_num < 0100 && line_num <= LINES_MAX; ++line_num) {
+        int up = line_is_mux (line_num) && tty_line[line_num].conn;
+        if (up != mux_up[line_num]) {
+            mux_up[line_num] = up;
+            if (up)
+                mux_queue ((line_num << 8) | MUX_SERVICE);
+            else
+                mux_rnm[line_num] = 0;
+        }
+    }
     if (mux_reg_busy) {
         PRP |= PRP_MUX_INPUT;
         return;
     }
-
-    if (mux_kind != MUX_AS)
+    /* Nothing is offered before the OS opens ПРП 7 (ГЕНС1 КЦОТ, ЯНУС): its
+     * увв 153 would drop a syllable taken earlier. */
+    if (! (MPRP & PRP_MUX_INPUT))
         return;
-    for (line_num = 1; line_num <= LINES_MAX; ++line_num) {
+    if (mux_qn > 0) {
+        MUX_SYLLABLE = mux_q[0];
+        memmove (mux_q, mux_q + 1, --mux_qn * sizeof (mux_q[0]));
+        PRP |= PRP_MUX_INPUT;
+        vt_idle = 0;
+        mux_reg_busy = 1;
+        return;
+    }
+    for (line_num = 1; line_num < 0100 && line_num <= LINES_MAX; ++line_num) {
         if (! tty_line[line_num].conn || ! line_is_mux (line_num))
             continue;
         c = getsym(line_num);
@@ -2501,20 +2585,21 @@ void mux_receive ()
             continue;
         if (tty_raw8(line_num)) {
             /* A byte pipe: eight bits of data, echoed as typed and with no parity. */
-            besm6_debug("Got %03o from line %02o", c & 0377, line_num);
             vt_send(line_num, c & 0377);
             MUX_SYLLABLE = (line_num << 8) | (c & 0377);
         } else {
             if (c > 0177)                       /* not a KOI-7 code */
                 continue;
-            besm6_debug("Got %03o from line %02o", c, line_num);
             vt_send(line_num, c == '\177' ? '\b' : c);
             c = vt_fix(line_num, c);
             MUX_SYLLABLE = (line_num << 8) | (odd_parity(c) ? c | 0200 : c);
         }
+        if (tty_dev.dctrl)
+            besm6_debug("Got %03o from line %02o", MUX_SYLLABLE & 0377, line_num);
         PRP |= PRP_MUX_INPUT;
         vt_idle = 0;
         mux_reg_busy = 1;
+        break;                                  /* one receive register */
     }
 }
 
@@ -2556,14 +2641,15 @@ void dks_receive ()
 
 void mux_clear()
 {
-//    if (tty_dev.dctrl)
-    besm6_debug(">>> MUX: clear, PRP = %05o", PRP);
+    if (tty_dev.dctrl)
+        besm6_debug(">>> MUX: clear, PRP = %05o", PRP);
     MUX_SYLLABLE = 0;
     mux_reg_busy = 0;
     /* With КАДОПАМ these ПРП bits are КРК channels 1 and 2. */
     if (! (dks_dev.flags & DEV_DIS))
         return;
     PRP &= ~PRP_MUX_INPUT;
-    PRP |= PRP_MUX_DONE;
+    if (! mux_tx_busy)
+        PRP |= PRP_MUX_DONE;
 }
     

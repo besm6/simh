@@ -954,21 +954,26 @@ Interrupts: `PRP_CONS1_INPUT` / `PRP_CONS2_INPUT` (bits 12/11) — a character w
 
 ### Serial multiplexor АС (`033 0143`, `033 4143`, `033 0153`)
 
-The "аппаратура сопряжения", selected with `set tty mux`. `mux_send()` at [besm6_tty.c:1517](besm6_tty.c#L1517)
-takes a 16-bit **syllable**:
+The "аппаратура сопряжения", selected with `set tty mux`; `mux_send()`, `mux_receive()` in
+[besm6_tty.c](besm6_tty.c). The protocol is the one Диспак's МОТТ-100 and the ЯНУС debugger use,
+described in Russian in [doc/АС.md](doc/АС.md). In short, a 16-bit **syllable**:
 
 | Bits | Meaning |
 |------|---------|
-| 15–9 | Line number. |
-| 7–1 | The character — *unless* bit 15 (`0x4000`) marks a control syllable. |
+| 14–9 | Physical line number. |
+| 8–1 | Data syllable: the character, bit 8 parity. |
+| 15 | Service syllable: bits 8–4 a code, bits 3–1 a machine number (РНМ). |
 
-For a control syllable (bit `0x4000` set): if bit 8 (`0x80`) is also set it is a **line status
-request**, answered in `MUX_SYLLABLE` with the receive state in bit 4, raising `PRP_MUX_INPUT`
-(bit 7). Otherwise bit 4 (`8`) enables or disables reception on that line.
+* **`033 0143`** sends a syllable. Codes from the BESM-6: `000` release the line, `010` start of
+  output (the line becomes this machine's), `110` poll (the reply carries the line's РНМ), `200`
+  line reset.
+* **`033 4143`** reads the receive register: a typed character, a reply, or the service syllable
+  with РНМ 0 that a terminal sends when it connects (Диспак takes it as автоподключение).
+  **`033 0153`** releases the register.
 
-`033 4143` reads `MUX_SYLLABLE` back. `033 0153` clears the whole terminal interface (the
-accumulator is ignored) and sets bit 6 of МПРП. `PRP_MUX_DONE` (bit 6) signals transmission
-complete.
+`PRP_MUX_INPUT` (ПРП 7) — a syllable is in the receive register; it is offered only while МПРП
+bit 7 is open. `PRP_MUX_DONE` (ПРП 6) — ready to send, a level: raised again on every terminal
+clock tick while no syllable is in transmission.
 
 ### КАДОПАМ and the ДКС (instruction 032)
 
