@@ -407,6 +407,8 @@ int fs_read (int num);
 void pl_control (int num, uint32 cmd);
 int clc_output (t_value val);
 void clc_unmasked (void);
+int clc_move (t_value val);
+t_value clc_status (void);
 
 /*
  * Punchcard input.

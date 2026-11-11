@@ -724,6 +724,12 @@ static uint32 readmap[32768], writemap[32768];
         /* sending commands to the punched card readers */
         vu_control (Aex - 0150, (uint32) (ACC & 017));
         break;
+    case 0152:
+        /* движение пера графопостроителя CalComp (МОТТ ГРАФУ) */
+        if (! clc_move (ACC))
+            besm6_debug ("*** %05o%s: EXT 152 - no plotter attached",
+                         PC, (RUU & RUU_RIGHT_INSTR) ? "R" : "L");
+        break;
     case 0153:
         /* гашение аппаратуры сопряжения с терминалами */
         mux_clear ();           /* ACC is ignored */
@@ -860,6 +866,10 @@ static uint32 readmap[32768], writemap[32768];
         /* reading from the muxed serial interface */
 	ACC = mux_read();
 	break;
+    case 04153:
+        /* готовность графопостроителя CalComp: разряд 20 = не готов */
+        ACC = clc_status ();
+        break;
     case 04150: case 04154:
         /* считывание строки с устройства ввода с перфоленты */
         ACC = vu_read ((Aex - 04150) >> 2);

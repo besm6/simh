@@ -46,6 +46,12 @@
  * Every output is written to the attached file as one line of 16 octal
  * digits: the whole accumulator, since КОБГР sends a 6- or 8-bit syllable
  * (ГРА НЕТ / ГРА ДА) and Э50 1205 sends the user's word as is.
+ *
+ * Direct control (Э50 '7600', МОТТ ГРАФИ/ГРАФУ on timer ГРП 40): a pen
+ * movement goes out with увв 0152 and is written as "152 " followed by the
+ * 16 octal digits; readiness is read with увв 04153, bit 20 set meaning
+ * "not ready".  The plotter is ready whenever it is attached: one movement
+ * per timer tick is far slower than the device.
  */
 #include "besm6_defs.h"
 
@@ -110,6 +116,29 @@ int clc_output (t_value val)
     if (clc_dev.dctrl)
         besm6_debug ("CLC: %016llo", (unsigned long long) (val & BITS48));
     return 1;
+}
+
+/*
+ * увв 0152: one pen movement (direct control).  Returns 0 when no plotter
+ * is attached.
+ */
+int clc_move (t_value val)
+{
+    if (! (clc_unit.flags & UNIT_ATT))
+        return 0;
+    fprintf (clc_unit.fileref, "152 %016llo\n", (unsigned long long) (val & BITS48));
+    fflush (clc_unit.fileref);
+    if (clc_dev.dctrl)
+        besm6_debug ("CLC: move %016llo", (unsigned long long) (val & BITS48));
+    return 1;
+}
+
+/*
+ * увв 04153: bit 20 (Е20) set = not ready.  The other bits are 0.
+ */
+t_value clc_status (void)
+{
+    return (clc_unit.flags & UNIT_ATT) ? 0 : (t_value) 1 << 19;
 }
 
 /*
