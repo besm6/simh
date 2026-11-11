@@ -651,13 +651,15 @@ t_stat vt_clk (UNIT * this)
     /* Are there any new network connections?  One on the common port never
      * gets a Consul (031, 032) nor a line unusable in this configuration: those
      * are marked busy for the time of the poll.  A Consul with a port of its own
-     * ("attach tty Line=25,port") still accepts connections there. */
+     * ("attach tty Line=25,port") still accepts connections there, and one
+     * dialling out ("Line=26,Connect=host:port") completes its connection. */
     {
         char blocked [LINES_MAX+1];
         int n;
         for (num = 1; num <= LINES_MAX; ++num) {
             int k = line_kind (num);
-            blocked[num] = ((k == LINE_CONSUL && !tty_line[num].master) ||
+            blocked[num] = ((k == LINE_CONSUL && !tty_line[num].master &&
+                             !tty_line[num].destination) ||
                             k == LINE_UNUSED) && !tty_line[num].conn;
             if (blocked[num])
                 tty_line[num].conn = 1;
