@@ -302,6 +302,7 @@ DEVICE *sim_devices[] = {
     &tty_dev,       /* терминалы - телетайпы, видеотоны, "Консулы" */
     &dks_dev,       /* КАДОПАМ и ДКС */
     &osa_dev,       /* АС-6: связь с ЕС ЭВМ (ОСА) */
+    &clc_dev,       /* графопостроитель CalComp */
     0
 };
 
@@ -547,6 +548,13 @@ static void cmd_002 ()
         /* Запись в маску главного регистра прерываний */
         MGRP = ACC;
         break;
+    case 035:
+        /* В Диспаке - выдача на графопостроитель CalComp (РЕГ 29 в
+         * КОБГР, РЕГ '35' в ТРУБКЕ); без CLC адрес не используется. */
+        if (! clc_output (ACC))
+            besm6_debug ("*** %05o%s: REG 35 - no plotter attached",
+                         PC, (RUU & RUU_RIGHT_INSTR) ? "R" : "L");
+        break;
     case 037:
         /* Clearing the main interrupt register: */
         /* it is impossible to clear wired (stateless) bits this way */
@@ -672,6 +680,8 @@ static uint32 readmap[32768], writemap[32768];
     case 034:
         /* Запись в МПРП */
 /*              besm6_debug(">>> write to MPRP");*/
+        if ((ACC & ~MPRP) & PRP_PLOTTER)
+            clc_unmasked ();
         MPRP = ACC & 077777777;
 	// besm6_debug("MPRP = %016llo", MPRP);
         break;

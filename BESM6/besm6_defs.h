@@ -147,6 +147,7 @@ extern DEVICE printer_dev;
 extern DEVICE tty_dev;
 extern DEVICE dks_dev;
 extern DEVICE osa_dev;
+extern DEVICE clc_dev;
 extern DEVICE fs_dev;
 extern DEVICE pl_dev;
 extern DEVICE vu_dev;
@@ -404,6 +405,8 @@ int fs_read (int num);
  * Punchtape output.
  */
 void pl_control (int num, uint32 cmd);
+int clc_output (t_value val);
+void clc_unmasked (void);
 
 /*
  * Punchcard input.
