@@ -317,6 +317,7 @@ extern uint32 mmu_page_mask;
 extern void mmu_setprotection (int idx, t_value word);
 extern void mmu_print_brz (void);
 extern void mmu_sync (void);
+extern uint32 TLB[32];
 
 /*
  * Utility functions
