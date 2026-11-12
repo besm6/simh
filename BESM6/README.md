@@ -285,6 +285,7 @@ Configure the processor with `SET CPU`:
 | `set cpu idle` / `set cpu noidle` | Enable/disable idle detection, so the host sleeps instead of busy-spinning when the guest is idle. |
 | `set cpu autotime=on` / `=off` | Automatically perform the front-panel date/time setup DISPAK expects at boot, so you don't have to key it in. |
 | `set cpu req` | Raise a front-panel *request* interrupt (sets `GRP` bit 32) — the software equivalent of pressing the operator "request" button. |
+| `set cpu mem=n` | Physical memory size in kilowords: 32, 64, 128, 256 or 512 (default). Page numbers loaded into the page registers are truncated to this size; OS Dubna needs `mem=128`. |
 | `set cpu pult=n` | Select the boot source: `0` = switch registers; `1`–`10` = one of the hardwired bootstrap programs; a value above 10 is treated as a filename to dump "touched" instructions to. |
 | `set cpu panel[=fontfile]` / `set cpu nopanel` | Open/close the graphical [front panel](#the-front-panel). |
 

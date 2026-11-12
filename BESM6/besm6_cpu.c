@@ -89,6 +89,8 @@ t_stat cpu_reset (DEVICE *dptr);
 t_stat cpu_req (UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_pult (UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_pult (FILE *st, UNIT *up, int32 v, CONST void *dp);
+t_stat cpu_set_mem (UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_show_mem (FILE *st, UNIT *up, int32 v, CONST void *dp);
 t_stat cpu_set_autotime (UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_autotime (FILE *st, UNIT *up, int32 v, CONST void *dp);
 t_stat cpu_set_latin (UNIT *u, int32 val, CONST char *cptr, void *desc);
@@ -168,6 +170,9 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV|MTAB_VALO,
         0, "PULT",  "PULT",     &cpu_set_pult,      &cpu_show_pult,     NULL,
                                 "Selects a hardwired program or switch reg." },
+    { MTAB_XTD|MTAB_VDV|MTAB_VALR,
+        0, "MEM",   "MEM",      &cpu_set_mem,       &cpu_show_mem,      NULL,
+                                "Physical memory size in kilowords: 32...512" },
     { MTAB_XTD|MTAB_VDV,
         0, "LATIN", "LATIN",   &cpu_set_latin,  &cpu_show_latin,  NULL,
                                 "Use Latin (MADLEN) instruction mnemonics" },
@@ -465,6 +470,28 @@ t_stat cpu_set_pult (UNIT *u, int32 val, CONST char *cptr, void *desc)
 t_stat cpu_show_pult (FILE *st, UNIT *up, int32 v, CONST void *dp)
 {
     fprintf(st, "Pult packet switch position is %d", pult_packet_switch);
+    return SCPE_OK;
+}
+
+/*
+ * Physical memory size: page numbers in RP are truncated to it.
+ */
+t_stat cpu_set_mem (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    int kw = cptr ? atoi(cptr) : 0;
+
+    if (kw < 32 || kw > MEMSIZE/1024 || (kw & (kw - 1)) != 0) {
+        sim_printf("Memory size must be 32, 64, 128, 256 or 512\n");
+        return SCPE_ARG;
+    }
+    mmu_page_mask = kw - 1;
+    mmu_setup();
+    return SCPE_OK;
+}
+
+t_stat cpu_show_mem (FILE *st, UNIT *up, int32 v, CONST void *dp)
+{
+    fprintf(st, "Memory %dK words", mmu_page_mask + 1);
     return SCPE_OK;
 }
 
