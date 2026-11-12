@@ -548,6 +548,8 @@ simulated. Bit layout at [besm6_disk.c:47](besm6_disk.c#L47):
 
 Of these the simulator actually sets only `STATUS_READY` (in response to command `011`) and
 `STATUS_ABSENT` / `STATUS_POWERUP` / `STATUS_READONLY` (in response to `031`, shifted right by 12).
+`031` answers `01400` for an attached unit and `01000` for an unattached one; OS Dubna accepts a
+disk only when it sees `01400` there together with `STATUS_READY`.
 
 ### Interrupts and service words
 
