@@ -81,6 +81,7 @@ int corr_stack;
 int redraw_panel;
 int autotime;
 int besm6_latin;        /* persistent Latin (MADLEN) mnemonic mode */
+int besm6_ext32;        /* instruction 032 acts as 033 (OS Dubna) */
 jmp_buf cpu_halt;
 
 t_stat cpu_examine (t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
@@ -89,11 +90,15 @@ t_stat cpu_reset (DEVICE *dptr);
 t_stat cpu_req (UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_pult (UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_pult (FILE *st, UNIT *up, int32 v, CONST void *dp);
+t_stat cpu_set_mem (UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_show_mem (FILE *st, UNIT *up, int32 v, CONST void *dp);
 t_stat cpu_set_autotime (UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_autotime (FILE *st, UNIT *up, int32 v, CONST void *dp);
 t_stat cpu_set_latin (UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_clr_latin (UNIT *u, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_latin (FILE *st, UNIT *up, int32 v, CONST void *dp);
+t_stat cpu_set_ext32 (UNIT *u, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_show_ext32 (FILE *st, UNIT *up, int32 v, CONST void *dp);
 
 
 /*
@@ -168,12 +173,21 @@ MTAB cpu_mod[] = {
     { MTAB_XTD|MTAB_VDV|MTAB_VALO,
         0, "PULT",  "PULT",     &cpu_set_pult,      &cpu_show_pult,     NULL,
                                 "Selects a hardwired program or switch reg." },
+    { MTAB_XTD|MTAB_VDV|MTAB_VALR,
+        0, "MEM",   "MEM",      &cpu_set_mem,       &cpu_show_mem,      NULL,
+                                "Physical memory size in kilowords: 32...512" },
     { MTAB_XTD|MTAB_VDV,
         0, "LATIN", "LATIN",   &cpu_set_latin,  &cpu_show_latin,  NULL,
                                 "Use Latin (MADLEN) instruction mnemonics" },
     { MTAB_XTD|MTAB_VDV,
         0, NULL,    "NOLATIN", &cpu_clr_latin,  NULL,             NULL,
                                 "Use Cyrillic (BEMSH) instruction mnemonics" },
+    { MTAB_XTD|MTAB_VDV,
+        1, "EXT32", "EXT32",   &cpu_set_ext32,  &cpu_show_ext32,  NULL,
+                                "Instruction 032 acts as 033 (OS Dubna printer driver)" },
+    { MTAB_XTD|MTAB_VDV,
+        0, NULL,    "NOEXT32", &cpu_set_ext32,  NULL,             NULL,
+                                "Instruction 032 accesses KADOPAM (default)" },
     { 0 }
 };
 
@@ -334,6 +348,13 @@ const char *sim_stop_messages[SCPE_BASE] = {
  */
 t_stat cpu_examine (t_value *vptr, t_addr addr, UNIT *uptr, int32 sw)
 {
+    if (sw & SWMASK ('V')) {
+        /* Virtual address, mapped by the current page registers. */
+        if (addr >= 0100000)
+            return SCPE_NXM;
+        mmu_sync ();
+        addr = (TLB[addr >> 10] << 10) | (addr & 01777);
+    }
     if (addr >= MEMSIZE)
         return SCPE_NXM;
     if (vptr) {
@@ -465,6 +486,28 @@ t_stat cpu_set_pult (UNIT *u, int32 val, CONST char *cptr, void *desc)
 t_stat cpu_show_pult (FILE *st, UNIT *up, int32 v, CONST void *dp)
 {
     fprintf(st, "Pult packet switch position is %d", pult_packet_switch);
+    return SCPE_OK;
+}
+
+/*
+ * Physical memory size: page numbers in RP are truncated to it.
+ */
+t_stat cpu_set_mem (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    int kw = cptr ? atoi(cptr) : 0;
+
+    if (kw < 32 || kw > MEMSIZE/1024 || (kw & (kw - 1)) != 0) {
+        sim_printf("Memory size must be 32, 64, 128, 256 or 512\n");
+        return SCPE_ARG;
+    }
+    mmu_page_mask = kw - 1;
+    mmu_setup();
+    return SCPE_OK;
+}
+
+t_stat cpu_show_mem (FILE *st, UNIT *up, int32 v, CONST void *dp)
+{
+    fprintf(st, "Memory %dK words", mmu_page_mask + 1);
     return SCPE_OK;
 }
 
@@ -1004,6 +1047,18 @@ t_stat cpu_show_latin (FILE *st, UNIT *up, int32 v, CONST void *dp)
     return SCPE_OK;
 }
 
+t_stat cpu_set_ext32 (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    besm6_ext32 = val;
+    return SCPE_OK;
+}
+
+t_stat cpu_show_ext32 (FILE *st, UNIT *up, int32 v, CONST void *dp)
+{
+    fprintf (st, "032 %s", besm6_ext32 ? "as ext" : "KADOPAM");
+    return SCPE_OK;
+}
+
 /*
  * Execute one instruction, placed on address PC:RUU_RIGHT_INSTR.
  * When stopped, perform a longjmp to cpu_halt,
@@ -1363,6 +1418,8 @@ void cpu_one_inst ()
         delay = MEAN_TIME (3, 5);
         break;
     case 032:                                       /* э32, КАДОПАМ */
+        if (besm6_ext32)
+            goto ext;   /* OS Dubna drives the printer with 032 */
 	if (RK & BBIT(19))
 	    dks_write(ADDR(addr-070000+M[reg]), ACC);
 	else {
@@ -1374,6 +1431,7 @@ void cpu_one_inst ()
 	}
 	break;
     case 033:                                       /* увв, ext */
+    ext:
         Aex = ADDR (addr + M[reg]);
         if (! IS_SUPERVISOR (RUU))
             longjmp (cpu_halt, STOP_BADCMD);

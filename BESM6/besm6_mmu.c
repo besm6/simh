@@ -694,10 +694,13 @@ t_value mmu_fetch (int addr)
     return val & BITS48;
 }
 
+/* Mask of a physical page number: set by SET CPU MEM */
+uint32 mmu_page_mask = (MEMSIZE >> 10) - 1;
+
 void mmu_setrp (int idx, t_value val)
 {
     uint32 p0, p1, p2, p3;
-    const uint32 mask = (MEMSIZE >> 10) - 1;
+    const uint32 mask = mmu_page_mask;
 
     /* Младшие 5 разрядов 4-х регистров приписки упакованы
      * по 5 в 1-20 рр, 6-е разряды - в 29-32 рр, 7-е разряды - в 33-36 рр и т.п.
@@ -725,7 +728,7 @@ void mmu_setrp (int idx, t_value val)
 
 void mmu_setup ()
 {
-    const uint32 mask = (MEMSIZE >> 10) - 1;
+    const uint32 mask = mmu_page_mask;
     int i;
 
     /* Перепись РПi в TLBj. */

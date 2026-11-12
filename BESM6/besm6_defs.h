@@ -313,9 +313,11 @@ extern void mmu_setcache (int idx, t_value word);
 extern t_value mmu_getcache (int idx);
 extern void mmu_setrp (int idx, t_value word);
 extern void mmu_setup (void);
+extern uint32 mmu_page_mask;
 extern void mmu_setprotection (int idx, t_value word);
 extern void mmu_print_brz (void);
 extern void mmu_sync (void);
+extern uint32 TLB[32];
 
 /*
  * Utility functions

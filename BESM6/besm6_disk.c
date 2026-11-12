@@ -931,7 +931,9 @@ void disk_ctl (int ctlr, uint32 cmd)
             c->status = 0;
             if (c->dev < 0 || md_unit[c->dev].flags & UNIT_DISABLE)
                 c->status |= STATUS_ABSENT;
-            else if (md_unit[c->dev].flags & UNIT_ATT)
+            /* ОС Дубна принимает диск только при 01400 в старших разрядах:
+             * STATUS_ABSENT и STATUS_POWERUP. */
+            if (c->dev >= 0 && md_unit[c->dev].flags & UNIT_ATT)
                 c->status |= STATUS_POWERUP;
             if (c->dev != -1 && md_unit[c->dev].flags & UNIT_RO)
                 c->status |= STATUS_READONLY;
