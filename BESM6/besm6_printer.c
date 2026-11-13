@@ -71,8 +71,9 @@ REG printer_reg[] = {
 
 /*
  * АЦПУ ЕС-7032/7033, подключённое напрямую (разделы А0ЕС/А1ЕС ВЫДИНСа):
- * set prn0 es. Обмен идёт по одному КУС через 033 070 и 033 4070,
- * окончание операции - ГРП 18 (см. doc/ОСА.md, §4).
+ * set prn0 es, set prn1 es. Обмен идёт по одному КУС через 033 070/071
+ * и 033 4070/4071, окончание операции - ГРП 18, общий для обоих АЦПУ
+ * (см. doc/ОСА.md, §4).
  */
 #define UNIT_V_ES       (UNIT_V_UF + 0)
 #define UNIT_ES         (1 << UNIT_V_ES)
@@ -85,6 +86,7 @@ REG printer_reg[] = {
 
 #define ES_ST_NOT_READY 01000   /* 10 р.: АЦПУ выключено / не готово */
 #define ES_ST_VALID     02000   /* 11 р.: принят байт состояния */
+#define ES_ST_DATA_REQ  04000   /* 12 р.: требуются данные для печати */
 #define ES_ST_DONE      014     /* 3 и 4 рр. БС: АЦПУ закончило, конец передачи */
 
 #define ES_LINE         128     /* символов в строке */
@@ -239,7 +241,8 @@ t_stat printer_event (UNIT *u)
     struct acpu_t * dev = acpu + num;
 
     if (u->flags & UNIT_ES) {
-        /* АЦПУ ЕС закончило операцию */
+        /* АЦПУ ЕС закончило операцию: байт состояния и ТРБ-А */
+        es_prn[num].status = ES_ST_DONE;
         GRP |= GRP_ES_PRN;
         return SCPE_OK;
     }
@@ -460,7 +463,7 @@ es_prn_print (int num)
 static void
 es_prn_done (int num)
 {
-    es_prn[num].status = ES_ST_DONE;
+    es_prn[num].status = 0;
     sim_cancel (&printer_unit[num]);
     sim_activate (&printer_unit[num], ES_DELAY);
 }
@@ -493,8 +496,16 @@ void es_prn_write (int num, uint32 kus)
         }
         return;
     }
-    if (! (kus & ES_KUS_CMD))
-        return;                 /* квитанция (10 р.) */
+    if (! (kus & ES_KUS_CMD)) {
+        /* Квитанция (10 р.): байт состояния принят. ГРП 18 общий
+         * для обоих АЦПУ ЕС: если второе ждёт, прерывание повторяется. */
+        if (kus & ES_KUS_ACK) {
+            dev->status = 0;
+            if (es_prn[num ^ 1].status)
+                GRP |= GRP_ES_PRN;
+        }
+        return;
+    }
     if (dev->writing) {
         /* новая команда обрывает передачу данных */
         es_prn_print (num);
@@ -522,16 +533,16 @@ void es_prn_write (int num, uint32 kus)
 }
 
 /*
- * Приём из АЦПУ ЕС (033 4070): байт состояния.
+ * Приём из АЦПУ ЕС (033 4070/4071): байт состояния. После окончания
+ * операции (вместе с ГРП 18) он равен 014 до квитанции (10 р. КУС),
+ * затем 0. Пока АЦПУ принимает строку, стоит 12 р. - требуются данные.
  */
-int es_prn_read (void)
+int es_prn_read (int num)
 {
-    int num;
+    UNIT *u = &printer_unit[num];
 
-    for (num = 0; num < 2; ++num) {
-        UNIT *u = &printer_unit[num];
-        if ((u->flags & UNIT_ES) && (u->flags & UNIT_ATT))
-            return ES_ST_VALID | es_prn[num].status;
-    }
+    if ((u->flags & UNIT_ES) && (u->flags & UNIT_ATT))
+        return ES_ST_VALID | es_prn[num].status |
+            (es_prn[num].writing ? ES_ST_DATA_REQ : 0);
     return ES_ST_NOT_READY;
 }

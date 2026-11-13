@@ -356,7 +356,7 @@ int es_count (void);
 void printer_control (int num, uint32 cmd);
 void printer_hammer (int num, int pos, uint32 mask);
 void es_prn_write (int num, uint32 kus);
-int es_prn_read (void);
+int es_prn_read (int num);
 
 /*
  * Терминалы (телетайпы, видеотоны, "Консулы").

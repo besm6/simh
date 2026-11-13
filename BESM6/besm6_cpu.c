@@ -827,9 +827,9 @@ static uint32 readmap[32768], writemap[32768];
         /* Опрос триггера ОШМi - наличие ошибок при внешнем обмене. */
         ACC = drum_errors() | disk_errors() | mg_errors();
         break;
-    case 04070:
-        /* Байт состояния АЦПУ ЕС; без set prn0 es - "не готово" */
-        ACC = es_prn_read ();
+    case 04070: case 04071:
+        /* Байт состояния АЦПУ ЕС; без set prnN es - "не готово" */
+        ACC = es_prn_read (Aex & 1);
         break;
     case 04100:
         /* Опрос телеграфных каналов связи */

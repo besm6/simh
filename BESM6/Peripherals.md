@@ -186,7 +186,7 @@ This is the real I/O instruction. `cmd_033()` at [besm6_cpu.c:595](besm6_cpu.c#L
 | `035` | simulate drum/tape exchange | — | **Unimplemented.** |
 | `040`–`047` | Printer 1 hammers | `printer_hammer()` | Bits 1–16: hammer solenoids. |
 | `050`–`057` | Printer 2 hammers | `printer_hammer()` | Bits 1–16: hammer solenoids. |
-| `070`, `071` | ES printer ЕС-7032/7033 (`set prn0 es`) | `es_prn_write()` | КУС, bits 1–13: byte, bit 10 acknowledge, bit 11 command, bit 12 print symbol (ДКОИ), bit 13 reset. A write command (`xx1`) takes 128 symbols, then the line is printed and ГРП 18 is raised; a skip command (`xx3`) feeds and raises ГРП 18. Ignored without `set prnN es`. |
+| `070`, `071` | ES printers ЕС-7032/7033 0 and 1 (`set prnN es`) | `es_prn_write()` | КУС, bits 1–13: byte, bit 10 acknowledge, bit 11 command, bit 12 print symbol (ДКОИ), bit 13 reset. A write command (`xx1`) takes 128 symbols, then the line is printed; a skip command (`xx3`) feeds. The end of an operation sets the status byte and raises ГРП 18, shared by both printers; the acknowledge clears the status and re-raises ГРП 18 if the other printer is waiting. Ignored without `set prnN es`. |
 | `0100`–`0137` | Tape transport control | `mg_ctl()` | Movement command; unit = `Aex - 0100`. |
 | `0140` | Telegraph channel register | `tty_send()` | Bits 1–24: one bit per terminal line. |
 | `0141` | Tape formatting | `mg_format()` | Bits 1–2: formatting mode. |
@@ -215,7 +215,7 @@ This is the real I/O instruction. `cmd_033()` at [besm6_cpu.c:595](besm6_cpu.c#L
 | `04031` | **READY** — device-ready flags (printer etc.) | — |
 | `04034` | **ПРП**, low half — `(PRP & 07777) | 037` (bits 1–12; bits 1–5 always read as 1) | — |
 | `04035` | Exchange error trigger ОШМ | `drum_errors() \| disk_errors() \| mg_errors()` |
-| `04070` | ES printer status | `es_prn_read()`: `02000` + status byte (`014` after a finished operation); `01000` (not ready) unless a unit is attached with `set prnN es`. |
+| `04070`, `04071` | ES printer 0 / 1 status | `es_prn_read()`: `02000` + status byte (`014` from the end of an operation until the acknowledge), plus `04000` (data requested) while a line is being received; `01000` (not ready) unless the unit is attached with `set prnN es`. |
 | `04100` | Telegraph channel poll | `tty_query()` |
 | `04102` | **READY2** — punch/card ready flags | — |
 | `04103`–`04106` | Tape controller 3–6 status | `mg_state()` |
