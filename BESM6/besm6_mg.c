@@ -124,6 +124,11 @@ t_stat mg_event (UNIT *u);
 #define MG_IO_DELAY (200*MSEC)
 #define MG_MOVE_DELAY (100*MSEC)
 #define MG_GAP_DELAY (10*MSEC)
+/*
+ * Runoff when formatting, in microseconds of clock time: the OS switches
+ * the formatting modes by the timer, so this delay must be in step with it.
+ */
+#define MG_ERASE_USEC 50000
 
 // Formatting is allowed only on channel 6 (controller 3)
 #define FMT_CTLR 3
@@ -492,7 +497,8 @@ void mg_format (uint32 op)
     switch (op & 3) {
     case 0:
         if (prev != 0 && c->last_moving != -1) {
-            sim_printf("Formatting off on MG6%d\n", c->last_moving);
+            if (mg_dev[FMT_CTLR].dctrl)
+                sim_printf("Formatting off on MG6%d\n", c->last_moving);
         }
         break;
     case 1:
@@ -505,16 +511,19 @@ void mg_format (uint32 op)
         if (c->last_moving != -1) {
             int num = c->last_moving;
             UNIT * u = mg_unit + 8*FMT_CTLR + num;
-            sim_printf("Formatting mode 2\n");
+            if (u->dptr->dctrl)
+                sim_printf("Formatting mode 2\n");
             if (c->status & (MG_MOVING << num)) {
                 sim_cancel(u);
-                sim_activate(u, MG_GAP_DELAY);
-                sim_printf("Block runoff on MG6%d\n", c->last_moving);
+                sim_activate_after(u, MG_ERASE_USEC);
+                if (u->dptr->dctrl)
+                    sim_printf("Block runoff on MG6%d\n", c->last_moving);
             }
         }
         break;
     case 3:
-        sim_printf("Formatting mode 3\n");
+        if (mg_dev[FMT_CTLR].dctrl)
+            sim_printf("Formatting mode 3\n");
         // A tape must already be moving
         if (c->last_moving == -1) {
             sim_printf("Enabling synchrotrack on a stationary tape?\n");
@@ -522,14 +531,23 @@ void mg_format (uint32 op)
             int num = c->last_moving;
             UNIT * u = mg_unit + 8*FMT_CTLR + num;
             if (c->status & (MG_MOVING << num)) {
-                t_value fullzone[8+1024];
                 sim_cancel(u);
                 u->in_io = 0;
-                sim_printf("(in_io = 0) Extending block on %s\n", sim_uname(u));
-                // Writing the synchrotrack for a zone is like writing a zone of arbitrary values
-                sim_tape_wrrecf(u, (uint8*) fullzone, sizeof(fullzone));
+                if (num == c->dev && c->armed && !(c->op & MG_READ)) {
+                    // A write exchange is pending: the zone is written
+                    // along with its synchrotrack.
+                    u->cmd = c->op;
+                    c->armed = 0;
+                    mg_write(u);
+                    GRP |= c->mask_free;
+                } else {
+                    // A synchrotrack alone: a zone of zeros.
+                    static t_value fullzone[8+1024];
+                    sim_tape_wrrecf(u, (uint8*) fullzone, sizeof(fullzone));
+                }
                 // Writing the synchrotrack is self-sustaining, no end event requested.
-                sim_printf("Formatting block on %s\n", sim_uname(u));
+                if (u->dptr->dctrl)
+                    sim_printf("Formatting block on %s\n", sim_uname(u));
             }
         }
     }
@@ -950,8 +968,10 @@ void mg_ctl (int unit, uint32 op)
             // Moving with synchrotrack is self-sustaining, no activation needed.
         } else if (c->format == 2) {
             // Erasing, will sustain for about 50 ms
-            sim_printf("Erasing %s\n", sim_uname(u));
-            sim_activate (u, MG_GAP_DELAY);
+            if (u->dptr->dctrl)
+                sim_printf("Erasing %s\n", sim_uname(u));
+            sim_cancel (u);
+            sim_activate_after (u, MG_ERASE_USEC);
         } else if (c->format == 1) {
             if (u->dptr->dctrl)
                 sim_printf("WHAT IS FORMAT 1?\n");
