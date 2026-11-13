@@ -196,6 +196,7 @@ typedef enum {
 VU_state vu_state[2], vu_next[2];
 
 int vu_isfifo[2];
+int vu_held[2];                 /* vu_image is a card not yet passed */
 
 // Each card can hold up to 120 bytes; potentially valid GOST chars, expressible in UPDK, are 0-0177.
 // True spaces are 017; bytes past the end of line (empty columns) are 0377.
@@ -237,7 +238,10 @@ t_stat vu_attach (UNIT *u, CONST char *cptr)
         return s;
     vu_isfifo[num] = (0 == sim_set_fifo_nonblock (u->fileref));
     CLR_RDY2(VU1_NOTREADY >> (num*4));
+    /* Idle: OS Dubna refuses to start a reader without this flag. */
+    SET_RDY2(VU1_FEED >> (num*4));
     vu_cardcnt[num] = 0;
+    vu_held[num] = 0;
     return SCPE_OK;
 }
 
@@ -245,6 +249,7 @@ t_stat vu_detach (UNIT *u)
 {
     int num = u - vu_unit;
     SET_RDY2(VU1_NOTREADY >>(num*4));
+    CLR_RDY2(VU1_FEED >> (num*4));
     return detach_unit (u);
 }
 
@@ -270,6 +275,10 @@ void vu_control (int num, uint32 cmd)
     }
     switch (cmd) {
     case 2:         /* stop */
+        /* Stopped at the start of a card (OS Dubna does that after the end
+         * of a deck): the card stays in the hopper for the next start. */
+        if (vu_state[num] == VU_COL)
+            vu_held[num] = 1;
         sim_cancel (u);
         vu_state[num] = VU_IDLE;
         SET_RDY2(VU1_MAYSTART >> (num*4));
@@ -472,11 +481,20 @@ t_stat vu_event (UNIT *u)
     int num = u - vu_unit;
     if (vu_state[num] == VU_STARTING) {
         // Reading a line and forming the GOST array.
-        int ch;
-        do
-            ch = utf8_getc(u->fileref);
-        while (ch == '\r');
-        if (ch == EOF) {
+        int ch = 0;
+        if (! vu_held[num])
+            do
+                ch = utf8_getc(u->fileref);
+            while (ch == '\r');
+        if (vu_held[num]) {
+            vu_held[num] = 0;
+            if (vu_dev.dctrl)
+                besm6_debug("<<< VU-%d: card start (again)", num);
+            GRP |= GRP_VU1_SYNC >> num;
+            sim_activate(u, vu_col_dly);
+            vu_state[num] = VU_COL;
+            VU[num] = 0;
+        } else if (ch == EOF) {
             if (vu_dev.dctrl) {
                 besm6_debug("<<< VU-%d: EOF, detaching", num);
             }
