@@ -1711,7 +1711,7 @@ void cpu_one_inst ()
         } else
             /* fall thru, i.e. branch */;
         if (Aex == 05176) besm6_log("_u1a phyzobm");
-        if (dubna_idle_loop (Aex))      /* ЖДУ loop of the Dubna dispatcher */
+        if (sim_idle_enab && dubna_idle_loop (Aex)) /* ЖДУ loop of Dubna */
             sim_idle (0, TRUE);
         PC = Aex;
         RUU &= ~RUU_RIGHT_INSTR;
