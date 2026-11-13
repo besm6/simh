@@ -28,6 +28,20 @@
  */
 #include "besm6_defs.h"
 
+/*
+ * set pi1 benson: the second puncher's registers drive the Бенсон plotter
+ * (НИТИ scheme), as the Диспак module БЕНСОН uses them:
+ *   увв 0155 - E22 switches the plotter on, E24 off;
+ *   увв 0164 - the next byte, inverted (low 8 bits);
+ *   увв 0165 - strobe: the byte goes out, ПРП 19 comes BENSON_RATE later;
+ *   увв 0166 - "state free/busy", ignored;
+ *   увв 04102 E13 (PI2_START) - 1 = not ready: set when detached.
+ * Every byte is written to the attached file as a line of 3 octal digits;
+ * switching on and off as lines "on" and "off".
+ */
+#define UNIT_BENSON     (1 << UNIT_V_UF)
+#define BENSON_RATE     (1*MSEC)
+
 t_stat pi_event (UNIT *u);      /* punched card writer */
 UNIT pi_unit [] = {
     { UDATA (pi_event, UNIT_SEQ+UNIT_ATTABLE, 0) },
@@ -105,9 +119,40 @@ REG pi_reg[] = {
     { 0 }
 };
 
+t_stat pi_set_mode (UNIT *u, int32 val, CONST char *cptr, void *desc);
+
 MTAB pi_mod[] = {
+    { UNIT_BENSON, 0, "punch", "PUNCH", &pi_set_mode, NULL, NULL,
+      "Card puncher (default)" },
+    { UNIT_BENSON, UNIT_BENSON, "Бенсон plotter", "BENSON", &pi_set_mode,
+      NULL, NULL, "Бенсон plotter on the registers of puncher 2" },
     { 0 }
 };
+
+static int is_benson (int unit)
+{
+    return unit == 1 && (pi_unit[1].flags & UNIT_BENSON);
+}
+
+static uint32 benson_byte;
+
+/* Readiness of the plotter: E13 of 04102 is "not ready". */
+static void benson_ready (void)
+{
+    if (pi_unit[1].flags & UNIT_ATT)
+        DIS_RDY2(PI2_START);
+    else
+        ENB_RDY2(PI2_START);
+}
+
+t_stat pi_set_mode (UNIT *u, int32 val, CONST char *cptr, void *desc)
+{
+    if (u != &pi_unit[1] && val)
+        return SCPE_ARG;
+    if (u->flags & UNIT_ATT)
+        return SCPE_ALATT;
+    return SCPE_OK;
+}
 
 t_stat pi_reset (DEVICE *dptr);
 t_stat pi_attach (UNIT *uptr, CONST char *cptr);
@@ -292,6 +337,10 @@ t_stat pi_reset (DEVICE *dptr)
         ENB_RDY2(PI1_READY|PI1_START);
     if (pi_unit[1].flags & UNIT_ATT)
         ENB_RDY2(PI2_READY|PI2_START);
+    if (is_benson (1)) {
+        PRP &= ~PRP_PCARD2_CHECK;
+        benson_ready ();
+    }
     return SCPE_OK;
 }
 
@@ -307,6 +356,14 @@ t_stat pi_attach (UNIT *u, CONST char *cptr)
 {
     t_stat s;
     int unit = u - pi_unit;
+    if (is_benson (unit)) {
+        s = attach_unit (u, cptr);
+        if (s != SCPE_OK)
+            return s;
+        ENB_RDY2(PI2_READY);
+        benson_ready ();
+        return SCPE_OK;
+    }
     PI[unit].punch_fn = NULL;
     while (sim_switches &
            (SWMASK('B')|SWMASK('V')|SWMASK('D')|SWMASK('G')|SWMASK('U'))) {
@@ -343,8 +400,15 @@ t_stat pi_attach (UNIT *u, CONST char *cptr)
 t_stat pi_detach (UNIT *u)
 {
     int unit = u - pi_unit;
+    t_stat s;
     DIS_RDY2(pi_ready_mask[unit]);
-    return detach_unit (u);
+    if (! is_benson (unit))
+        return detach_unit (u);
+    sim_cancel (u);
+    PRP &= ~PRP_PCARD2_CHECK;
+    s = detach_unit (u);
+    benson_ready ();
+    return s;
 }
 
 void pi_control (int num, uint32 cmd)
@@ -352,6 +416,14 @@ void pi_control (int num, uint32 cmd)
     UNIT *u = &pi_unit[num];
     if (pi_dev.dctrl)
         besm6_debug("<<<PI-%d cmd %o, state %d", num, cmd, PI[num].state);
+    if (is_benson (num)) {
+        if ((u->flags & UNIT_ATT) && (cmd & (1 << 21 | 1 << 23))) {
+            fputs ((cmd & (1 << 21)) ? "on\n" : "off\n", u->fileref);
+            fflush (u->fileref);
+            u->pos = ftell (u->fileref);
+        }
+        return;
+    }
     cmd &= 011;
     if (! IS_RDY2(pi_ready_mask[num])) {
         if (pi_dev.dctrl)
@@ -393,6 +465,12 @@ void pi_control (int num, uint32 cmd)
 t_stat pi_event (UNIT *u)
 {
     int unit = u - pi_unit;
+    if (is_benson (unit)) {
+        /* The byte is out: ready for the next one. */
+        if (u->flags & UNIT_ATT)
+            PRP |= PRP_PCARD2_CHECK;
+        return SCPE_OK;
+    }
     if (++PI[unit].state > PI_IDLE) {
         /* Starting a new card */
         PI[unit].state = PI_STRIKE;
@@ -459,6 +537,28 @@ void pi_write (int num, uint32 val)
     int card = PI[unit].cur;
     int pos = (num & 3) ^ 3;
     int line = PI[unit].state / 3;
+    if (is_benson (unit)) {
+        UNIT *u = &pi_unit[1];
+        switch (num & 3) {
+        case 0:                 /* 0164: the byte, inverted */
+            benson_byte = ~val & 0377;
+            break;
+        case 1:                 /* 0165: strobe */
+            if (! (u->flags & UNIT_ATT))
+                break;
+            fprintf (u->fileref, "%03o\n", benson_byte);
+            fflush (u->fileref);
+            u->pos = ftell (u->fileref);
+            if (pi_dev.dctrl)
+                besm6_debug ("<<< Бенсон: %03o", benson_byte);
+            PRP &= ~PRP_PCARD2_CHECK;
+            sim_activate_after (u, BENSON_RATE);
+            break;
+        default:                /* 0166: state, ignored */
+            break;
+        }
+        return;
+    }
     if (line > 11 || PI[unit].state % 3 != PI_STRIKE) {
         besm6_debug("<<< PI-%d, writing out of turn, useless", num);
         return;

@@ -633,8 +633,10 @@ t_stat vt_clk (UNIT * this)
     int old = 0;
     GRP |= MGRP & GRP_SERIAL;
 
-    /* With КАДОПАМ, ПРП 8 is the interrupt of КРК channel 0. */
-    if ((MPRP & 0200) && (dks_dev.flags & DEV_DIS)) {
+    /* With КАДОПАМ, ПРП 8 is the interrupt of КРК channel 0.  With `set tty
+     * dks` but without the ДКС device it is faked while the mask is open.
+     * Otherwise ПРП 8 belongs to the CalComp plotter (CLC). */
+    if ((MPRP & 0200) && mux_kind == MUX_DKS && (dks_dev.flags & DEV_DIS)) {
         static int bit;
         PRP |= 0200;
         READY = READY ^ (1 << (bit++ % 24));

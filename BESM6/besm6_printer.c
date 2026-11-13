@@ -69,7 +69,43 @@ REG printer_reg[] = {
     { 0 }
 };
 
+/*
+ * АЦПУ ЕС-7032/7033, подключённое напрямую (разделы А0ЕС/А1ЕС ВЫДИНСа):
+ * set prn0 es, set prn1 es. Обмен идёт по одному КУС через 033 070/071
+ * и 033 4070/4071, окончание операции - ГРП 18, общий для обоих АЦПУ
+ * (см. doc/ОСА.md, §4).
+ */
+#define UNIT_V_ES       (UNIT_V_UF + 0)
+#define UNIT_ES         (1 << UNIT_V_ES)
+
+#define ES_KUS_BYTE     0377
+#define ES_KUS_ACK      01000   /* 10 р.: информация из АЦПУ принята */
+#define ES_KUS_CMD      02000   /* 11 р.: команда */
+#define ES_KUS_DATA     04000   /* 12 р.: символ печати */
+#define ES_KUS_RESET    010000  /* 13 р.: сброс УУ АЦПУ */
+
+#define ES_ST_NOT_READY 01000   /* 10 р.: АЦПУ выключено / не готово */
+#define ES_ST_VALID     02000   /* 11 р.: принят байт состояния */
+#define ES_ST_DATA_REQ  04000   /* 12 р.: требуются данные для печати */
+#define ES_ST_DONE      014     /* 3 и 4 рр. БС: АЦПУ закончило, конец передачи */
+
+#define ES_LINE         128     /* символов в строке */
+#define ES_DELAY        (1*MSEC)
+
+struct es_prn_t {
+    int writing;                /* идёт приём строки по команде "писать" */
+    int skip;                   /* пропуск после печати (байт команды >> 3) */
+    int length;
+    int overprint;              /* строка выдана без пропуска */
+    int status;                 /* байт состояния */
+    unsigned char line[ES_LINE];
+} es_prn[2];
+
 MTAB printer_mod[] = {
+    { UNIT_ES, 0,       "ACPU128", "ACPU128", NULL, NULL, NULL,
+      "АЦПУ-128 (барабанное)" },
+    { UNIT_ES, UNIT_ES, "ES",      "ES",      NULL, NULL, NULL,
+      "АЦПУ ЕС-7032/7033 (А0ЕС)" },
     { 0 }
 };
 
@@ -90,6 +126,7 @@ DEVICE printer_dev = {
 t_stat printer_reset (DEVICE *dptr)
 {
     memset(acpu, 0, sizeof (acpu));
+    memset(es_prn, 0, sizeof (es_prn));
     acpu[0].rampup = acpu[1].rampup = SLOW_START;
     sim_cancel (&printer_unit[0]);
     sim_cancel (&printer_unit[1]);
@@ -138,6 +175,11 @@ void printer_control (int num, uint32 cmd)
     if (READY & (PRN1_NOT_READY >> num)) {
         if (printer_dev.dctrl)
             besm6_debug(">>> printer%d not ready", num);
+        return;
+    }
+    if (u->flags & UNIT_ES) {
+        /* У АЦПУ ЕС нет двигателя и синхроимпульсов АЦПУ-128 */
+        fflush (u->fileref);
         return;
     }
     switch (cmd) {
@@ -198,6 +240,12 @@ t_stat printer_event (UNIT *u)
     int num = u - printer_unit;
     struct acpu_t * dev = acpu + num;
 
+    if (u->flags & UNIT_ES) {
+        /* АЦПУ ЕС закончило операцию: байт состояния и ТРБ-А */
+        es_prn[num].status = ES_ST_DONE;
+        GRP |= GRP_ES_PRN;
+        return SCPE_OK;
+    }
     if (dev->curchar < 0140) {
         GRP |= GRP_PRN1_SYNC >> num;
         ++dev->curchar;
@@ -318,4 +366,183 @@ offset_gost_write (int num, FILE *fout)
     fputc ('\n', fout);
     memset(dev->line, 0, sizeof (dev->line));
     dev->length = dev->strikes = 0;
+}
+
+/*
+ * ДКОИ (набор АЦПУ ЕС) -> Unicode. Буквы, общие по начертанию для
+ * латиницы и кириллицы, выдаются русскими, как и для АЦПУ-128.
+ */
+static unsigned short
+dkoi_to_unicode (unsigned char ch)
+{
+    static const unsigned short letters [0x100 - 0xB8] = {
+        /* B8 */ 0x042e, 0,      0x0411, 0x0426, 0x0414, 0,      0x0424, 0x0413,
+        /* C0 */ 0,      0x0410, 0x0412, 0x0421, 'D',    0x0415, 'F',    'G',
+        /* C8 */ 0x041d, 'I',    0,      0x0418, 0x0419, 0,      0x041b, 0,
+        /* D0 */ 0,      'J',    0x041a, 'L',    0x041c, 'N',    0x041e, 0x0420,
+        /* D8 */ 'Q',    'R',    0,      0,      0x041f, 0x042f, 0,      0,
+        /* E0 */ 0,      0,      'S',    0x0422, 'U',    'V',    'W',    0x0425,
+        /* E8 */ 'Y',    'Z',    0,      0x0423, 0x0416, 0,      0x042c, 0x042b,
+        /* F0 */ '0',    '1',    '2',    '3',    '4',    '5',    '6',    '7',
+        /* F8 */ '8',    '9',    0x0417, 0x0428, 0x042d, 0x0429, 0x0427, 0,
+    };
+    if (ch >= 0xB8)
+        return letters [ch - 0xB8];
+    switch (ch) {
+    case 0x40: return ' ';
+    case 0x4A: return '[';
+    case 0x4B: return '.';
+    case 0x4C: return '<';
+    case 0x4D: return '(';
+    case 0x4E: return '+';
+    case 0x4F: return '!';
+    case 0x50: return '&';
+    case 0x5A: return ']';
+    case 0x5B: return 0x00a4;   /* ¤ */
+    case 0x5C: return '*';
+    case 0x5D: return ')';
+    case 0x5E: return ';';
+    case 0x5F: return 0x00ac;   /* ¬ */
+    case 0x60: return '-';
+    case 0x61: return '/';
+    case 0x6A: return '|';
+    case 0x6B: return ',';
+    case 0x6C: return '%';
+    case 0x6D: return '_';
+    case 0x6E: return '>';
+    case 0x6F: return '?';
+    case 0x7A: return ':';
+    case 0x7B: return '#';
+    case 0x7C: return '@';
+    case 0x7D: return '\'';
+    case 0x7E: return '=';
+    case 0x7F: return '"';
+    }
+    return 0;
+}
+
+/*
+ * Строка АЦПУ ЕС принята целиком: печатаем, выполняем пропуск.
+ */
+static void
+es_prn_feed (struct es_prn_t *dev, int skip, FILE *fout)
+{
+    if (skip & 020) {
+        /* прогон до отверстия на дорожке перфоленты */
+        fputc ((skip & 017) == 1 ? '\f' : '\n', fout);
+    } else {
+        for (skip &= 3; skip > 0; --skip)
+            fputc ('\n', fout);
+    }
+    dev->overprint = 0;
+}
+
+static void
+es_prn_print (int num)
+{
+    UNIT *u = &printer_unit[num];
+    struct es_prn_t *dev = es_prn + num;
+    int p;
+
+    while (dev->length > 0 && dev->line[dev->length - 1] == 0x40)
+        --dev->length;
+    if (dev->overprint)
+        fputc ('\r', u->fileref);
+    for (p = 0; p < dev->length; ++p) {
+        unsigned short c = dkoi_to_unicode (dev->line[p]);
+        utf8_putc (c ? c : ' ', u->fileref);
+    }
+    dev->overprint = 1;
+    if (dev->skip)
+        es_prn_feed (dev, dev->skip, u->fileref);
+    u->pos = ftell (u->fileref);
+    dev->writing = 0;
+    dev->length = 0;
+}
+
+static void
+es_prn_done (int num)
+{
+    es_prn[num].status = 0;
+    sim_cancel (&printer_unit[num]);
+    sim_activate (&printer_unit[num], ES_DELAY);
+}
+
+/*
+ * Выдача КУС в АЦПУ ЕС (033 070/071).
+ */
+void es_prn_write (int num, uint32 kus)
+{
+    UNIT *u = &printer_unit[num];
+    struct es_prn_t *dev = es_prn + num;
+    int byte = kus & ES_KUS_BYTE;
+
+    if (! (u->flags & UNIT_ES) || ! (u->flags & UNIT_ATT))
+        return;
+    if (printer_dev.dctrl && ! (kus & ES_KUS_DATA))
+        besm6_debug (">>> ES printer%d: КУС %o", num, kus);
+    if (kus & ES_KUS_RESET) {
+        memset (dev, 0, sizeof (*dev));
+        sim_cancel (u);
+        return;
+    }
+    if (kus & ES_KUS_DATA) {
+        if (! dev->writing)
+            return;
+        dev->line[dev->length++] = byte;
+        if (dev->length == ES_LINE) {
+            es_prn_print (num);
+            es_prn_done (num);
+        }
+        return;
+    }
+    if (! (kus & ES_KUS_CMD)) {
+        /* Квитанция (10 р.): байт состояния принят. ГРП 18 общий
+         * для обоих АЦПУ ЕС: если второе ждёт, прерывание повторяется. */
+        if (kus & ES_KUS_ACK) {
+            dev->status = 0;
+            if (es_prn[num ^ 1].status)
+                GRP |= GRP_ES_PRN;
+        }
+        return;
+    }
+    if (dev->writing) {
+        /* новая команда обрывает передачу данных */
+        es_prn_print (num);
+    }
+    if (byte == 0)
+        return;                 /* проверить ввод-вывод: выдать БС */
+    switch (byte & 7) {
+    case 1:                     /* писать, пропуск после печати */
+        dev->writing = 1;
+        dev->skip = byte >> 3;
+        dev->length = 0;
+        dev->status = 0;
+        break;
+    case 3:                     /* только пропуск или прогон */
+        if ((byte >> 3) != 0 && (byte & 0300) != 0100 && byte != 0203) {
+            es_prn_feed (dev, byte >> 3, u->fileref);
+            u->pos = ftell (u->fileref);
+        }
+        es_prn_done (num);
+        break;
+    default:                    /* уточнить состояние и пр. */
+        es_prn_done (num);
+        break;
+    }
+}
+
+/*
+ * Приём из АЦПУ ЕС (033 4070/4071): байт состояния. После окончания
+ * операции (вместе с ГРП 18) он равен 014 до квитанции (10 р. КУС),
+ * затем 0. Пока АЦПУ принимает строку, стоит 12 р. - требуются данные.
+ */
+int es_prn_read (int num)
+{
+    UNIT *u = &printer_unit[num];
+
+    if ((u->flags & UNIT_ES) && (u->flags & UNIT_ATT))
+        return ES_ST_VALID | es_prn[num].status |
+            (es_prn[num].writing ? ES_ST_DATA_REQ : 0);
+    return ES_ST_NOT_READY;
 }

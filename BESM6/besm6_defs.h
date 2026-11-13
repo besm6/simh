@@ -147,6 +147,7 @@ extern DEVICE printer_dev;
 extern DEVICE tty_dev;
 extern DEVICE dks_dev;
 extern DEVICE osa_dev;
+extern DEVICE clc_dev;
 extern DEVICE fs_dev;
 extern DEVICE pl_dev;
 extern DEVICE vu_dev;
@@ -356,6 +357,8 @@ int es_count (void);
  */
 void printer_control (int num, uint32 cmd);
 void printer_hammer (int num, int pos, uint32 mask);
+void es_prn_write (int num, uint32 kus);
+int es_prn_read (int num);
 
 /*
  * Терминалы (телетайпы, видеотоны, "Консулы").
@@ -406,6 +409,10 @@ int fs_read (int num);
  * Punchtape output.
  */
 void pl_control (int num, uint32 cmd);
+int clc_output (t_value val);
+void clc_unmasked (void);
+int clc_move (t_value val);
+t_value clc_status (void);
 
 /*
  * Punchcard input.
@@ -499,6 +506,7 @@ t_value besm6_unpack (t_value val, t_value mask);
 #define GRP_CHAN6_FREE  00000000200000000LL     /* 26 */
 #define GRP_CHAN7_FREE  00000000100000000LL     /* 25 */
 #define GRP_SERIAL      00000000001000000LL     /* 19, nonstandard */
+#define GRP_ES_PRN      00000000000400000LL     /* 18, nonstandard: АЦПУ ЕС */
 #define GRP_WATCHDOG    00000000000002000LL     /* 11 */
 #define GRP_SLOW_CLK    00000000000001000LL     /* 10, nonstandard */
 /* Internal: */

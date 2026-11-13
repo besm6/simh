@@ -316,6 +316,7 @@ DEVICE *sim_devices[] = {
     &tty_dev,       /* терминалы - телетайпы, видеотоны, "Консулы" */
     &dks_dev,       /* КАДОПАМ и ДКС */
     &osa_dev,       /* АС-6: связь с ЕС ЭВМ (ОСА) */
+    &clc_dev,       /* графопостроитель CalComp */
     0
 };
 
@@ -590,6 +591,13 @@ static void cmd_002 ()
         /* Запись в маску главного регистра прерываний */
         MGRP = ACC;
         break;
+    case 035:
+        /* В Диспаке - выдача на графопостроитель CalComp (РЕГ 29 в
+         * КОБГР, РЕГ '35' в ТРУБКЕ); без CLC адрес не используется. */
+        if (! clc_output (ACC))
+            besm6_debug ("*** %05o%s: REG 35 - no plotter attached",
+                         PC, (RUU & RUU_RIGHT_INSTR) ? "R" : "L");
+        break;
     case 037:
         /* Clearing the main interrupt register: */
         /* it is impossible to clear wired (stateless) bits this way */
@@ -715,6 +723,8 @@ static uint32 readmap[32768], writemap[32768];
     case 034:
         /* Запись в МПРП */
 /*              besm6_debug(">>> write to MPRP");*/
+        if ((ACC & ~MPRP) & PRP_PLOTTER)
+            clc_unmasked ();
         MPRP = ACC & 077777777;
 	// besm6_debug("MPRP = %016llo", MPRP);
         break;
@@ -730,9 +740,10 @@ static uint32 readmap[32768], writemap[32768];
         /* Управление молоточками АЦПУ */
         printer_hammer (Aex >= 050, Aex & 7, (uint32) (ACC & BITS(16)));
         break;
-    case 070:
-	/* ES printer output: not connected */
-	break;
+    case 070: case 071:
+        /* Выдача КУС в АЦПУ ЕС-7032/7033 (set prn0 es) */
+        es_prn_write (Aex & 1, (uint32) (ACC & BITS(13)));
+        break;
     case 0140:
         /* Запись в регистр телеграфных каналов */
         tty_send ((uint32) ACC & BITS(24));
@@ -756,6 +767,12 @@ static uint32 readmap[32768], writemap[32768];
         /* sending commands to the punched card readers */
         vu_control (Aex - 0150, (uint32) (ACC & 017));
         break;
+    case 0152:
+        /* движение пера графопостроителя CalComp (МОТТ ГРАФУ) */
+        if (! clc_move (ACC))
+            besm6_debug ("*** %05o%s: EXT 152 - no plotter attached",
+                         PC, (RUU & RUU_RIGHT_INSTR) ? "R" : "L");
+        break;
     case 0153:
         /* гашение аппаратуры сопряжения с терминалами */
         mux_clear ();           /* ACC is ignored */
@@ -766,7 +783,7 @@ static uint32 readmap[32768], writemap[32768];
          * Punchcard output: the two selected bits control the motor
          * and the culling mechanism.
          */
-        pi_control (Aex & 1, (uint32) ACC & 011);
+        pi_control (Aex & 1, (uint32) ACC & BITS(24));
         break;
     case 0160:  case 0161:  case 0162: case 0163:
     case 0164:  case 0165:  case 0166: case 0167:
@@ -852,10 +869,10 @@ static uint32 readmap[32768], writemap[32768];
         /* Опрос триггера ОШМi - наличие ошибок при внешнем обмене. */
         ACC = drum_errors() | disk_errors() | mg_errors();
         break;
-    case 04070:
-	/* ES printer status: not ready */
-	ACC = 01000;
-	break;
+    case 04070: case 04071:
+        /* Байт состояния АЦПУ ЕС; без set prnN es - "не готово" */
+        ACC = es_prn_read (Aex & 1);
+        break;
     case 04100:
         /* Опрос телеграфных каналов связи */
         ACC = tty_query ();
@@ -892,6 +909,10 @@ static uint32 readmap[32768], writemap[32768];
         /* reading from the muxed serial interface */
 	ACC = mux_read();
 	break;
+    case 04153:
+        /* готовность графопостроителя CalComp: разряд 20 = не готов */
+        ACC = clc_status ();
+        break;
     case 04150: case 04154:
         /* считывание строки с устройства ввода с перфоленты */
         ACC = vu_read ((Aex - 04150) >> 2);
@@ -902,9 +923,9 @@ static uint32 readmap[32768], writemap[32768];
         ACC = pi_read (Aex & 7);
         break;
     case 04170: case 04171: case 04172: case 04173:
-        /* TODO: считывание контрольного кода
-         * строки перфоленты */
-        longjmp (cpu_halt, STOP_UNIMPLEMENTED);
+        /* Контрольный код строки перфоленты; ГП1 читает здесь затор РПГ
+         * (разряды 1-2).  Заторов не бывает: 0. */
+        ACC = 0;
         break;
     case 04174: case 04175:
         /* Считывание кода с пульта оператора */
