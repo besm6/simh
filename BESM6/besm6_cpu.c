@@ -698,9 +698,10 @@ static uint32 readmap[32768], writemap[32768];
         trace_counter = 1000;
         printer_hammer (Aex >= 050, Aex & 7, (uint32) (ACC & BITS(16)));
         break;
-    case 070:
-	/* ES printer output: not connected */
-	break;
+    case 070: case 071:
+        /* Выдача КУС в АЦПУ ЕС-7032/7033 (set prn0 es) */
+        es_prn_write (Aex & 1, (uint32) (ACC & BITS(13)));
+        break;
     case 0140:
         /* Запись в регистр телеграфных каналов */
         tty_send ((uint32) ACC & BITS(24));
@@ -827,9 +828,9 @@ static uint32 readmap[32768], writemap[32768];
         ACC = drum_errors() | disk_errors() | mg_errors();
         break;
     case 04070:
-	/* ES printer status: not ready */
-	ACC = 01000;
-	break;
+        /* Байт состояния АЦПУ ЕС; без set prn0 es - "не готово" */
+        ACC = es_prn_read ();
+        break;
     case 04100:
         /* Опрос телеграфных каналов связи */
         ACC = tty_query ();
