@@ -359,6 +359,8 @@ void printer_control (int num, uint32 cmd);
 void printer_hammer (int num, int pos, uint32 mask);
 void es_prn_write (int num, uint32 kus);
 int es_prn_read (int num);
+void es_prn_mask (uint32 mask);
+uint32 es_prn_drp (void);
 
 /*
  * Терминалы (телетайпы, видеотоны, "Консулы").
@@ -507,7 +509,7 @@ t_value besm6_unpack (t_value val, t_value mask);
 #define GRP_CHAN7_FREE  00000000100000000LL     /* 25 */
 #define GRP_SERIAL      00000000001000000LL     /* 19, nonstandard */
 #define GRP_ES_PRN      00000000000400000LL     /* 18, nonstandard: АЦПУ ЕС */
-#define GRP_WATCHDOG    00000000000002000LL     /* 11 */
+#define GRP_ES_SLOW     00000000000002000LL     /* 11: АЦПУ ЕС по ДРП (ОС Дубна) */
 #define GRP_SLOW_CLK    00000000000001000LL     /* 10, nonstandard */
 /* Internal: */
 #define GRP_DIVZERO     00000000034000000LL     /* 23-21 */

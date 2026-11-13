@@ -186,7 +186,8 @@ This is the real I/O instruction. `cmd_033()` at [besm6_cpu.c:595](besm6_cpu.c#L
 | `035` | simulate drum/tape exchange | — | **Unimplemented.** |
 | `040`–`047` | Printer 1 hammers | `printer_hammer()` | Bits 1–16: hammer solenoids. |
 | `050`–`057` | Printer 2 hammers | `printer_hammer()` | Bits 1–16: hammer solenoids. |
-| `070`, `071` | ES printers ЕС-7032/7033 0 and 1 (`set prnN es`) | `es_prn_write()` | КУС, bits 1–13: byte, bit 10 acknowledge, bit 11 command, bit 12 print symbol (ДКОИ), bit 13 reset. A write command (`xx1`) takes 128 symbols, then the line is printed; a skip command (`xx3`) feeds. The end of an operation sets the status byte and raises ГРП 18, shared by both printers; the acknowledge clears the status and re-raises ГРП 18 if the other printer is waiting. Ignored without `set prnN es`. |
+| `070`, `071` | ES printers ЕС-7032/7033 0 and 1 (`set prnN es`) | `es_prn_write()` | КУС, bits 1–13: byte, bit 10 acknowledge, bit 11 command, bit 12 print symbol (ДКОИ), bit 13 reset. A command posts a status byte until the acknowledge. A write command (`xx1`) takes the line; DISPAK sends 128 symbols and the 128th prints it, OS Dubna sends up to 135 and ends the line with command `02000`. A skip command (`xx3`) feeds. The end of an operation sets the status byte `014` and either raises ГРП 18, shared by both printers (the acknowledge re-raises it if the other printer is waiting), or, once ДРМ has been written, sets the printer's ДРП bit. Ignored without `set prnN es`. |
+| `026` | **ДРМ** — mask of ДРП (ES printers) | `es_prn_mask()` | Bit 4: printer 0, bit 3: printer 1. ГРП 11 is raised while `ДРП & ДРМ` ≠ 0. Writing it switches the ES printers from ГРП 18 to ДРП (OS Dubna, whose ГРП 18 vector is a stop). |
 | `0100`–`0137` | Tape transport control | `mg_ctl()` | Movement command; unit = `Aex - 0100`. |
 | `0140` | Telegraph channel register | `tty_send()` | Bits 1–24: one bit per terminal line. |
 | `0141` | Tape formatting | `mg_format()` | Bits 1–2: formatting mode. |
@@ -215,7 +216,9 @@ This is the real I/O instruction. `cmd_033()` at [besm6_cpu.c:595](besm6_cpu.c#L
 | `04031` | **READY** — device-ready flags (printer etc.) | — |
 | `04034` | **ПРП**, low half — `(PRP & 07777) | 037` (bits 1–12; bits 1–5 always read as 1) | — |
 | `04035` | Exchange error trigger ОШМ | `drum_errors() \| disk_errors() \| mg_errors()` |
-| `04070`, `04071` | ES printer 0 / 1 status | `es_prn_read()`: `02000` + status byte (`014` from the end of an operation until the acknowledge), plus `04000` (data requested) while a line is being received; `01000` (not ready) unless the unit is attached with `set prnN es`. |
+| `04070`, `04071` | ES printer 0 / 1 status | `es_prn_read()`: while a status byte is pending (after a command or the end of an operation, until the acknowledge) `02000` + the status byte (`014` after the end of an operation); otherwise `04000` (data requested) while a line is being received, else 0; `01000` (not ready) unless the unit is attached with `set prnN es`. |
+| `04027` | **ДРП** — ES printer operation finished | `es_prn_drp()`: bit 4 printer 0, bit 3 printer 1; cleared by the acknowledge or the next command. |
+| `04000` | — | Returns 0. OS Dubna reads it after writing ДРМ; its meaning is unknown. |
 | `04100` | Telegraph channel poll | `tty_query()` |
 | `04102` | **READY2** — punch/card ready flags | — |
 | `04103`–`04106` | Tape controller 3–6 status | `mg_state()` |
@@ -310,7 +313,8 @@ From [besm6_defs.h:425](besm6_defs.h#L425). "Raised by" names the simulator func
 | 26 | `00000000200000000` | `GRP_CHAN6_FREE` | Channel 6 exchange finished *(wired)*. |
 | 25 | `00000000100000000` | `GRP_CHAN7_FREE` | Channel 7 exchange finished *(wired)*. |
 | 19 | `00000000001000000` | `GRP_SERIAL` | Serial-line poll. **Non-standard** — an addition of this simulator. |
-| 11 | `00000000000002000` | `GRP_WATCHDOG` | Watchdog timer. |
+| 18 | `00000000000400000` | `GRP_ES_PRN` | ES printer operation finished (DISPAK). **Non-standard** — a reconstruction. |
+| 11 | `00000000000002000` | `GRP_ES_SLOW` | ES printer operation finished, through ДРП under mask ДРМ (OS Dubna, handler `ECMEДЛ`). |
 | 10 | `00000000000001000` | `GRP_SLOW_CLK` | Slow clock. **Non-standard.** |
 
 ### ГРП bits — internal (CPU faults)

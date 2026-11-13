@@ -63,9 +63,15 @@ struct acpu_t {
 #define FAST_START      1*MSEC
 #define LINEFEED_SYNC   1       /* Чтобы быстрее печатало; в жизни 20-25 мс/1.4 мс ~= 17 */
 
+static uint32 es_drp, es_drm;   /* ДРП и маска ДРМ АЦПУ ЕС */
+static uint32 es_drm_used;      /* ДРМ записывалась: ГРП 18 не выставлять */
+
 REG printer_reg[] = {
     { REGDATA ( "Готов",  READY, 2,  2, 18, 1, NULL, NULL, 0, 0, 0) },
     { REGDATA ( "Прогон", READY, 2,  2, 22, 1, NULL, NULL, 0, 0, 0) },
+    { ORDATA  ( ДРП, es_drp, 4) },
+    { ORDATA  ( ДРМ, es_drm, 4) },
+    { FLDATA  ( ДРМ_БЫЛА, es_drm_used, 0) },
     { 0 }
 };
 
@@ -73,7 +79,9 @@ REG printer_reg[] = {
  * АЦПУ ЕС-7032/7033, подключённое напрямую (разделы А0ЕС/А1ЕС ВЫДИНСа):
  * set prn0 es, set prn1 es. Обмен идёт по одному КУС через 033 070/071
  * и 033 4070/4071, окончание операции - ГРП 18, общий для обоих АЦПУ
- * (см. doc/ОСА.md, §4).
+ * (см. doc/ОСА.md, §4). Драйвер ДД (ОС Дубна, модуль PRINTL) ждёт
+ * окончания по ГРП 11: ДРП (033 4027, разряд 4 - АЦПУ 0, 3 - АЦПУ 1)
+ * под маской ДРМ (033 026).
  */
 #define UNIT_V_ES       (UNIT_V_UF + 0)
 #define UNIT_ES         (1 << UNIT_V_ES)
@@ -85,11 +93,13 @@ REG printer_reg[] = {
 #define ES_KUS_RESET    010000  /* 13 р.: сброс УУ АЦПУ */
 
 #define ES_ST_NOT_READY 01000   /* 10 р.: АЦПУ выключено / не готово */
-#define ES_ST_VALID     02000   /* 11 р.: принят байт состояния */
+#define ES_ST_VALID     02000   /* 11 р.: принят байт состояния, до квитанции */
 #define ES_ST_DATA_REQ  04000   /* 12 р.: требуются данные для печати */
+#define ES_DRP(num)     (010 >> (num))  /* разряд ДРП: окончание операции */
 #define ES_ST_DONE      014     /* 3 и 4 рр. БС: АЦПУ закончило, конец передачи */
 
 #define ES_LINE         128     /* символов в строке */
+#define ES_LINE_MAX     160     /* ДД: 7 пробелов поля + 128, конец - командой */
 #define ES_DELAY        (1*MSEC)
 
 struct es_prn_t {
@@ -98,7 +108,8 @@ struct es_prn_t {
     int length;
     int overprint;              /* строка выдана без пропуска */
     int status;                 /* байт состояния */
-    unsigned char line[ES_LINE];
+    int pending;                /* байт состояния выдан, квитанции не было */
+    unsigned char line[ES_LINE_MAX];
 } es_prn[2];
 
 MTAB printer_mod[] = {
@@ -127,6 +138,7 @@ t_stat printer_reset (DEVICE *dptr)
 {
     memset(acpu, 0, sizeof (acpu));
     memset(es_prn, 0, sizeof (es_prn));
+    es_drp = es_drm = es_drm_used = 0;
     acpu[0].rampup = acpu[1].rampup = SLOW_START;
     sim_cancel (&printer_unit[0]);
     sim_cancel (&printer_unit[1]);
@@ -243,7 +255,14 @@ t_stat printer_event (UNIT *u)
     if (u->flags & UNIT_ES) {
         /* АЦПУ ЕС закончило операцию: байт состояния и ТРБ-А */
         es_prn[num].status = ES_ST_DONE;
-        GRP |= GRP_ES_PRN;
+        es_prn[num].pending = 1;
+        if (! es_drm_used)
+            GRP |= GRP_ES_PRN;
+        es_drp |= ES_DRP (num);
+        if (es_drp & es_drm)
+            GRP |= GRP_ES_SLOW;
+        if (printer_dev.dctrl)
+            besm6_debug (">>> ES printer%d: done, ДРП %o, ДРМ %o", num, es_drp, es_drm);
         return SCPE_OK;
     }
     if (dev->curchar < 0140) {
@@ -483,14 +502,17 @@ void es_prn_write (int num, uint32 kus)
         besm6_debug (">>> ES printer%d: КУС %o", num, kus);
     if (kus & ES_KUS_RESET) {
         memset (dev, 0, sizeof (*dev));
+        es_drp &= ~ES_DRP (num);
         sim_cancel (u);
         return;
     }
     if (kus & ES_KUS_DATA) {
         if (! dev->writing)
             return;
-        dev->line[dev->length++] = byte;
-        if (dev->length == ES_LINE) {
+        if (dev->length < ES_LINE_MAX)
+            dev->line[dev->length++] = byte;
+        /* Диспак кончает строку 128-м символом, ДД - командой */
+        if (! es_drm_used && dev->length == ES_LINE) {
             es_prn_print (num);
             es_prn_done (num);
         }
@@ -501,14 +523,24 @@ void es_prn_write (int num, uint32 kus)
          * для обоих АЦПУ ЕС: если второе ждёт, прерывание повторяется. */
         if (kus & ES_KUS_ACK) {
             dev->status = 0;
-            if (es_prn[num ^ 1].status)
+            dev->pending = 0;
+            es_drp &= ~ES_DRP (num);
+            if (es_prn[num ^ 1].status && ! es_drm_used)
                 GRP |= GRP_ES_PRN;
         }
         return;
     }
+    /* Команда принята: выдаётся байт состояния */
+    dev->pending = 1;
+    es_drp &= ~ES_DRP (num);
     if (dev->writing) {
-        /* новая команда обрывает передачу данных */
+        /* новая команда обрывает передачу данных и печатает строку
+         * (так ДД кончает строку короче 128 символов) */
         es_prn_print (num);
+        if (byte == 0) {
+            es_prn_done (num);
+            return;
+        }
     }
     if (byte == 0)
         return;                 /* проверить ввод-вывод: выдать БС */
@@ -541,8 +573,35 @@ int es_prn_read (int num)
 {
     UNIT *u = &printer_unit[num];
 
-    if ((u->flags & UNIT_ES) && (u->flags & UNIT_ATT))
-        return ES_ST_VALID | es_prn[num].status |
-            (es_prn[num].writing ? ES_ST_DATA_REQ : 0);
+    if ((u->flags & UNIT_ES) && (u->flags & UNIT_ATT)) {
+        struct es_prn_t *dev = es_prn + num;
+        if (dev->pending)
+            return ES_ST_VALID | dev->status;
+        return dev->writing ? ES_ST_DATA_REQ : 0;
+    }
     return ES_ST_NOT_READY;
+}
+
+/*
+ * Запись маски ДРМ (033 026).
+ */
+void es_prn_mask (uint32 mask)
+{
+    es_drm = mask & (ES_DRP (0) | ES_DRP (1));
+    if (es_drm)
+        es_drm_used = 1;        /* драйвер ДД: у него ГРП 18 - останов */
+    if (printer_dev.dctrl)
+        besm6_debug (">>> ES printer: ДРМ %o, ДРП %o", es_drm, es_drp);
+    if (es_drp & es_drm)
+        GRP |= GRP_ES_SLOW;
+}
+
+/*
+ * Чтение ДРП (033 4027).
+ */
+uint32 es_prn_drp (void)
+{
+    if (printer_dev.dctrl)
+        besm6_debug (">>> ES printer: read ДРП %o", es_drp);
+    return es_drp;
 }

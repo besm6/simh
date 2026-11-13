@@ -705,6 +705,10 @@ static uint32 readmap[32768], writemap[32768];
         /* Управление обменом с магнитными дисками */
         disk_ctl (Aex - 023, (uint32) ACC);
         break;
+    case 026:
+        /* ДРМ: маска ДРП (АЦПУ ЕС) */
+        es_prn_mask ((uint32) ACC & BITS(24));
+        break;
     case 030:
         /* Гашение ПРП */
 /*              besm6_debug(">>> clear PRP");*/
@@ -868,6 +872,14 @@ static uint32 readmap[32768], writemap[32768];
     case 04035:
         /* Опрос триггера ОШМi - наличие ошибок при внешнем обмене. */
         ACC = drum_errors() | disk_errors() | mg_errors();
+        break;
+    case 04000:
+        /* ОС Дубна читает после записи ДРМ; смысл неизвестен */
+        ACC = 0;
+        break;
+    case 04027:
+        /* ДРП: окончание операций АЦПУ ЕС */
+        ACC = es_prn_drp ();
         break;
     case 04070: case 04071:
         /* Байт состояния АЦПУ ЕС; без set prnN es - "не готово" */
