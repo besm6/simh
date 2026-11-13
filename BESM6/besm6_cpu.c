@@ -728,7 +728,6 @@ static uint32 readmap[32768], writemap[32768];
     case 050: case 051: case 052: case 053:
     case 054: case 055: case 056: case 057:
         /* Управление молоточками АЦПУ */
-        trace_counter = 1000;
         printer_hammer (Aex >= 050, Aex & 7, (uint32) (ACC & BITS(16)));
         break;
     case 070:
