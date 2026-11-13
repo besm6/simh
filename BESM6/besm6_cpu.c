@@ -740,7 +740,7 @@ static uint32 readmap[32768], writemap[32768];
          * Punchcard output: the two selected bits control the motor
          * and the culling mechanism.
          */
-        pi_control (Aex & 1, (uint32) ACC & 011);
+        pi_control (Aex & 1, (uint32) ACC & BITS(24));
         break;
     case 0160:  case 0161:  case 0162: case 0163:
     case 0164:  case 0165:  case 0166: case 0167:

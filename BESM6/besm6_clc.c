@@ -111,6 +111,7 @@ int clc_output (t_value val)
         return 0;
     fprintf (clc_unit.fileref, "%016llo\n", (unsigned long long) (val & BITS48));
     fflush (clc_unit.fileref);
+    clc_unit.pos = ftell (clc_unit.fileref);
     PRP &= ~PRP_PLOTTER;
     sim_activate_after (&clc_unit, CLC_RATE);
     if (clc_dev.dctrl)
@@ -128,6 +129,7 @@ int clc_move (t_value val)
         return 0;
     fprintf (clc_unit.fileref, "152 %016llo\n", (unsigned long long) (val & BITS48));
     fflush (clc_unit.fileref);
+    clc_unit.pos = ftell (clc_unit.fileref);
     if (clc_dev.dctrl)
         besm6_debug ("CLC: move %016llo", (unsigned long long) (val & BITS48));
     return 1;
