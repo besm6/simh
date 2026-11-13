@@ -1059,6 +1059,47 @@ t_stat cpu_show_ext32 (FILE *st, UNIT *up, int32 v, CONST void *dp)
 }
 
 /*
+ * Decode a 24-bit instruction: returns the opcode, sets the address and register.
+ */
+static int decode_half (uint32 rk, int *addr, int *reg)
+{
+    *reg = rk >> 20;
+    if (rk & BBIT(20)) {
+        *addr = rk & BITS(15);
+        return (rk >> 12) & 0370;
+    }
+    *addr = rk & BITS(12);
+    if (rk & BBIT(19))
+        *addr |= 070000;
+    return (rk >> 12) & 077;
+}
+
+/*
+ * Is a taken u1a to target the idle loop of the Dubna dispatcher?
+ * Task ЖДУ (module TESTTA) spends its time in a delay loop:
+ *  L3: xta COUNT, arx BIT1(757)
+ *      atx COUNT, aex MAXCOUNT
+ *      u1a L3
+ * Matched by shape, so that a relinked dispatcher is still recognized.
+ */
+static int dubna_idle_loop (int target)
+{
+    int a1, a2, a3, a4, r1, r2, r3, r4;
+    t_value w1, w2;
+
+    if (! IS_SUPERVISOR (RUU) || PC != target + 2 ||
+        ! (RUU & RUU_RIGHT_INSTR))      /* u1a is a left instruction */
+        return 0;
+    w1 = memory[target] & BITS48;
+    w2 = memory[target + 1] & BITS48;
+    return decode_half ((uint32) (w1 >> 24) & BITS(24), &a1, &r1) == 010 &&
+           decode_half ((uint32) w1 & BITS(24), &a2, &r2) == 013 &&
+           decode_half ((uint32) (w2 >> 24) & BITS(24), &a3, &r3) == 000 &&
+           decode_half ((uint32) w2 & BITS(24), &a4, &r4) == 012 &&
+           a2 == 0757 && a1 == a3 && (r1 | r2 | r3 | r4) == 0;
+}
+
+/*
  * Execute one instruction, placed on address PC:RUU_RIGHT_INSTR.
  * When stopped, perform a longjmp to cpu_halt,
  * sending a stop code.
@@ -1670,6 +1711,8 @@ void cpu_one_inst ()
         } else
             /* fall thru, i.e. branch */;
         if (Aex == 05176) besm6_log("_u1a phyzobm");
+        if (dubna_idle_loop (Aex))      /* ЖДУ loop of the Dubna dispatcher */
+            sim_idle (0, TRUE);
         PC = Aex;
         RUU &= ~RUU_RIGHT_INSTR;
         delay += 3;
