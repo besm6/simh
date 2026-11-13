@@ -33,7 +33,7 @@
 /*
  * I/O command bits
  */
-#define MG_BLOCK         0740000000   /* RAM block number - 27-24 рр */
+#define MG_BLOCK         0140000000   /* RAM block number - 25-24 рр (26-36: zone, ignored) */
 #define MG_READ_SYSDATA   004000000   /* control words only */
 #define MG_READ           000400000   /* reading to RAM flag */
 #define MG_PAGE           000370000   /* номер страницы памяти */
@@ -981,8 +981,8 @@ void mg_ctl (int unit, uint32 op)
     move = op & MG_MOVE;
     back = op & MG_BACK;
 
-    if (num == c->dev && move && !back) {
-        /* Reading or writing */
+    if (num == c->dev && move && !back && c->armed) {
+        /* Reading or writing: one exchange per exchange word */
 
         if (!(c->op & MG_READ) && u->flags & UNIT_RO) {
             /* Read only. */
@@ -991,6 +991,7 @@ void mg_ctl (int unit, uint32 op)
         }
         u->cmd = c->op;
         u->in_io = 1;
+        c->armed = 0;
         controller[(c - controller) ^ 1].armed = 0;
         if (u->dptr->dctrl)
             sim_printf("::: %s: in_io = 1\n", sim_uname(u));
@@ -1011,9 +1012,14 @@ void mg_ctl (int unit, uint32 op)
                 sim_activate (u, MG_MOVE_DELAY);
             }
         } else {
+            /* Passing a zone, the controller reads its service words:
+             * the OS finds where the tape is by them. */
+            static t_value fullzone[8+1024];
             if (u->dptr->dctrl)
                 sim_printf("%s: Step forward\n", sim_uname(u));
-            sim_tape_sprecf (u, &len);
+            if (sim_tape_rdrecf (u, (uint8*) fullzone, &len, sizeof(fullzone)) == MTSE_OK &&
+                len == sizeof(fullzone))
+                memcpy (c->sysdata, fullzone, 8*sizeof(t_value));
             sim_activate (u, MG_MOVE_DELAY);
         }
         c->status |= MG_MOVING << num;

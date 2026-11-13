@@ -570,7 +570,8 @@ bit 28. The 8 service words of a zone land at memory `030 + 8n`.
 
 | Bits | Octal mask | Name | Meaning |
 |------|-----------|------|---------|
-| 27–24 | `0740000000` | `MG_BLOCK` | Memory block number. |
+| 36–26 | — | — | Ignored. OS Dubna keeps the zone number here. |
+| 25–24 | `0140000000` | `MG_BLOCK` | Memory block number (32K words each). |
 | 21 | `004000000` | `MG_READ_SYSDATA` | Control words only. |
 | 18 | `000400000` | `MG_READ` | **1** = tape → memory. |
 | 17–13 | `000370000` | `MG_PAGE` | Memory page number. |
@@ -598,8 +599,9 @@ The address selects the unit: `mg_ctl (Aex - 0100, ACC)`. The accumulator
 | 1 | `000000001` | `MG_MOVE` | Start the tape moving. |
 
 If the unit named by the address is the one selected by the last exchange control word, and the
-command is *move forward*, the queued read or write is performed. Otherwise `MG_MOVE` just steps
-the tape one record forward or backward.
+command is *move forward*, the queued read or write is performed. Each exchange control word
+gives one exchange. Any other move steps the tape one record forward or backward; a forward step
+also reads the service words of the record it passes, by which the OS finds where the tape is.
 
 ### Status (`033 4103`–`4106`)
 
