@@ -1936,7 +1936,7 @@ if ((sim_idle_rate_ms == 0) || (sim_idle_cyc_ms == 0)) {/* not possible? */
     sim_debug (DBG_IDL, &sim_timer_dev, "not possible idle_rate_ms=%d - cyc/ms=%d\n", sim_idle_rate_ms, sim_idle_cyc_ms);
     return FALSE;
     }
-w_ms = (uint32) sim_interval / sim_idle_cyc_ms;         /* ms to wait */
+w_ms = ((uint32) sim_interval + sim_idle_cyc_ms / 2) / sim_idle_cyc_ms; /* ms to wait, rounded */
 /* When the host system has a clock tick which is less frequent than the    */
 /* simulated system's clock, idling will cause delays which will miss       */
 /* simulated clock ticks.  To accomodate this, and still allow idling, if   */
