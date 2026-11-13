@@ -121,9 +121,10 @@ t_stat mg_event (UNIT *u);
 #define MG_SIZE 0
 #define MG_TOTBLK 02010
 
-#define MG_IO_DELAY (200*MSEC)
-#define MG_MOVE_DELAY (100*MSEC)
-#define MG_GAP_DELAY (10*MSEC)
+/* 5 times faster than the real drive */
+#define MG_IO_DELAY (40*MSEC)
+#define MG_MOVE_DELAY (20*MSEC)
+#define MG_GAP_DELAY (2*MSEC)
 /*
  * Runoff when formatting, in microseconds of clock time: the OS switches
  * the formatting modes by the timer, so this delay must be in step with it.
